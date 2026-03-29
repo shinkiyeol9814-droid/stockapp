@@ -15,8 +15,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.support.ui import WebDriverWait # 💡 추가: 스마트 대기 도구
-from selenium.webdriver.support import expected_conditions as EC # 💡 추가: 조건 확인 도구
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 
 # --- Plotly (인터랙티브 차트) ---
@@ -143,26 +143,28 @@ def get_hybrid_financials(ticker):
         chrome_options.add_argument("--headless") 
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        
+        # 💡 핵심 해결책: 클라우드 가상 브라우저의 창 크기를 FHD(1920x1080)로 강제 고정하여 표가 잘리지 않게 함
+        chrome_options.add_argument("--window-size=1920,1080") 
+        
         chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get(url)
         
-        # 💡 핵심 1. 메인 페이지 로딩 대기 강화
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "coinfo_cp")))
         
         driver.switch_to.frame("coinfo_cp")
         
-        # 💡 핵심 2. 연간 탭 버튼 클릭 및 표 렌더링을 위한 스마트 대기
         tab_annual = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "cns_Tab21")))
         tab_annual.click()
         
-        # 💡 핵심 3. 클라우드 지연 방어: 특정 연도(예: 2025) 텍스트가 표 안에 확실히 그려질 때까지 최대 10초 대기
         try:
             WebDriverWait(driver, 10).until(EC.text_to_be_present_in_element((By.CSS_SELECTOR, "table"), "2025"))
+            time.sleep(1) # 표가 완전히 렌더링되도록 1초 추가 대기
         except:
-            time.sleep(3) # 실패 시 최후의 3초 물리적 대기
+            time.sleep(3) 
             
         df_annual = parse_and_filter_html(driver.page_source)
         driver.quit()
@@ -199,7 +201,6 @@ def get_hybrid_financials(ticker):
         rows.append(row)
         
     return pd.DataFrame(rows)
-
 
 # ==========================================
 # 💡 좌측 사이드바: 네비게이션 메뉴 구성
@@ -513,8 +514,9 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V39.4", "V39.3", "V39.2", "V39.1", "V39.0", "V38.0", "V37.0", "V36.0", "V35.0", "V34.0", "V30.2"],
+        "버전": ["V39.5", "V39.4", "V39.3", "V39.2", "V39.1", "V39.0", "V38.0", "V37.0", "V36.0", "V35.0", "V34.0", "V30.2"],
         "업데이트 내용": [
+            "클라우드 가상 브라우저 해상도 강제 고정(1920x1080)으로 과거/미래 데이터(21년, 26/27년) 짤림 현상 완전 해결",
             "클라우드 렌더링 지연에 따른 25~27년 데이터 누락 방지 로직(WebDriverWait) 탑재",
             "사이드바 라디오 버튼(label) 경고 해결 및 클라우드 우회망 User-Agent 위장 로직 추가",
             "클라우드 IP 차단 원천 해결 (KIND 직접 크롤링 및 네이버 모바일 API 실시간 연동 방어 로직 탑재)",
