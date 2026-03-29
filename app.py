@@ -18,7 +18,7 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
 }
 
-# 💡 UI 디테일 튜닝 CSS
+# 💡 UI 디테일 튜닝 CSS (Select Box 에러 픽스)
 st.markdown("""
     <style>
         .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
@@ -35,18 +35,22 @@ st.markdown("""
         .rate-down { color: #0068c9 !important; font-weight: bold; }
         .rate-none { opacity: 0.6; font-weight: bold; }
 
-        /* 💡 검색폼 라벨 너비 고정으로 칼각 정렬 */
-        .search-container { display: flex; align-items: center; margin-bottom: 10px; width: 100%; height: 36px; }
+        /* 검색폼 라벨 너비 고정으로 칼각 정렬 */
+        .search-container { display: flex; align-items: center; margin-bottom: 10px; width: 100%; height: 38px; }
         .search-label { font-size: 14px; font-weight: bold; width: 65px; margin-right: 10px; white-space: nowrap; display: flex; align-items: center; height: 100%; flex-shrink: 0; }
         .search-input-wrap { flex-grow: 1; margin-right: 8px; display: flex; align-items: center; width: 100%; }
         
         .stTextInput, .stSelectbox, .stNumberInput { margin-bottom: -15px !important; width: 100% !important; }
-        .stTextInput > div > div > input, .stSelectbox > div > div > div, .stNumberInput > div > div > input { 
-            height: 36px !important; min-height: 36px !important; font-size: 13px !important; padding: 0 8px !important; width: 100% !important;
+        
+        /* 💡 Select Box 글자 씹힘 현상 해결: 텍스트 입력창과 셀렉트박스 분리하여 안전하게 스타일링 */
+        .stTextInput > div > div > input, .stNumberInput > div > div > input { 
+            height: 38px !important; min-height: 38px !important; font-size: 13px !important; padding: 0 10px !important; width: 100% !important;
         }
+        /* Selectbox 전용 폰트 사이즈 조절 (강제 높이 제거) */
+        .stSelectbox div[data-baseweb="select"] { font-size: 13px !important; }
         
         div.stButton > button { 
-            height: 36px !important; min-height: 36px !important; padding: 0 !important; width: 100% !important;
+            height: 38px !important; min-height: 38px !important; padding: 0 !important; width: 100% !important;
             background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 6px !important; border: none !important; 
         }
         
@@ -161,7 +165,7 @@ if menu == "📈 가치평가 시뮬레이터":
         st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
         search_clicked = st.button("갱신", use_container_width=True)
 
-    # 💡 2단: 평가방식 (단독 줄)
+    # 💡 2단: 평가방식
     st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
@@ -199,7 +203,7 @@ if menu == "📈 가치평가 시뮬레이터":
                             st.session_state.target_mult = max(1, int(round(avg_m)))
                 st.session_state.last_ticker = ticker
 
-    # 💡 3단: 목표배수 (단독 줄)
+    # 💡 3단: 목표배수
     st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     target_mult = st.number_input("목표배수", value=st.session_state.target_mult, step=1, format="%d", label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
@@ -363,5 +367,5 @@ if menu == "📈 가치평가 시뮬레이터":
 
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
-    df_history = pd.DataFrame({"버전": ["V1.3.9 (입력폼 레이아웃 리팩토링)", "V1.3.8"], "내용": ["검색 폼 세로 3단 전환, 라벨 너비 고정(칼각 정렬) 및 글자 잘림(Select Box) 현상 완벽 해결", "CSS 변수를 활용한 완벽한 테마별 선 색상 자동 전환"]})
+    df_history = pd.DataFrame({"버전": ["V1.3.10 (Select Box 픽스)", "V1.3.9"], "내용": ["평가방식 Select Box 내부 텍스트 잘림 현상 완벽 픽스", "검색 폼 세로 3단 전환, 라벨 너비 고정(칼각 정렬)"]})
     st.dataframe(df_history, hide_index=True, use_container_width=True)
