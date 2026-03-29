@@ -166,7 +166,6 @@ if menu == "📈 가치평가 시뮬레이터":
         val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
         st.markdown("</div></div>", unsafe_allow_html=True)
     
-    # 💡 평균 배수 자동 계산 로직 (예외 처리 및 안전성 강화)
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
@@ -176,11 +175,9 @@ if menu == "📈 가치평가 시뮬레이터":
                 temp_fin = get_hybrid_financials(ticker)
                 temp_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
                 
-                # 빈 가격 데이터 에러(AttributeError) 원천 차단
                 if not temp_price.empty:
                     col_p = '영업이익' if "POR" in val_type else '당기순이익'
                     
-                    # 주식 수(Stocks) 1차는 KRX 데이터, 2차는 네이버 API
                     sc = ticker_row['Stocks'].values[0] if 'Stocks' in ticker_row.columns and ticker_row['Stocks'].values[0] > 0 else 0
                     if sc <= 0:
                         try:
@@ -192,7 +189,6 @@ if menu == "📈 가치평가 시뮬레이터":
                     h_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / sc for idx, row in temp_fin[temp_fin['Year'] <= current_year].iterrows() if pd.notna(row[col_p])}
                     
                     temp_p = temp_price.copy()
-                    # index.year.map 과정에서 발생하는 에러 방지를 위해 Series로 래핑
                     metric_series = pd.Series(temp_p.index.year.map(h_dict), index=temp_p.index)
                     temp_p['Metric'] = metric_series.ffill().bfill()
                     
@@ -200,7 +196,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     if not valid_m.empty:
                         avg_m = (valid_m['Close'] / valid_m['Metric']).mean()
                         if not np.isnan(avg_m) and not np.isinf(avg_m):
-                            st.session_state.target_mult = max(1, int(round(avg_m))) # 최소 1배수 보장
+                            st.session_state.target_mult = max(1, int(round(avg_m)))
                 st.session_state.last_ticker = ticker
 
     with col_mult:
@@ -218,7 +214,6 @@ if menu == "📈 가치평가 시뮬레이터":
             else:
                 ticker = ticker_row['Code'].values[0]
                 
-                # 주식 수 재확인 로직 강화
                 stocks_count = ticker_row['Stocks'].values[0] if 'Stocks' in ticker_row.columns and ticker_row['Stocks'].values[0] > 0 else 0
                 if stocks_count <= 0:
                     try:
@@ -281,7 +276,6 @@ if menu == "📈 가치평가 시뮬레이터":
                     df_hist_daily = df_price.copy()
                     df_hist_daily['Year'] = df_hist_daily.index.year
                     
-                    # Series 객체로 변환하여 안전하게 ffill() 처리
                     metric_series2 = pd.Series(df_hist_daily['Year'].map(historical_metric_dict), index=df_hist_daily.index)
                     df_hist_daily['Metric'] = metric_series2.ffill().bfill().values
                     
@@ -304,9 +298,9 @@ if menu == "📈 가치평가 시뮬레이터":
                     x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 상단 차트
+                    # 💡 상단 차트: 주가선 색상/굵기 변경 (color #222222, width 1.5)
                     fig1 = go.Figure()
-                    fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=3)))
+                    fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#222222', width=1.5)))
                     for i, b in enumerate(bands):
                         if pd.notna(b):
                             fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
@@ -329,21 +323,27 @@ if menu == "📈 가치평가 시뮬레이터":
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 하단 차트
+                    # 💡 하단 차트: 가로 범례 완벽 동기화 (Scatter 라인 방식 적용)
                     st.write("")
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/safe_metric, mode='lines', name='당일Val', line=dict(color='purple', width=1.5)))
+                    
+                    x_start, x_end = df_price.index[0], extended_dates[-1]
                     for i, b in enumerate(bands):
                         if pd.notna(b):
-                            fig2.add_hline(y=float(b), line_dash="dash", line_color=cols[i%4], line_width=1, annotation_text=f"{b}x", annotation_position="top left", name=f'{b}x')
+                            fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
                     
-                    if today_m > 0: fig2.add_hline(y=today_m, line_dash="solid", line_color="red", line_width=1.5, name='현재')
-                    fig2.add_hline(y=target_mult, line_dash="solid", line_color="blue", line_width=1.5, name='목표')
+                    if today_m > 0: 
+                        fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
+                        
+                    fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
+                    
                     fig2.update_yaxes(range=[0, max(bands[-1]*1.1 if bands else 30, target_mult*1.2)])
                     
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
+                    
                     fig2.update_layout(
                         height=280, margin=dict(l=0, r=0, t=60, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
@@ -361,5 +361,5 @@ if menu == "📈 가치평가 시뮬레이터":
 
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
-    df_history = pd.DataFrame({"버전": ["V1.3.5 (데이터 무결성 픽스)", "V1.3.4"], "내용": ["네이버 봇 차단 우회(User-Agent 강화), DataFrame Empty 에러 원천 차단 로직 추가, 주식수 로딩 최적화", "에러 픽스, 평가방식 수직 정렬, 목표배수 자동 설정 및 정수화"]})
+    df_history = pd.DataFrame({"버전": ["V1.3.6 (디테일 패치)", "V1.3.5"], "내용": ["주가 선 색상(검은색) 및 굵기 조정, 하단 평균 밴드 차트 범례(Legend) 좌상단 가로 정렬 동기화", "네이버 봇 차단 우회, DataFrame Empty 에러 원천 차단"]})
     st.dataframe(df_history, hide_index=True, use_container_width=True)
