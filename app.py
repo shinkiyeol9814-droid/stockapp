@@ -163,7 +163,7 @@ if menu == "📈 가치평가 시뮬레이터":
     col_type, col_mult = st.columns(2)
     with col_type:
         st.markdown("<div class='search-container'><div class='search-label'>평가방식</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
+        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"])
         st.markdown("</div></div>", unsafe_allow_html=True)
     
     if corp_name:
@@ -298,7 +298,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 상단 차트: 주가선 색상/굵기 변경 (color #222222, width 1.5)
+                    # 💡 상단 차트
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#222222', width=1.5)))
                     for i, b in enumerate(bands):
@@ -316,14 +316,16 @@ if menu == "📈 가치평가 시뮬레이터":
                     y_max = max([curr_p, tp1, tp2]) * 1.15; y_min = df_price['Close'].min() * 0.85
                     fig1.update_yaxes(range=[y_min, y_max]); fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
+                    # 💡 1. 범례를 외부(y=1.05, yanchor=bottom)로 이동 & margin top(t=80) 확보
                     fig1.update_layout(
-                        height=380, margin=dict(l=0, r=0, t=60, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
+                        height=400, margin=dict(l=0, r=0, t=80, b=10), 
+                        title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 💡 하단 차트: 가로 범례 완벽 동기화 (Scatter 라인 방식 적용)
+                    # 💡 하단 차트
                     st.write("")
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
@@ -344,9 +346,12 @@ if menu == "📈 가치평가 시뮬레이터":
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
+                    # 💡 2. 하단 차트도 동일하게 범례 외부(y=1.05)로 이동 & margin top(t=80) 확보
                     fig2.update_layout(
-                        height=280, margin=dict(l=0, r=0, t=60, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=True, legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
+                        height=300, margin=dict(l=0, r=0, t=80, b=0), 
+                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                        showlegend=True, 
+                        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
@@ -361,5 +366,5 @@ if menu == "📈 가치평가 시뮬레이터":
 
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
-    df_history = pd.DataFrame({"버전": ["V1.3.6 (디테일 패치)", "V1.3.5"], "내용": ["주가 선 색상(검은색) 및 굵기 조정, 하단 평균 밴드 차트 범례(Legend) 좌상단 가로 정렬 동기화", "네이버 봇 차단 우회, DataFrame Empty 에러 원천 차단"]})
+    df_history = pd.DataFrame({"버전": ["V1.3.7 (범례 외부 분리)", "V1.3.6"], "내용": ["차트 내부와 겹치던 범례(Legend)를 차트 바깥(상단)으로 완전히 빼서 가독성 극대화", "주가 선 색상(검은색) 및 굵기 조정, 하단 평균 밴드 차트 범례 동기화"]})
     st.dataframe(df_history, hide_index=True, use_container_width=True)
