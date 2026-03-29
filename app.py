@@ -149,7 +149,7 @@ if menu == "📈 가치평가 시뮬레이터":
     col_type, col_mult = st.columns(2)
     with col_type:
         st.markdown("<div class='search-container'><div class='search-label'>평가방식</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="Hidden")
+        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="hidden")
         st.markdown("</div></div>", unsafe_allow_html=True)
     
     # 💡 6. 평균 배수 자동 계산 및 목표배수 초기값 설정 로직 (에러 수정됨)
