@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import platform
 import io
 import re
-import requests # 💡 requests 라이브러리 전역 임포트 추가
+import requests
 
 # --- Selenium ---
 from selenium import webdriver
@@ -15,6 +15,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait # 💡 추가: 스마트 대기 도구
+from selenium.webdriver.support import expected_conditions as EC # 💡 추가: 조건 확인 도구
 import time
 
 # --- Plotly (인터랙티브 차트) ---
@@ -32,7 +34,6 @@ if 'clicked_item' not in st.session_state:
 
 # --- 데이터 캐싱 함수들 ---
 
-# 💡 핵심 1. 클라우드 IP 차단 방어 (KIND 접속 시 User-Agent 추가로 완벽 우회)
 @st.cache_data(ttl=86400)
 def get_ticker_listing():
     for _ in range(3):
@@ -43,7 +44,6 @@ def get_ticker_listing():
         except:
             time.sleep(1)
             
-    # 클라우드 IP 차단 시 KIND 직접 크롤링 (User-Agent 위장 필수)
     try:
         url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -143,17 +143,27 @@ def get_hybrid_financials(ticker):
         chrome_options.add_argument("--headless") 
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get(url)
-        time.sleep(2) 
-        driver.switch_to.frame("coinfo_cp")
-        time.sleep(1)
-        driver.find_element(By.ID, "cns_Tab21").click()
-        time.sleep(1.5) 
         
+        # 💡 핵심 1. 메인 페이지 로딩 대기 강화
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "coinfo_cp")))
+        
+        driver.switch_to.frame("coinfo_cp")
+        
+        # 💡 핵심 2. 연간 탭 버튼 클릭 및 표 렌더링을 위한 스마트 대기
+        tab_annual = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "cns_Tab21")))
+        tab_annual.click()
+        
+        # 💡 핵심 3. 클라우드 지연 방어: 특정 연도(예: 2025) 텍스트가 표 안에 확실히 그려질 때까지 최대 10초 대기
+        try:
+            WebDriverWait(driver, 10).until(EC.text_to_be_present_in_element((By.CSS_SELECTOR, "table"), "2025"))
+        except:
+            time.sleep(3) # 실패 시 최후의 3초 물리적 대기
+            
         df_annual = parse_and_filter_html(driver.page_source)
         driver.quit()
 
@@ -196,11 +206,10 @@ def get_hybrid_financials(ticker):
 # ==========================================
 st.sidebar.title("🧭 네비게이션 메뉴")
 
-# 💡 핵심 2. Streamlit 경고(label_visibility) 완벽 해결
 menu = st.sidebar.radio(
-    "메뉴 선택", # 빈칸 대신 텍스트 삽입
+    "메뉴 선택",
     ["📈 밸류에이션 (PER/POR밴드)", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 버전 업데이트 이력"],
-    label_visibility="collapsed" # 삽입된 텍스트를 화면에서는 숨김 처리
+    label_visibility="collapsed"
 )
 
 # ==========================================
@@ -504,9 +513,10 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V39.3", "V39.2", "V39.1", "V39.0", "V38.0", "V37.0", "V36.0", "V35.0", "V34.0", "V30.2"],
+        "버전": ["V39.4", "V39.3", "V39.2", "V39.1", "V39.0", "V38.0", "V37.0", "V36.0", "V35.0", "V34.0", "V30.2"],
         "업데이트 내용": [
-            "사이드바 라디오 버튼(label) 경고 해결 및 클라우드 우회망 User-Agent 위장 로직 추가 (종목 목록 검색 뻗음 완전 해결)",
+            "클라우드 렌더링 지연에 따른 25~27년 데이터 누락 방지 로직(WebDriverWait) 탑재",
+            "사이드바 라디오 버튼(label) 경고 해결 및 클라우드 우회망 User-Agent 위장 로직 추가",
             "클라우드 IP 차단 원천 해결 (KIND 직접 크롤링 및 네이버 모바일 API 실시간 연동 방어 로직 탑재)",
             "불필요해진 Matplotlib 한글 폰트 설정 코드 제거 (NameError: plt is not defined 핫픽스)",
             "메인 UI 대규모 개편 (사이드바 메뉴화, 상단 컨트롤 패널 배치, 버전 이력 독립 탭 전환)",
