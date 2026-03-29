@@ -162,7 +162,7 @@ if menu == "📈 가치평가 시뮬레이터":
     st.write("")
     col_type, col_mult = st.columns(2)
     with col_type:
-        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"])
+        val_type = st.selectbox("가치평가 기준", ["PER (순이익 기준)", "POR (영업이익 기준)"])
     
     if corp_name:
         listing = get_ticker_listing()
