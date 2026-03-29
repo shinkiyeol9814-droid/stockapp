@@ -325,7 +325,12 @@ if menu == "📈 가치평가 시뮬레이터":
                     fig1.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                     fig1.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
 
-                    st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
+                    # --- 변경 후 ---
+                    # 1. 차트를 고해상도 PNG 이미지 바이트로 변환 (scale=2로 선명도 2배)
+                    img_bytes1 = fig1.to_image(format="png", width=800, height=350, scale=2)
+                    # 2. st.image 함수로 진짜 '이미지' 출력 (어디든 터치하면 팝업됨)
+                    st.image(img_bytes1, use_container_width=True)
+
                     st.caption("🔍 차트를 터치하면 전체화면 원본 크기로 볼 수 있습니다.")
 
                     # 💡 4. 하단 차트: [평균 PER/POR 밴드] (독립 분리 및 수치 표기)
@@ -367,7 +372,10 @@ if menu == "📈 가치평가 시뮬레이터":
                     fig2.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                     fig2.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
 
-                    st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
+                   # --- 변경 후 ---
+                    img_bytes2 = fig2.to_image(format="png", width=800, height=250, scale=2)
+                    st.image(img_bytes2, use_container_width=True)
+
                     st.caption("🔍 차트를 터치하면 전체화면 원본 크기로 볼 수 있습니다.")
 
                     # 연도별 재무 상세
