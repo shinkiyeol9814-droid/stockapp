@@ -22,6 +22,7 @@ st.markdown("""
         /* 정보 표시 카드형 UI */
         .info-box { background-color: rgba(128, 128, 128, 0.05) !important; padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(128, 128, 128, 0.2) !important; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .info-line { font-size: 13px; margin-bottom: 6px; line-height: 1.5; white-space: normal; word-break: keep-all; }
+        .info-line:last-child { margin-bottom: 0; }
         .info-title { font-weight: bold; opacity: 0.75; }
         .info-val { font-weight: bold; font-size: 14px; margin-right: 4px; }
         
@@ -29,7 +30,7 @@ st.markdown("""
         .rate-down { color: #0068c9 !important; font-weight: bold; }
         .rate-none { opacity: 0.6; font-weight: bold; }
 
-        /* 💡 1. 검색폼 수직 중앙 정렬 강화 */
+        /* 검색폼 수직 중앙 정렬 강화 */
         .search-container { display: flex; align-items: center; margin-bottom: 10px; width: 100%; height: 36px; }
         .search-label { font-size: 14px; font-weight: bold; margin-right: 10px; white-space: nowrap; display: flex; align-items: center; height: 100%; }
         .search-input-wrap { flex-grow: 1; margin-right: 8px; display: flex; align-items: center; }
@@ -151,13 +152,12 @@ if menu == "📈 가치평가 시뮬레이터":
         val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
         st.markdown("</div></div>", unsafe_allow_html=True)
     
-    # 💡 6. 평균 배수 자동 계산 및 목표배수 초기값 설정 로직
+    # 💡 6. 평균 배수 자동 계산 및 목표배수 초기값 설정 로직 (에러 수정됨)
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
         if not ticker_row.empty:
             ticker = ticker_row['Code'].values[0]
-            # 배수 초기값 산출을 위한 임시 데이터 로드
             if st.session_state.last_ticker != ticker:
                 temp_fin = get_hybrid_financials(ticker)
                 temp_price = get_stock_price_data(ticker, "2021-01-01", datetime.today())
@@ -166,12 +166,17 @@ if menu == "📈 가치평가 시뮬레이터":
                     res_m = requests.get(f"https://m.stock.naver.com/api/stock/{ticker}/integration", timeout=5).json()
                     sc = int(res_m['stockEndType']['totalInfo']['stockCount'])
                 except: sc = 1
+                
                 h_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / sc for idx, row in temp_fin[temp_fin['Year'] <= 2024].iterrows() if pd.notna(row[col_p])}
-                temp_p = temp_price.copy(); temp_p['Metric'] = temp_p.index.year.map(h_dict).ffill().bfill()
+                
+                temp_p = temp_price.copy()
+                metric_series = pd.Series(temp_p.index.year.map(h_dict), index=temp_p.index)
+                temp_p['Metric'] = metric_series.ffill().bfill()
+                
                 valid_m = temp_p[pd.to_numeric(temp_p['Metric'], errors='coerce') > 0].copy()
                 if not valid_m.empty:
                     avg_m = (valid_m['Close'] / valid_m['Metric']).mean()
-                    st.session_state.target_mult = int(round(avg_m)) # 💡 2. 정수화
+                    st.session_state.target_mult = int(round(avg_m))
                 st.session_state.last_ticker = ticker
 
     with col_mult:
@@ -244,7 +249,10 @@ if menu == "📈 가치평가 시뮬레이터":
 
                     # --- 차트 데이터 로직 ---
                     historical_metric_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row[col_p])}
-                    df_hist_daily = df_price.copy(); df_hist_daily['Year'] = df_hist_daily.index.year; df_hist_daily['Metric'] = df_hist_daily['Year'].map(historical_metric_dict).ffill().bfill()
+                    df_hist_daily = df_price.copy()
+                    df_hist_daily['Year'] = df_hist_daily.index.year
+                    metric_series2 = pd.Series(df_hist_daily['Year'].map(historical_metric_dict), index=df_hist_daily.index)
+                    df_hist_daily['Metric'] = metric_series2.ffill().bfill().values
                     
                     bands = []
                     valid_hist = df_hist_daily[pd.to_numeric(df_hist_daily['Metric'], errors='coerce') > 0].copy()
@@ -265,7 +273,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 3, 4. 상단 차트: 이미지형 고정 및 좌상단 범례
+                    # 상단 차트
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=3)))
                     for i, b in enumerate(bands):
@@ -285,19 +293,19 @@ if menu == "📈 가치평가 시뮬레이터":
                     
                     fig1.update_layout(
                         height=380, margin=dict(l=0, r=0, t=60, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)), # 💡 좌상단 범례
+                        legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 💡 5. 하단 차트: 이미지형 고정 및 범례 표시
+                    # 하단 차트
                     st.write("")
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/safe_metric, mode='lines', name='당일Val', line=dict(color='purple', width=1.5)))
                     for i, b in enumerate(bands):
                         if pd.notna(b):
-                            fig2.add_hline(y=float(b), line_dash="dash", line_color=cols[i%4], line_width=1, annotation_text=f"{b}x", annotation_position="top left")
+                            fig2.add_hline(y=float(b), line_dash="dash", line_color=cols[i%4], line_width=1, annotation_text=f"{b}x", annotation_position="top left", name=f'{b}x')
                     
                     if today_m > 0: fig2.add_hline(y=today_m, line_dash="solid", line_color="red", line_width=1.5, name='현재')
                     fig2.add_hline(y=target_mult, line_dash="solid", line_color="blue", line_width=1.5, name='목표')
@@ -307,7 +315,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     fig2.update_layout(
                         height=280, margin=dict(l=0, r=0, t=60, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=True, legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)), # 💡 범례 표시
+                        showlegend=True, legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
@@ -317,3 +325,8 @@ if menu == "📈 가치평가 시뮬레이터":
 
     else:
         st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
+
+elif menu == "🛠️ 업데이트 이력":
+    st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
+    df_history = pd.DataFrame({"버전": ["V1.3.4 (최종 완본)", "V1.3.3", "V1.3.2"], "내용": ["에러 픽스, 평가방식 수직 정렬, 목표배수 자동 설정 및 정수화, 차트 범례 최적화 및 고정형 변환", "차트 상단 여백(t:100) 확보로 전체화면 아이콘 가시성 개선", "줄글형 정보창 & 하단 밴드 수치 추가"]})
+    st.dataframe(df_history, hide_index=True, use_container_width=True)
