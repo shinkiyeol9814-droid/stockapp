@@ -12,22 +12,27 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 가치평가", page_icon="📈", layout="wide")
 
-# 💡 필수 CSS만 남기고 쓰레기 코드 전부 삭제
+# 💡 모바일 최적화 및 예쁜 카드형 UI CSS
 st.markdown("""
     <style>
-        .block-container { padding-top: 1.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; }
-        .main-title { font-size: 1.5rem !important; font-weight: bold; margin-bottom: 0.5rem; }
-        .sub-header { font-size: 1.2rem !important; font-weight: bold; margin-top: 15px; margin-bottom: 15px; color: #1f77b4; }
+        /* 1. 타이틀 여백 정상화 (잘림 방지) */
+        .block-container { padding-top: 1.5rem !important; padding-bottom: 1rem !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
+        .main-title { font-size: 1.4rem !important; font-weight: bold; margin-top: 0rem; margin-bottom: 0.8rem; }
+        .sub-header { font-size: 1.1rem !important; font-weight: bold; color: #31333F; margin-top: 10px; margin-bottom: 10px; }
         
-        /* 갱신 버튼 디자인 */
-        div.stButton > button { width: 100% !important; background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 6px !important; margin-top: 28px; }
+        /* 2. 예쁜 카드형 UI 롤백 및 칼각(가로/세로) 정렬 */
+        .info-box { background-color: #f8f9fa; padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eaeaea; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .info-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f0f0; padding-bottom: 8px; margin-bottom: 8px; }
+        .info-row:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
         
-        /* 결과 텍스트 강조 */
-        .res-title { font-weight: 600; color: #555; font-size: 14px; }
-        .res-val { font-weight: 800; font-size: 16px; }
-        .res-sub { color: #888; font-size: 12px; }
-        .res-up { color: #ff4b4b; font-weight: 800; font-size: 15px; }
-        .res-down { color: #0068c9; font-weight: 800; font-size: 15px; }
+        /* 각 항목별 고정 너비 할당으로 완벽한 일직선 유지 */
+        .col-title { width: 85px; font-weight: bold; color: #444; font-size: 13px; }
+        .col-price { width: 75px; font-weight: bold; font-size: 15px; text-align: right; color: #111; }
+        .col-marcap { width: 70px; color: #888; font-size: 12px; text-align: right; }
+        .col-rate { flex: 1; font-weight: bold; font-size: 14px; text-align: right; }
+        
+        /* 갱신 버튼 포인트 컬러 */
+        div.stButton > button { background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 6px !important; border: none !important; }
         
         /* 테이블 폰트 */
         [data-testid="stDataFrame"] { font-size: 12px !important; }
@@ -123,12 +128,18 @@ if menu == "📈 가치평가 시뮬레이터":
     
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 1. 정석적인 columns 활용 (라벨 부활, 갱신버튼 정렬)
-    col1, col2, col3, col4 = st.columns([3, 1, 2, 2])
-    with col1: corp_name = st.text_input("종목명", value="", placeholder="삼성전자").strip()
-    with col2: st.button("갱신", key="refresh_btn")
-    with col3: val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"])
-    with col4: target_mult = st.number_input("목표배수", value=10.0, step=0.5, format="%.1f")
+    # 💡 반응형 입력폼 (모바일 크기에 맞춰 유동적 조절)
+    c1, c2 = st.columns([7, 3])
+    with c1: 
+        corp_name = st.text_input("종목명", value="", placeholder="예: 삼성전자", label_visibility="collapsed").strip()
+    with c2: 
+        search_clicked = st.button("갱신", use_container_width=True)
+        
+    c3, c4 = st.columns(2)
+    with c3: 
+        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"])
+    with c4: 
+        target_mult = st.number_input("목표배수", value=10.0, step=0.5, format="%.1f")
 
     if corp_name:
         with st.spinner("데이터 분석 중..."):
@@ -171,24 +182,38 @@ if menu == "📈 가치평가 시뮬레이터":
                     
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
 
-                    # 💡 2. 분석 결과 표 형태 렌더링 (Markdown Table 활용으로 절대 안 깨짐)
-                    updown_str = f"<span class='res-up'>+{updown:.2f}%</span>" if updown >= 0 else f"<span class='res-down'>{updown:.2f}%</span>"
+                    # 💡 카드형 예쁜 UI 롤백 및 칼각 일직선 정렬
+                    updown_str = f"<span class='col-rate' style='color:#ff4b4b'>+{updown:.2f}%</span>" if updown >= 0 else f"<span class='col-rate' style='color:#0068c9'>{updown:.2f}%</span>"
                     
-                    up1_str = "-"
-                    if tp1 > 0: up1_str = f"<span class='res-up'>Up: +{up1:.1f}%</span>" if up1 >= 0 else f"<span class='res-down'>Down: {up1:.1f}%</span>"
+                    up1_str = f"<span class='col-rate' style='color:gray;'>데이터 없음</span>"
+                    if tp1 > 0: up1_str = f"<span class='col-rate' style='color:#ff4b4b'>Up: +{up1:.1f}%</span>" if up1 >= 0 else f"<span class='col-rate' style='color:#0068c9'>Down: {up1:.1f}%</span>"
                     
-                    up2_str = "-"
-                    if tp2 > 0: up2_str = f"<span class='res-up'>Up: +{up2:.1f}%</span>" if up2 >= 0 else f"<span class='res-down'>Down: {up2:.1f}%</span>"
+                    up2_str = f"<span class='col-rate' style='color:gray;'>데이터 없음</span>"
+                    if tp2 > 0: up2_str = f"<span class='col-rate' style='color:#ff4b4b'>Up: +{up2:.1f}%</span>" if up2 >= 0 else f"<span class='col-rate' style='color:#0068c9'>Down: {up2:.1f}%</span>"
 
-                    st.markdown(f"""
-                    | 구분 | 주가(목표가) | 시가총액 | 등락률(Upside) |
-                    |:---|:---:|:---:|:---:|
-                    | <span class='res-title'>현재가</span> | <span class='res-val'>{curr_p:,.0f}원</span> | <span class='res-sub'>{curr_marcap:,.0f}억</span> | {updown_str} |
-                    | <span class='res-title'>목표가({str(y1)[-2:]}년)</span> | <span class='res-val'>{tp1:,.0f}원</span> | <span class='res-sub'>{tm1:,.0f}억</span> | {up1_str} |
-                    | <span class='res-title'>목표가({str(y2)[-2:]}년)</span> | <span class='res-val'>{tp2:,.0f}원</span> | <span class='res-sub'>{tm2:,.0f}억</span> | {up2_str} |
-                    """, unsafe_allow_html=True)
-
-                    st.write("") # 간격 띄우기
+                    html_info = f"""
+                    <div class='info-box'>
+                        <div class='info-row'>
+                            <span class='col-title'>현재가</span>
+                            <span class='col-price'>{curr_p:,.0f}원</span>
+                            <span class='col-marcap'>({curr_marcap:,.0f}억)</span>
+                            {updown_str}
+                        </div>
+                        <div class='info-row'>
+                            <span class='col-title'>목표가({str(y1)[-2:]}년)</span>
+                            <span class='col-price'>{tp1:,.0f}원</span>
+                            <span class='col-marcap'>({tm1:,.0f}억)</span>
+                            {up1_str}
+                        </div>
+                        <div class='info-row'>
+                            <span class='col-title'>목표가({str(y2)[-2:]}년)</span>
+                            <span class='col-price'>{tp2:,.0f}원</span>
+                            <span class='col-marcap'>({tm2:,.0f}억)</span>
+                            {up2_str}
+                        </div>
+                    </div>
+                    """
+                    st.markdown(html_info, unsafe_allow_html=True)
 
                     # --- 차트 데이터 준비 ---
                     historical_metric_dict = {row['Plot_Date'].year: float(row['당기순이익' if "PER" in val_type else '영업이익']) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row['당기순이익' if "PER" in val_type else '영업이익'])}
@@ -220,7 +245,7 @@ if menu == "📈 가치평가 시뮬레이터":
 
                         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
                         
-                        fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=3)), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=2)), row=1, col=1)
                         
                         cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
                         for i, b in enumerate(bands):
@@ -243,7 +268,7 @@ if menu == "📈 가치평가 시뮬레이터":
                             height=500, margin=dict(l=0, r=0, t=50, b=0),
                             title=dict(text=f"[{'POR' if 'POR' in val_type else 'PER'} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                             legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
-                            hovermode="x unified"
+                            hovermode="x unified", template="none"
                         )
                         return fig
 
@@ -251,7 +276,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     main_fig = create_valuation_chart(static_mode=False)
                     st.plotly_chart(main_fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False})
 
-                    st.markdown("<b>연도별 재무 상세</b> <span style='color:red; font-size:12px;'>(※ 값 수정 시 밸류 즉시 재측정)</span>", unsafe_allow_html=True)
+                    st.markdown("<div class='sub-header' style='margin-top:20px;'>연도별 재무 상세 <span style='color:red; font-size:12px;'>(※ 값 수정 시 밸류 즉시 재측정)</span></div>", unsafe_allow_html=True)
                     edited_df = st.data_editor(
                         fin_df[['Label', '매출액', '영업이익', '당기순이익']],
                         column_config={
@@ -296,9 +321,10 @@ elif menu == "📝 증권사 레포트":
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
     df_history = pd.DataFrame({
-        "버전": ["V1.2.5 (UI 대폭격 롤백)", "V1.2.4", "V1.2.2"],
+        "버전": ["V1.2.6 (UI 완벽 튜닝)", "V1.2.5", "V1.2.4", "V1.2.2"],
         "업데이트 내용": [
-            "기본에 충실한 UI 복구: 무리한 CSS 삭제, st.columns로 입력창 정렬, Markdown Table로 결과창 그리드 완벽 구현",
+            "타이틀 잘림 픽스, 입력폼 st.columns 기반 완벽 반응형 구현, 결과창 예쁜 카드 UI 롤백 및 내부 Flexbox 칼각 정렬",
+            "기본에 충실한 UI 복구: 무리한 CSS 삭제, st.columns로 입력창 정렬",
             "입력폼 완벽 가로 정렬(Inline CSS), 갱신 버튼 크기 축소, 분석 결과 그리드(Grid) 정렬",
             "AttributeError(ffill) 완벽 픽스 및 TypeError 대응"
         ]
