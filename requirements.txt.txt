@@ -1,4 +1,5 @@
 streamlit
+FinanceDataReader
 finance-datareader
 pandas
 yfinance
