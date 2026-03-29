@@ -157,7 +157,7 @@ if menu == "📈 가치평가 시뮬레이터":
     col_type, col_mult = st.columns(2)
     with col_type:
         st.markdown("<div class='search-container'><div class='search-label'>평가방식</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-        val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
+        val_type = st.selectbox("평가방식", ["PER(순익)", "POR(영익)"], label_visibility="collapsed")
         st.markdown("</div></div>", unsafe_allow_html=True)
     with col_mult:
         st.markdown("<div class='search-container'><div class='search-label'>목표배수</div><div class='search-input-wrap'>", unsafe_allow_html=True)
