@@ -137,31 +137,31 @@ def get_hybrid_financials(ticker):
                         master_dict[y]['당기순이익'] = float(ni)/1e8 if pd.notna(ni) and ni!=0 else np.nan
     except: pass
 
-    # 💡 핵심 해결: Selenium 부활 및 AJAX 로딩 완벽 대기 로직 적용
     try:
         url = f"https://finance.naver.com/item/coinfo.naver?code={ticker}"
         chrome_options = Options()
         chrome_options.add_argument("--headless") 
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--window-size=1920,1080") # 💡 잘림 방지 (FHD 강제)
-        chrome_options.add_argument("--force-device-scale-factor=0.8") # 💡 줌아웃 강제
+        # 💡 클라우드 화면 잘림 방지를 위해 해상도를 더욱 극단적으로 키움
+        chrome_options.add_argument("--window-size=2560,1440") 
         chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get(url)
         
-        # 종합정보 iframe 진입
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "coinfo_cp")))
         driver.switch_to.frame("coinfo_cp")
         
-        # 고객님이 짚어주신 '연간' 탭 클릭!
-        tab_annual = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "cns_Tab21")))
-        tab_annual.click()
+        # 💡 핵심 해결책: 자바스크립트(JS) 강제 클릭 도입
+        # presence_of_element_located를 써서 버튼이 HTML 상에 존재하기만 하면 무조건 잡아냄
+        tab_annual = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cns_Tab21")))
         
-        # 💡 가장 중요한 포인트: 클라우드의 느린 네트워크가 AJAX 추가 데이터(21, 26, 27)를 
-        # 서버에서 받아와 표를 다시 그릴 때까지 무조건 '3.5초'를 넉넉하게 기다립니다.
+        # 가상 마우스 클릭(.click)을 버리고, 자바스크립트로 직접 클릭 이벤트를 폭격
+        driver.execute_script("arguments[0].click();", tab_annual)
+        
+        # 데이터가 펼쳐질 때까지 확실하게 대기
         time.sleep(3.5) 
         
         df_annual = parse_and_filter_html(driver.page_source)
@@ -199,6 +199,7 @@ def get_hybrid_financials(ticker):
         rows.append(row)
         
     return pd.DataFrame(rows)
+
 
 # ==========================================
 # 💡 좌측 사이드바: 네비게이션 메뉴 구성
@@ -512,17 +513,13 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V1.0.2 (정식 완전판)", "V1.0.1", "V39.5", "V39.4", "V39.3", "V39.2", "V39.0", "V38.0", "V37.0"],
+        "버전": ["V1.0.3", "V1.0.2", "V1.0.1", "V39.5", "V39.4"],
         "업데이트 내용": [
+            "클라우드 Headless Chrome 클릭 무시 현상 타파 (JS execute_script 강제 폭격 도입)",
             "가상 브라우저(Selenium) 부활 및 클라우드 AJAX 로딩 물리적 타이밍(3.5초) 동기화로 21~27년 데이터 완벽 추출",
             "가상 브라우저 완전 폐기 및 초고속 API 통신 도입 (속도 10배 향상 시도)",
             "클라우드 가상 브라우저 해상도 강제 고정(1920x1080)으로 과거/미래 데이터(21년, 26/27년) 짤림 현상 완전 해결",
-            "클라우드 렌더링 지연에 따른 25~27년 데이터 누락 방지 로직(WebDriverWait) 탑재",
-            "사이드바 라디오 버튼(label) 경고 해결 및 클라우드 우회망 User-Agent 위장 로직 추가",
-            "클라우드 IP 차단 원천 해결 (KIND 직접 크롤링 및 네이버 모바일 API 실시간 연동 방어 로직 탑재)",
-            "메인 UI 대규모 개편 (사이드바 메뉴화, 상단 컨트롤 패널 배치, 버전 이력 독립 탭 전환)",
-            "차트 X축 연도 고정, 밴드 4개 축소, 찌그러짐 방지 Y축 타이트 최적화 및 팝업 텍스트 적용",
-            "인터랙티브 웹 차트(Plotly) 도입, 엑셀형 표 직접 수정 기능, 목표 밸류에이션 입력 기능 추가"
+            "클라우드 렌더링 지연에 따른 25~27년 데이터 누락 방지 로직(WebDriverWait) 탑재"
         ]
     }
     
