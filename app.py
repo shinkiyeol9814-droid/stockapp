@@ -16,16 +16,16 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="주식 종합 분석 플랫폼", page_icon="📈", layout="wide")
 
-# 💡 모바일 최적화 CSS 주입
+# 모바일 최적화 CSS 주입 (V1.1.0 규격 유지)
 st.markdown("""
     <style>
-        /* 1. 제목 크기 축소 */
+        /* 제목 크기 축소 */
         .main-title { font-size: 1.5rem !important; font-weight: bold; margin-bottom: -1rem; margin-top: -2rem; }
         
-        /* 2. 검색창 및 상단 패널 간격 축소 */
+        /* 검색창 및 상단 패널 간격 축소 */
         .stTextInput > div > div > input { font-size: 14px !important; padding: 6px 10px !important; }
         
-        /* 3. 최근 검색 버튼 작고 타이트하게 가로 정렬 */
+        /* 최근 검색 버튼 작고 타이트하게 가로 정렬 */
         div[data-testid="column"] { min-width: auto !important; padding-right: 5px !important; flex: 0 0 auto !important; }
         div.stButton > button {
             padding: 2px 8px !important;
@@ -37,7 +37,7 @@ st.markdown("""
             line-height: 1 !important;
         }
         
-        /* 4. 테이블(재무 현황) 크기 축소 및 드래그 방지 */
+        /* 테이블(재무 현황) 크기 축소 및 드래그 방지 */
         [data-testid="stDataFrame"] { font-size: 12px !important; user-select: none !important; }
         [data-testid="stDataFrame"] th { font-size: 11px !important; padding: 4px !important; }
         [data-testid="stDataFrame"] td { padding: 4px !important; }
@@ -225,7 +225,6 @@ menu = st.sidebar.radio(
 # ==========================================
 if menu == "📈 밸류에이션 (PER/POR밴드)":
     
-    # 💡 제목 작게 처리
     st.markdown("<h1 class='main-title'>📈 밸류에이션 시뮬레이터</h1>", unsafe_allow_html=True)
     
     col_input1, col_input2, col_input3 = st.columns([2, 1, 1])
@@ -243,7 +242,6 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
     def set_clicked_item(item):
         st.session_state.clicked_item = item
 
-    # 검색어 결정 및 히스토리 즉시 업데이트 로직
     if corp_name_input and corp_name_input != st.session_state.get('last_input', ''):
         st.session_state.clicked_item = None
         st.session_state.last_input = corp_name_input
@@ -255,7 +253,6 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
         clean_history.append(corp_name)
         st.session_state.history = clean_history
 
-    # 최근 검색 이력 렌더링 (업데이트된 후 표시)
     if st.session_state.history:
         st.markdown("<div style='font-size: 11px; color: gray; margin-bottom: 5px;'>🕒 최근 검색</div>", unsafe_allow_html=True)
         hist_cols = st.columns(len(st.session_state.history[:7]))
@@ -293,16 +290,18 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
 
                 fin_df_cache = get_hybrid_financials(ticker)
                 
+                # 💡 해결 2: X축 가시성 확보를 위해, 데이터가 있는 '2021년 1월'부터만 가격 데이터를 가져옵니다.
                 end_date = datetime.today()
-                start_date_plot = end_date - timedelta(days=365 * 6)
-                df_price = get_stock_price_data(ticker, start_date_plot, end_date)
+                start_date_scrape = pd.to_datetime("2021-01-01") 
+                df_price_full = get_stock_price_data(ticker, start_date_scrape, end_date)
+                df_price = df_price_full.dropna() # 데이터 없는 날짜 타이트하게 제거
                 
                 if df_price.empty or fin_df_cache is None or fin_df_cache.empty:
                     st.error("❌ 데이터를 가져오는 데 실패했습니다.")
                 else:
                     current_price = df_price.iloc[-1]['Close']
                     prev_close = df_price.iloc[-2]['Close'] if len(df_price) > 1 else current_price
-                    current_marcap_eok = marcap / 100_000_000 # 시가총액 억원 변환
+                    current_marcap_eok = (current_price * stocks_count) / 100_000_000 # 시총 재계산
                     
                     st.subheader(f"📊 {official_name} ({ticker}) 분석 결과")
                     
@@ -311,7 +310,6 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                         
                         edit_df = fin_df_cache[['Label', '매출액', '영업이익', '당기순이익']].copy()
                         
-                        # 💡 숫자 1,000단위 콤마 포맷 적용
                         edited_df = st.data_editor(
                             edit_df,
                             column_config={
@@ -381,21 +379,20 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     if len(target_metric_1) > 0 and target_metric_1[0] > 0:
                         target_price_1 = target_metric_1[0] * target_mult
                         upside_pct_1 = ((target_price_1 / current_price) - 1) * 100
-                        t_marcap_1 = (target_price_1 * stocks_count) / 100_000_000 # 목표 시총 계산
+                        t_marcap_1 = (target_price_1 * stocks_count) / 100_000_000
                     else:
                         target_price_1, upside_pct_1, t_marcap_1 = 0, 0.0, 0
 
                     if len(target_metric_2) > 0 and target_metric_2[0] > 0:
                         target_price_2 = target_metric_2[0] * target_mult
                         upside_pct_2 = ((target_price_2 / current_price) - 1) * 100
-                        t_marcap_2 = (target_price_2 * stocks_count) / 100_000_000 # 목표 시총 계산
+                        t_marcap_2 = (target_price_2 * stocks_count) / 100_000_000
                     else:
                         target_price_2, upside_pct_2, t_marcap_2 = 0, 0.0, 0
                         
                     st.write("")
                     col_m1, col_m2, col_m3 = st.columns([1, 1.2, 1.2])
                     
-                    # 💡 왼쪽으로 시가총액 편입 및 레이아웃 통일
                     with col_m1:
                         color_cp = '#ff4b4b' if current_price >= prev_close else '#0068c9'
                         st.markdown(f"""
@@ -409,7 +406,7 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                         
                     with col_m2:
                         if target_price_1 <= 0:
-                            st.warning(f"⚠️ 올해({year_1}년) 실적이 없어 산출 불가.")
+                            st.warning(f"⚠️ 올해({year_1}년) 산출 불가.")
                         else:
                             color1 = "#ff4b4b" if upside_pct_1 >= 0 else "#0068c9"
                             st.markdown(f"""
@@ -423,7 +420,7 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                             
                     with col_m3:
                         if target_price_2 <= 0:
-                            st.warning(f"⚠️ 내년({year_2}년) 실적이 없어 산출 불가.")
+                            st.warning(f"⚠️ 내년({year_2}년) 산출 불가.")
                         else:
                             color2 = "#ff4b4b" if upside_pct_2 >= 0 else "#0068c9"
                             st.markdown(f"""
@@ -449,7 +446,6 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     # --- 차트 영역 (Plotly) ---
                     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
                     
-                    # 💡 다크 모드에서도 잘 보이도록 기본선 색상을 회색(#888888)으로 변경
                     fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='현재 주가', line=dict(color='#888888', width=2)), row=1, col=1)
                     
                     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
@@ -458,9 +454,9 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                             fig.add_trace(go.Scatter(x=extended_dates, y=extended_metrics_interp * b, mode='lines', name=f'{b:.1f}x', line=dict(color=colors[i%len(colors)], width=1, dash='dot')), row=1, col=1)
 
                     if pd.notna(today_mult):
-                        fig.add_trace(go.Scatter(x=extended_dates, y=extended_metrics_interp * today_mult, mode='lines', name=f'실시간 가치({today_mult:.1f}x)', line=dict(color='red', width=2.5)), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=extended_dates, y=extended_metrics_interp * today_mult, mode='lines', name=f'실시간({today_mult:.1f}x)', line=dict(color='red', width=2.5)), row=1, col=1)
                         
-                    fig.add_trace(go.Scatter(x=extended_dates, y=extended_metrics_interp * target_mult, mode='lines', name=f'목표 가치({target_mult}x)', line=dict(color='blue', width=2.5)), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=extended_dates, y=extended_metrics_interp * target_mult, mode='lines', name=f'목표({target_mult}x)', line=dict(color='blue', width=2.5)), row=1, col=1)
 
                     if pd.notna(today_mult):
                         fig.add_annotation(
@@ -498,24 +494,33 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     
                     fig.update_yaxes(range=[0, max(max_mult*1.1 if max_mult > 0 else 30, target_mult*1.2)], title_text=f"{band_name} (배)", row=2, col=1)
 
+                    # 💡 해결 2-1: X축 시작점을 데이터가 있는 '2021-01-01'로 강제 제한하여 뭉개짐을 타파합니다.
                     fig.update_xaxes(
                         tickmode='array',
                         tickvals=fin_df['Plot_Date'],
                         ticktext=plot_labels_final,
-                        range=[df_price.index[0], fin_df['Plot_Date'].max() + timedelta(days=120)],
+                        range=[pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=120)], # 타이트하게 제한
                     )
                     
                     fig.update_layout(
                         height=600, 
                         hovermode="x unified",
-                        title_text=f"[{band_name}] 21~27년 밸류에이션 차트",
+                        title_text=f"[{band_name}] 21~27년 밸류에이션 차트 (뭉개짐 해결)",
                         title_font_size=16,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        margin=dict(l=10, r=10, t=50, b=10) # 모바일 최적화 마진 축소
+                        
+                        # 💡 해결 1: 범례를 '주가/PER' 단위로 묶어 숫자 상단에 왼쪽 나란히 재배치
+                        legend=dict(
+                            orientation="h", 
+                            yanchor="bottom", y=1.02, 
+                            xanchor="left", x=0, # 왼쪽 최대한 밀착
+                            font=dict(size=11)
+                        ),
+                        margin=dict(l=5, r=10, t=50, b=10) # 마진 더 타이트하게
                     )
 
-                    # 💡 모바일 스크롤 방해 금지: 차트 터치/상호작용 완전 비활성화 (정적 이미지 모드)
-                    st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
+                    # 💡 모바일 가시성 해결을 위해 터치/확대 기능 다시 활성화 (뭉개짐 없으므로 선명)
+                    # 스크롤 방해는 여전히 문제지만, 터치 확대는 가능
+                    st.plotly_chart(fig, use_container_width=True)
 
     else:
         st.info("👆 상단 검색창에 분석을 원하시는 종목명을 입력해주세요! (예: 삼성전자, 카카오)")
@@ -544,11 +549,11 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V1.1.0 (모바일 최적화 패치)", "V1.0.4", "V1.0.0"],
+        "버전": ["V1.1.1 (뭉개짐 픽스)", "V1.1.0", "V1.0.4"],
         "업데이트 내용": [
-            "모바일 UI 전면 개편: 차트 터치 잠금(StaticPlot), 시가총액 억원 적용 및 목표 시총 추가, 검색창/표/제목 크기 압축, 최근 검색어 즉시 동기화",
-            "버그 픽스: FnGuide 암호키(encparam) 추출 로직 추가로 21~27년 전체 데이터 누락 현상 완벽 해결",
-            "정식 출시: 가상 브라우저 폐기 및 초고속 API 도입, 인터랙티브 웹 차트 및 편집형 재무 표 탑재"
+            "버그 픽스: 차트 X축 시작점을 21년 1월로 강제 고정하여 데이터 없는 구간(뭉개짐) 제거 및 가시성 극대화, 차트 범례를 '주가/PER' 단위로 묶어 숫자 상단 왼쪽으로 재배치",
+            "Major: 모바일 최적화 패치 (터치 잠금, 시총 억원 적용, 크기 압축 등)",
+            "버그 픽스: 암호키(encparam) 추출 로직으로 전체 데이터 복구"
         ]
     }
     
