@@ -1,0 +1,10 @@
+streamlit
+finance-datareader
+pandas
+yfinance
+selenium
+webdriver-manager
+plotly
+lxml
+beautifulsoup4
+html5lib
