@@ -25,14 +25,9 @@ st.markdown("""
         .metric-label { font-size: 12px; color: gray; }
         .metric-main { font-size: 16px; font-weight: bold; }
         
-        /* 검색 버튼 스타일 */
-        div.stButton > button {
-            width: 100% !important;
-            background-color: #ff4b4b !important;
-            color: white !important;
-            border-radius: 8px !important;
-            font-weight: bold !important;
-        }
+        /* 💡 갱신 버튼 스타일 (종목명 옆 배치용) */
+        .search-btn-container { display: flex; align-items: flex-end; padding-bottom: 2px; height: 100%; }
+        .search-btn-container button { width: 100% !important; background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 8px !important; }
 
         /* 테이블 폰트 및 적응형 설정 */
         [data-testid="stDataFrame"] { font-size: 11px !important; }
@@ -41,6 +36,11 @@ st.markdown("""
         .block-container { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
     </style>
 """, unsafe_allow_html=True)
+
+if 'history' not in st.session_state:
+    st.session_state.history = []
+if 'clicked_item' not in st.session_state:
+    st.session_state.clicked_item = None
 
 # --- 데이터 캐싱 함수들 ---
 @st.cache_data(ttl=86400)
@@ -56,7 +56,7 @@ def get_ticker_listing():
         df = pd.read_html(io.StringIO(res.text), header=0)[0]
         df = df.rename(columns={'회사명': 'Name', '종목코드': 'Code'})
         df['Code'] = df['Code'].astype(str).str.zfill(6)
-        df['Stocks'], df['Marcap'] = 0, 0
+        df['Market'], df['Stocks'], df['Marcap'] = 'KOSPI', 0, 0
         return df
     except: return pd.DataFrame(columns=['Code', 'Name', 'Stocks', 'Marcap'])
 
@@ -119,21 +119,23 @@ def get_hybrid_financials(ticker):
     return pd.DataFrame(rows)
 
 # ==========================================
-# 💡 사이드바 메뉴
+# 💡 사이드바 메뉴 (요청사항 1: 메뉴 복구)
 # ==========================================
 st.sidebar.title("🧭 메뉴")
-menu = st.sidebar.radio("이동", ["📈 밸류에이션", "🛠️ 업데이트 이력"], label_visibility="collapsed")
+menu = st.sidebar.radio("이동", ["📈 밸류에이션 (PER/POR밴드)", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 업데이트 이력"], label_visibility="collapsed")
 
-if menu == "📈 밸류에이션":
+if menu == "📈 밸류에이션 (PER/POR밴드)":
     st.markdown("<h1 class='main-title'>📈 가치평가 시뮬레이터</h1>", unsafe_allow_html=True)
     
-    # 💡 1. 필터 및 검색 버튼
-    c1, c2, c3 = st.columns([1.5, 1, 1])
-    with c1: corp_name = st.text_input("🔍 종목명", value="", placeholder="삼성전자").strip()
+    # 💡 요청사항 2: 종목명 옆에 갱신 버튼 배치
+    c1, btn_col, c2, c3 = st.columns([1.5, 0.6, 1.2, 1])
+    with c1: corp_name = st.text_input("🔍 종목명 (예: 삼성전자)", value="").strip()
+    with btn_col: 
+        st.markdown("<div class='search-btn-container'>", unsafe_allow_html=True)
+        search_clicked = st.button("갱신", use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
     with c2: val_type = st.selectbox("기준", ["PER(순이익)", "POR(영업익)"])
     with c3: target_mult = st.number_input("목표배수", value=10.0, step=0.5, format="%.1f")
-    
-    search_clicked = st.button("🔍 종목 검색 및 데이터 갱신")
 
     if corp_name:
         with st.spinner("데이터 분석 중..."):
@@ -162,20 +164,22 @@ if menu == "📈 밸류에이션":
                     
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # 목표가 산출
+                    # 목표가 산출 (TypeError 방지 처리)
                     y1, y2 = datetime.today().year, datetime.today().year + 1
                     col_p = '영업이익' if "POR" in val_type else '당기순이익'
                     
                     def get_t(y):
                         v = fin_df[fin_df['Year'] == y][col_p].values
                         if len(v) > 0 and pd.notna(v[0]) and v[0] > 0:
-                            tp = (v[0] * 100_000_000 / stocks_count) * target_mult
-                            return tp, ((tp/curr_p)-1)*100, (tp*stocks_count)/100_000_000
+                            # float() 타입 에러 방지를 위해 명시적 변환
+                            try:
+                                tp = float((v[0] * 100_000_000 / stocks_count) * target_mult)
+                                return tp, float(((tp/curr_p)-1)*100), float((tp*stocks_count)/100_000_000)
+                            except: return 0, 0, 0
                         return 0, 0, 0
                     
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
 
-                    # 💡 8. 주가 (시가총액) 상승여력 세로형 카드 UI
                     st.markdown(f"""
                         <div class='info-box'>
                             <div class='info-row'>
@@ -194,45 +198,51 @@ if menu == "📈 밸류에이션":
                     """, unsafe_allow_html=True)
 
                     # --- 차트 데이터 준비 ---
-                    historical_metric_dict = {row['Plot_Date'].year: row['당기순이익' if "PER" in val_type else '영업이익'] * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows()}
+                    historical_metric_dict = {row['Plot_Date'].year: float(row['당기순이익' if "PER" in val_type else '영업이익']) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row['당기순이익' if "PER" in val_type else '영업이익'])}
                     df_hist_daily = df_price.copy(); df_hist_daily['Metric'] = df_hist_daily.index.year.map(historical_metric_dict).ffill().bfill()
                     
                     bands = []
-                    if not df_hist_daily[df_hist_daily['Metric']>0].empty:
-                        df_v = df_hist_daily[df_hist_daily['Metric']>0].copy(); df_v['Mult'] = df_v['Close'] / df_v['Metric']
-                        mn, mx = df_v['Mult'].min(), df_v['Mult'].max(); stp = (mx-mn)/3
-                        bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
+                    # NoneType 에러의 핵심 원인 해결: Metric이 없거나 음수일 때 필터링
+                    valid_hist = df_hist_daily[pd.to_numeric(df_hist_daily['Metric'], errors='coerce') > 0].copy()
+                    
+                    if not valid_hist.empty:
+                        valid_hist['Mult'] = valid_hist['Close'] / valid_hist['Metric']
+                        mn, mx = valid_hist['Mult'].min(), valid_hist['Mult'].max()
+                        stp = (mx-mn)/3
+                        if not np.isnan(mn) and not np.isnan(stp):
+                            bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
-                    # 시뮬레이션용 데이터 갱신을 위해 껍데기 함수 정의 (하단 표에서 가져올 것임)
                     
-                    # 차트 생성 함수
+                    # 차트 생성 함수 (TypeError 방어 코드 추가)
                     def create_valuation_chart(static_mode=False):
-                        # 실시간 인터폴레이션 (현재 시뮬레이션 값 반영)
-                        cur_metrics = fin_df['당기순이익' if "PER" in val_type else '영업이익'].values * 100_000_000 / stocks_count
-                        cur_metrics = np.nan_to_num(cur_metrics, nan=0.001)
+                        # 실시간 인터폴레이션 시 None/NaN 값을 0.001로 치환하여 에러 원천 차단
+                        raw_metrics = pd.to_numeric(fin_df['당기순이익' if "PER" in val_type else '영업이익'], errors='coerce').values
+                        cur_metrics = np.nan_to_num(raw_metrics, nan=0.001) * 100_000_000 / stocks_count
+                        cur_metrics = np.where(cur_metrics <= 0, 0.001, cur_metrics) # 음수도 방어
+                        
                         ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
-                        today_m = curr_p / ext_interp[len(df_price)-1] if ext_interp[len(df_price)-1] > 0.1 else 0
+                        today_m = float(curr_p / ext_interp[len(df_price)-1]) if ext_interp[len(df_price)-1] > 0.1 else 0
 
                         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
                         
-                        # 💡 주가 선 굵게 + 테마 적응형 그레이 색상
                         fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#666666', width=3)), row=1, col=1)
                         
                         cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
                         for i, b in enumerate(bands):
-                            fig.add_trace(go.Scatter(x=extended_dates, y=ext_interp * b, mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')), row=1, col=1)
+                            if pd.notna(b):
+                                fig.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')), row=1, col=1)
 
-                        # 실시간/목표선 (가늘게)
-                        fig.add_trace(go.Scatter(x=extended_dates, y=ext_interp * today_m, mode='lines', name='현재Val', line=dict(color='red', width=1.2)), row=1, col=1)
-                        fig.add_trace(go.Scatter(x=extended_dates, y=ext_interp * target_mult, mode='lines', name='목표Val', line=dict(color='blue', width=1.2)), row=1, col=1)
+                        if pd.notna(today_m) and today_m > 0:
+                            fig.add_trace(go.Scatter(x=extended_dates, y=ext_interp * today_m, mode='lines', name='현재Val', line=dict(color='red', width=1.2)), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(target_mult), mode='lines', name='목표Val', line=dict(color='blue', width=1.2)), row=1, col=1)
 
-                        # 하단 차트
-                        fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/(df_hist_daily['Metric'].replace(0,np.nan)), mode='lines', name='당일Val', line=dict(color='purple', width=1.5)), row=2, col=1)
+                        # 하단 차트 (ZeroDivision 방지)
+                        safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
+                        fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/safe_metric, mode='lines', name='당일Val', line=dict(color='purple', width=1.5)), row=2, col=1)
                         
-                        # 레이아웃 최적화 (여백 제로 및 제목 변경)
                         x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
                         fig.update_xaxes(range=x_range, showticklabels=True, row=1, col=1)
                         fig.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], row=2, col=1)
@@ -246,11 +256,9 @@ if menu == "📈 밸류에이션":
                         )
                         return fig
 
-                    # 💡 메인 인터랙티브 차트 (전체화면 가능)
                     main_fig = create_valuation_chart(static_mode=False)
                     st.plotly_chart(main_fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False})
 
-                    # 💡 3. 연도별 재무 상세 (위치 이동 및 헤더 빨간색 강조)
                     st.markdown("### 연도별 재무 상세 <span style='color:red; font-size:0.85rem;'>(※ 값 입력/수정하여 밸류 측정가능)</span>", unsafe_allow_html=True)
                     edited_df = st.data_editor(
                         fin_df[['Label', '매출액', '영업이익', '당기순이익']],
@@ -263,28 +271,43 @@ if menu == "📈 밸류에이션":
                         hide_index=True, use_container_width=True, key="financial_editor"
                     )
                     
-                    # 데이터 동기화
                     fin_df['매출액'] = edited_df['매출액'].values
                     fin_df['영업이익'] = edited_df['영업이익'].values
                     fin_df['당기순이익'] = edited_df['당기순이익'].values
 
-                    # 💡 8. 이미지 형태의 그래프 하단 추가
                     st.write("---")
                     st.markdown("<div style='font-size:12px; color:gray; text-align:center;'>⬇️ 아래는 고정 이미지형 그래프입니다 (비교용)</div>", unsafe_allow_html=True)
                     img_fig = create_valuation_chart(static_mode=True)
                     st.plotly_chart(img_fig, use_container_width=True, config={'staticPlot': True})
 
     else:
-        st.info("👆 상단에 종목명을 입력하고 검색 버튼을 눌러주세요!")
+        st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
 
 # ==========================================
-# 💡 업데이트 이력
+# 💡 페이지 2: 관심종목 - 뉴스 (복구)
+# ==========================================
+elif menu == "📰 관심종목 - 뉴스":
+    st.title("📰 관심종목 - 실시간 뉴스")
+    st.write("사용자의 관심종목과 관련된 핵심 뉴스를 스크래핑하여 보여주는 공간입니다.")
+    st.info("🛠️ 현재 서비스 준비 중입니다. 다음 업데이트를 기대해 주세요!")
+
+# ==========================================
+# 💡 페이지 3: 증권사 레포트 (복구)
+# ==========================================
+elif menu == "📝 증권사 레포트":
+    st.title("📝 최신 증권사 레포트 요약")
+    st.write("주요 증권사에서 발간된 리서치 자료 및 목표가 컨센서스를 요약 제공합니다.")
+    st.info("🛠️ 현재 서비스 준비 중입니다. 다음 업데이트를 기대해 주세요!")
+
+# ==========================================
+# 💡 기타 메뉴: 업데이트 이력
 # ==========================================
 elif menu == "🛠️ 업데이트 이력":
     st.title("🛠️ 업데이트 이력")
     df_history = pd.DataFrame({
-        "버전": ["V1.2.0 (UI 메이저)", "V1.1.6", "V1.1.4", "V1.0.4"],
+        "버전": ["V1.2.1 (핫픽스)", "V1.2.0", "V1.1.6", "V1.1.4", "V1.0.4"],
         "업데이트 내용": [
+            "TypeError(NoneType) 버그 수정, 관심종목/레포트 메뉴 복구, [갱신] 버튼 종목명 옆으로 이동 및 디자인 변경",
             "메이저 UI 개편: 검색 버튼 추가, 재무표 하단 이동 및 헤더 강조, 주가 선 테마 적응형 색상 적용, 이미지형 차트 추가, 가시성 카드 UI 도입",
             "코드 노출 HTML 버그 수정 및 표 펼침 적용",
             "FnGuide 크롤링 로직 안정화 (21~27년 데이터 완벽 복구)",
