@@ -30,11 +30,33 @@ if 'clicked_item' not in st.session_state:
     st.session_state.clicked_item = None
 
 
-# --- 데이터 캐싱 함수들 ---
-@st.cache_data
-def get_ticker_listing():
-    return fdr.StockListing('KRX')
+# 기존의 @st.cache_data 부분이 있던 곳을 찾아 아래 코드로 완전히 교체하세요.
 
+@st.cache_data(ttl=86400) # 💡 핵심 1: 하루(86400초)에 딱 한 번만 다운받고 캐시에 저장하여 차단 원천 봉쇄
+def get_ticker_listing():
+    import time
+    import requests
+    import io
+    
+    # 💡 핵심 2: fdr이 일시적으로 막혔을 때를 대비한 3번의 재시도 로직
+    for i in range(3):
+        try:
+            df = fdr.StockListing('KRX')
+            if not df.empty:
+                return df
+        except Exception:
+            time.sleep(1) # 1초 쉬고 재시도
+            
+    # 💡 핵심 3: fdr이 클라우드 IP 차단으로 완전히 막혔을 경우, 가짜 브라우저 헤더를 달고 원본 저장소에서 직접 탈취
+    try:
+        url = "https://raw.githubusercontent.com/FinanceData/FinanceDataReader/master/krx/data/krx_marcap.csv"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers, timeout=5)
+        df = pd.read_csv(io.StringIO(res.text), dtype={'Code': str})
+        return df
+    except Exception as e:
+        st.error("거래소 종목 데이터를 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.")
+        return pd.DataFrame()
 
 @st.cache_data
 def get_stock_price_data(ticker, start_date, end_date):
