@@ -16,6 +16,34 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="주식 종합 분석 플랫폼", page_icon="📈", layout="wide")
 
+# 💡 모바일 최적화 CSS 주입
+st.markdown("""
+    <style>
+        /* 1. 제목 크기 축소 */
+        .main-title { font-size: 1.5rem !important; font-weight: bold; margin-bottom: -1rem; margin-top: -2rem; }
+        
+        /* 2. 검색창 및 상단 패널 간격 축소 */
+        .stTextInput > div > div > input { font-size: 14px !important; padding: 6px 10px !important; }
+        
+        /* 3. 최근 검색 버튼 작고 타이트하게 가로 정렬 */
+        div[data-testid="column"] { min-width: auto !important; padding-right: 5px !important; flex: 0 0 auto !important; }
+        div.stButton > button {
+            padding: 2px 8px !important;
+            height: auto !important;
+            min-height: 24px !important;
+            font-size: 11px !important;
+            border-radius: 12px !important;
+            margin: 0 !important;
+            line-height: 1 !important;
+        }
+        
+        /* 4. 테이블(재무 현황) 크기 축소 및 드래그 방지 */
+        [data-testid="stDataFrame"] { font-size: 12px !important; user-select: none !important; }
+        [data-testid="stDataFrame"] th { font-size: 11px !important; padding: 4px !important; }
+        [data-testid="stDataFrame"] td { padding: 4px !important; }
+    </style>
+""", unsafe_allow_html=True)
+
 if 'history' not in st.session_state:
     st.session_state.history = []
 if 'clicked_item' not in st.session_state:
@@ -108,9 +136,7 @@ def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
     master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan} for y in target_years}
     
-    # 💡 핵심 픽스: FnGuide 암호키(encparam) 추출 후 완벽한 전체 데이터 API 호출
     try:
-        # 1. 메인 페이지 접속하여 숨겨진 암호키(encparam) 훔쳐오기
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         main_res = requests.get(main_url, headers=headers, timeout=10)
@@ -120,7 +146,6 @@ def get_hybrid_financials(ticker):
         if match:
             encparam = match.group(1)
             
-        # 2. 암호키를 장착하고 '연간(cns_Tab21)' 탭 클릭 시와 100% 동일한 API 요청 발사
         ajax_url = f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ajax_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -156,7 +181,6 @@ def get_hybrid_financials(ticker):
     except:
         pass
 
-    # 혹시 모를 에러 대비 최후의 보루 (야후 파이낸스 백업)
     try:
         listing = get_ticker_listing()
         market = listing[listing['Code'] == ticker]['Market'].values[0]
@@ -200,12 +224,14 @@ menu = st.sidebar.radio(
 # 💡 페이지 1: 밸류에이션 시뮬레이터 (메인)
 # ==========================================
 if menu == "📈 밸류에이션 (PER/POR밴드)":
-    st.title("📈 밸류에이션 시뮬레이터 (PER/POR 밴드)")
+    
+    # 💡 제목 작게 처리
+    st.markdown("<h1 class='main-title'>📈 밸류에이션 시뮬레이터</h1>", unsafe_allow_html=True)
     
     col_input1, col_input2, col_input3 = st.columns([2, 1, 1])
     
     with col_input1:
-        corp_name_input = st.text_input("🔍 종목명 검색 후 엔터 (예: 삼성전자, 에코프로비엠)", value="", key="search_input")
+        corp_name_input = st.text_input("🔍 종목명 검색 후 엔터 (예: 삼성전자)", value="", key="search_input")
     with col_input2:
         val_type = st.selectbox("가치평가 기준", ["PER (순이익 기준)", "POR (영업이익 기준)"])
     with col_input3:
@@ -217,12 +243,7 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
     def set_clicked_item(item):
         st.session_state.clicked_item = item
 
-    if st.session_state.history:
-        st.write("🕒 **최근 검색:**")
-        hist_cols = st.columns(len(st.session_state.history[:7]) + 1)
-        for i, item in enumerate(reversed(st.session_state.history[-7:])):
-            hist_cols[i].button(item, on_click=set_clicked_item, args=(item,), key=f"hist_{i}")
-
+    # 검색어 결정 및 히스토리 즉시 업데이트 로직
     if corp_name_input and corp_name_input != st.session_state.get('last_input', ''):
         st.session_state.clicked_item = None
         st.session_state.last_input = corp_name_input
@@ -233,6 +254,13 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
         clean_history = [h for h in st.session_state.history if h.upper() != corp_name.upper()]
         clean_history.append(corp_name)
         st.session_state.history = clean_history
+
+    # 최근 검색 이력 렌더링 (업데이트된 후 표시)
+    if st.session_state.history:
+        st.markdown("<div style='font-size: 11px; color: gray; margin-bottom: 5px;'>🕒 최근 검색</div>", unsafe_allow_html=True)
+        hist_cols = st.columns(len(st.session_state.history[:7]))
+        for i, item in enumerate(reversed(st.session_state.history[-7:])):
+            hist_cols[i].button(item, on_click=set_clicked_item, args=(item,), key=f"hist_{i}")
 
     st.markdown("---")
 
@@ -274,20 +302,23 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                 else:
                     current_price = df_price.iloc[-1]['Close']
                     prev_close = df_price.iloc[-2]['Close'] if len(df_price) > 1 else current_price
+                    current_marcap_eok = marcap / 100_000_000 # 시가총액 억원 변환
                     
                     st.subheader(f"📊 {official_name} ({ticker}) 분석 결과")
                     
                     with st.expander("📋 연도별 재무 현황 상세 (직접 빈칸을 입력/수정하여 시뮬레이션 가능)", expanded=True):
-                        st.caption(f"※ 빈칸(-)을 채우거나 수치를 더블클릭하여 자유롭게 수정해 보세요. 수정한 값은 하단 밴드와 업사이드 계산에 즉시 반영됩니다.")
+                        st.caption(f"※ 빈칸(-)을 채우거나 수치를 더블클릭하여 자유롭게 수정해 보세요.")
                         
                         edit_df = fin_df_cache[['Label', '매출액', '영업이익', '당기순이익']].copy()
+                        
+                        # 💡 숫자 1,000단위 콤마 포맷 적용
                         edited_df = st.data_editor(
                             edit_df,
                             column_config={
                                 "Label": st.column_config.Column("연도", disabled=True),
-                                "매출액": st.column_config.NumberColumn("매출액(억원)", format="%d"),
-                                "영업이익": st.column_config.NumberColumn("영업이익(억원)", format="%d"),
-                                "당기순이익": st.column_config.NumberColumn("당기순이익(억원)", format="%d"),
+                                "매출액": st.column_config.NumberColumn("매출액(억원)", format="%,d", step=1),
+                                "영업이익": st.column_config.NumberColumn("영업이익(억원)", format="%,d", step=1),
+                                "당기순이익": st.column_config.NumberColumn("당기순이익(억원)", format="%,d", step=1),
                             },
                             hide_index=True,
                             use_container_width=True
@@ -350,44 +381,57 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     if len(target_metric_1) > 0 and target_metric_1[0] > 0:
                         target_price_1 = target_metric_1[0] * target_mult
                         upside_pct_1 = ((target_price_1 / current_price) - 1) * 100
+                        t_marcap_1 = (target_price_1 * stocks_count) / 100_000_000 # 목표 시총 계산
                     else:
-                        target_price_1, upside_pct_1 = 0, 0.0
+                        target_price_1, upside_pct_1, t_marcap_1 = 0, 0.0, 0
 
                     if len(target_metric_2) > 0 and target_metric_2[0] > 0:
                         target_price_2 = target_metric_2[0] * target_mult
                         upside_pct_2 = ((target_price_2 / current_price) - 1) * 100
+                        t_marcap_2 = (target_price_2 * stocks_count) / 100_000_000 # 목표 시총 계산
                     else:
-                        target_price_2, upside_pct_2 = 0, 0.0
+                        target_price_2, upside_pct_2, t_marcap_2 = 0, 0.0, 0
                         
                     st.write("")
                     col_m1, col_m2, col_m3 = st.columns([1, 1.2, 1.2])
+                    
+                    # 💡 왼쪽으로 시가총액 편입 및 레이아웃 통일
                     with col_m1:
-                        st.metric(label=f"현재 주가 ({df_price.index[-1].strftime('%Y-%m-%d')})", value=f"{current_price:,.0f} 원", 
-                                  delta=f"{current_price - prev_close:,.0f} 원 ({(current_price/prev_close - 1)*100:.2f}%)")
-                        if marcap > 0:
-                            st.markdown(f"<span style='color:gray; font-size:16px;'>**시가총액:** {marcap / 1_000_000_000_000:.2f}조 원</span>", unsafe_allow_html=True)
+                        color_cp = '#ff4b4b' if current_price >= prev_close else '#0068c9'
+                        st.markdown(f"""
+                            <div style="line-height: 1.3; margin-bottom: 10px;">
+                                <span style="font-size: 13px; color: gray;">💰 현재가 ({df_price.index[-1].strftime('%y.%m.%d')})</span><br>
+                                <span style="font-size: 24px; font-weight: bold;">{current_price:,.0f} 원</span><br>
+                                <span style="font-size: 14px; color: gray;">(시총: {current_marcap_eok:,.0f} 억원)</span><br>
+                                <span style="font-size: 16px; font-weight: bold; color: {color_cp};">{current_price - prev_close:+,.0f} 원 ({(current_price/prev_close - 1)*100:+.2f}%)</span>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
                     with col_m2:
                         if target_price_1 <= 0:
-                            st.warning(f"⚠️ 올해({year_1}년) 실적이 없어 목표가를 산출할 수 없습니다. 위 표를 채워주세요.")
+                            st.warning(f"⚠️ 올해({year_1}년) 실적이 없어 산출 불가.")
                         else:
                             color1 = "#ff4b4b" if upside_pct_1 >= 0 else "#0068c9"
                             st.markdown(f"""
-                                <div style="line-height: 1.3;">
-                                    <span style="font-size: 15px; color: gray;">🎯 올해({year_1}년) 목표가 [Val: {target_mult}x]</span><br>
-                                    <span style="font-size: 28px; font-weight: bold;">{target_price_1:,.0f} 원</span><br>
-                                    <span style="font-size: 22px; font-weight: bold; color: {color1};">상승 여력: {upside_pct_1:+.2f}%</span>
+                                <div style="line-height: 1.3; margin-bottom: 10px;">
+                                    <span style="font-size: 13px; color: gray;">🎯 올해({year_1}년) 목표가 [{target_mult}x]</span><br>
+                                    <span style="font-size: 24px; font-weight: bold;">{target_price_1:,.0f} 원</span><br>
+                                    <span style="font-size: 14px; color: gray;">(목표 시총: {t_marcap_1:,.0f} 억원)</span><br>
+                                    <span style="font-size: 16px; font-weight: bold; color: {color1};">상승 여력: {upside_pct_1:+.2f}%</span>
                                 </div>
                             """, unsafe_allow_html=True)
+                            
                     with col_m3:
                         if target_price_2 <= 0:
-                            st.warning(f"⚠️ 내년({year_2}년) 실적이 없어 목표가를 산출할 수 없습니다. 위 표를 채워주세요.")
+                            st.warning(f"⚠️ 내년({year_2}년) 실적이 없어 산출 불가.")
                         else:
                             color2 = "#ff4b4b" if upside_pct_2 >= 0 else "#0068c9"
                             st.markdown(f"""
-                                <div style="line-height: 1.3;">
-                                    <span style="font-size: 15px; color: gray;">🎯 내년({year_2}년) 목표가 [Val: {target_mult}x]</span><br>
-                                    <span style="font-size: 28px; font-weight: bold;">{target_price_2:,.0f} 원</span><br>
-                                    <span style="font-size: 22px; font-weight: bold; color: {color2};">상승 여력: {upside_pct_2:+.2f}%</span>
+                                <div style="line-height: 1.3; margin-bottom: 10px;">
+                                    <span style="font-size: 13px; color: gray;">🎯 내년({year_2}년) 목표가 [{target_mult}x]</span><br>
+                                    <span style="font-size: 24px; font-weight: bold;">{target_price_2:,.0f} 원</span><br>
+                                    <span style="font-size: 14px; color: gray;">(목표 시총: {t_marcap_2:,.0f} 억원)</span><br>
+                                    <span style="font-size: 16px; font-weight: bold; color: {color2};">상승 여력: {upside_pct_2:+.2f}%</span>
                                 </div>
                             """, unsafe_allow_html=True)
 
@@ -405,7 +449,8 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     # --- 차트 영역 (Plotly) ---
                     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
                     
-                    fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='현재 주가', line=dict(color='black', width=2)), row=1, col=1)
+                    # 💡 다크 모드에서도 잘 보이도록 기본선 색상을 회색(#888888)으로 변경
+                    fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='현재 주가', line=dict(color='#888888', width=2)), row=1, col=1)
                     
                     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
                     if bands:
@@ -422,8 +467,8 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                             x=df_price.index[-1], y=current_price,
                             text=f"현재: {today_mult:.1f}x",
                             showarrow=True, arrowhead=2, ax=-60, ay=-45,
-                            font=dict(size=16, color="red", weight="bold"),
-                            bgcolor="rgba(255,255,255,0.9)", bordercolor="red", borderwidth=2,
+                            font=dict(size=14, color="red", weight="bold"),
+                            bgcolor="rgba(255,255,255,0.8)", bordercolor="red", borderwidth=1,
                             row=1, col=1
                         )
 
@@ -433,8 +478,8 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                             x=target_date_1, y=target_price_1,
                             text=f"목표: {target_mult:.1f}x",
                             showarrow=True, arrowhead=2, ax=-60, ay=-45,
-                            font=dict(size=16, color="blue", weight="bold"),
-                            bgcolor="rgba(255,255,255,0.9)", bordercolor="blue", borderwidth=2,
+                            font=dict(size=14, color="blue", weight="bold"),
+                            bgcolor="rgba(255,255,255,0.8)", bordercolor="blue", borderwidth=1,
                             row=1, col=1
                         )
 
@@ -461,14 +506,16 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     )
                     
                     fig.update_layout(
-                        height=750, 
+                        height=600, 
                         hovermode="x unified",
                         title_text=f"[{band_name}] 21~27년 밸류에이션 차트",
-                        title_font_size=20,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        title_font_size=16,
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        margin=dict(l=10, r=10, t=50, b=10) # 모바일 최적화 마진 축소
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    # 💡 모바일 스크롤 방해 금지: 차트 터치/상호작용 완전 비활성화 (정적 이미지 모드)
+                    st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
     else:
         st.info("👆 상단 검색창에 분석을 원하시는 종목명을 입력해주세요! (예: 삼성전자, 카카오)")
@@ -497,13 +544,11 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V1.0.4", "V1.0.3", "V1.0.2", "V1.0.1", "V1.0.0"],
+        "버전": ["V1.1.0 (모바일 최적화 패치)", "V1.0.4", "V1.0.0"],
         "업데이트 내용": [
-            "버그 픽스: FnGuide 암호키(encparam) 훔쳐오기 로직 추가로 21~27년 전체 데이터 증발 현상 완벽 해결 (셀레니움 없이 초고속 유지)",
-            "클라우드 Headless Chrome 클릭 무시 현상 타파 (JS execute_script 강제 폭격 도입)",
-            "가상 브라우저(Selenium) 부활 및 클라우드 AJAX 로딩 타이밍 동기화 시도",
-            "가상 브라우저 완전 폐기 및 초고속 API 통신 도입 (속도 향상)",
-            "정식 출시: UI 대규모 개편 및 인터랙티브 웹 차트, 직접 수정 표 기능 탑재"
+            "모바일 UI 전면 개편: 차트 터치 잠금(StaticPlot), 시가총액 억원 적용 및 목표 시총 추가, 검색창/표/제목 크기 압축, 최근 검색어 즉시 동기화",
+            "버그 픽스: FnGuide 암호키(encparam) 추출 로직 추가로 21~27년 전체 데이터 누락 현상 완벽 해결",
+            "정식 출시: 가상 브라우저 폐기 및 초고속 API 도입, 인터랙티브 웹 차트 및 편집형 재무 표 탑재"
         ]
     }
     
@@ -511,12 +556,8 @@ elif menu == "🛠️ 버전 업데이트 이력":
     
     st.markdown("""
         <style>
-            [data-testid="stDataFrame"] td {
-                text-align: left !important;
-            }
-            [data-testid="stDataFrame"] th {
-                text-align: center !important;
-            }
+            [data-testid="stDataFrame"] td { text-align: left !important; }
+            [data-testid="stDataFrame"] th { text-align: center !important; }
         </style>
     """, unsafe_allow_html=True)
     
