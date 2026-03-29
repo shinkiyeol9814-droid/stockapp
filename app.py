@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import platform
 import io
 import re
+import requests # 💡 requests 라이브러리 전역 임포트 추가
 
 # --- Selenium ---
 from selenium import webdriver
@@ -31,12 +32,9 @@ if 'clicked_item' not in st.session_state:
 
 # --- 데이터 캐싱 함수들 ---
 
-# 💡 핵심 수정: 클라우드 IP 차단을 뚫어내는 무적의 종목 목록 크롤링 함수
+# 💡 핵심 1. 클라우드 IP 차단 방어 (KIND 접속 시 User-Agent 추가로 완벽 우회)
 @st.cache_data(ttl=86400)
 def get_ticker_listing():
-    import requests
-    
-    # 1. 일반적인 fdr 호출 시도 (3번 재시도)
     for _ in range(3):
         try:
             df = fdr.StockListing('KRX')
@@ -45,14 +43,16 @@ def get_ticker_listing():
         except:
             time.sleep(1)
             
-    # 2. 클라우드 IP 차단 시 KIND(한국거래소 공시채널) 직접 크롤링 (절대 막히지 않는 우회망)
+    # 클라우드 IP 차단 시 KIND 직접 크롤링 (User-Agent 위장 필수)
     try:
         url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-        df = pd.read_html(url, header=0)[0]
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        res = requests.get(url, headers=headers, timeout=10)
+        df = pd.read_html(io.StringIO(res.text), header=0)[0]
+        
         df = df.rename(columns={'회사명': 'Name', '종목코드': 'Code'})
         df['Code'] = df['Code'].astype(str).str.zfill(6)
         
-        # 💡 우회망에는 주식수/시총 데이터가 없으므로 임시로 0 처리 (메인 루프에서 실시간 보완)
         df['Market'] = 'KOSPI' 
         df['Stocks'] = 0 
         df['Marcap'] = 0
@@ -190,13 +190,17 @@ def get_hybrid_financials(ticker):
         
     return pd.DataFrame(rows)
 
+
 # ==========================================
 # 💡 좌측 사이드바: 네비게이션 메뉴 구성
 # ==========================================
 st.sidebar.title("🧭 네비게이션 메뉴")
+
+# 💡 핵심 2. Streamlit 경고(label_visibility) 완벽 해결
 menu = st.sidebar.radio(
-    "",
-    ["📈 밸류에이션 (PER/POR밴드)", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 버전 업데이트 이력"]
+    "메뉴 선택", # 빈칸 대신 텍스트 삽입
+    ["📈 밸류에이션 (PER/POR밴드)", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 버전 업데이트 이력"],
+    label_visibility="collapsed" # 삽입된 텍스트를 화면에서는 숨김 처리
 )
 
 # ==========================================
@@ -243,7 +247,6 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
         with st.spinner(f"'{corp_name}' 데이터 수집 중 (가상 브라우저 작동, 약 5~8초 소요)... 🏃‍♂️"):
             listing = get_ticker_listing()
             
-            # 안전장치: 컬럼명이 정상적으로 로드되지 않았을 경우
             if 'Name' not in listing.columns:
                 st.error("❌ 종목 목록을 불러오지 못했습니다. 서버 상태가 불안정합니다.")
                 st.stop()
@@ -258,16 +261,14 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                 stocks_count = ticker_row['Stocks'].values[0] 
                 marcap = ticker_row['Marcap'].values[0]
                 
-                # 💡 핵심 2: 클라우드 우회망(KIND) 작동으로 주식수가 0인 경우, 네이버 모바일 API로 실시간 채우기
                 if stocks_count == 0 or pd.isna(stocks_count):
                     try:
-                        import requests
                         res = requests.get(f"https://m.stock.naver.com/api/stock/{ticker}/integration", headers={'User-Agent': 'Mozilla/5.0'})
                         data = res.json()
                         stocks_count = int(data['stockEndType']['totalInfo']['stockCount'])
                         marcap = int(data['stockEndType']['totalInfo']['marketValue']) * 100_000_000
                     except:
-                        stocks_count = 1 # 0으로 나누기(에러) 최후의 방어선
+                        stocks_count = 1 
 
                 fin_df_cache = get_hybrid_financials(ticker)
                 
@@ -503,8 +504,9 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V39.2", "V39.1", "V39.0", "V38.0", "V37.0", "V36.0", "V35.0", "V34.0", "V30.2"],
+        "버전": ["V39.3", "V39.2", "V39.1", "V39.0", "V38.0", "V37.0", "V36.0", "V35.0", "V34.0", "V30.2"],
         "업데이트 내용": [
+            "사이드바 라디오 버튼(label) 경고 해결 및 클라우드 우회망 User-Agent 위장 로직 추가 (종목 목록 검색 뻗음 완전 해결)",
             "클라우드 IP 차단 원천 해결 (KIND 직접 크롤링 및 네이버 모바일 API 실시간 연동 방어 로직 탑재)",
             "불필요해진 Matplotlib 한글 폰트 설정 코드 제거 (NameError: plt is not defined 핫픽스)",
             "메인 UI 대규모 개편 (사이드바 메뉴화, 상단 컨트롤 패널 배치, 버전 이력 독립 탭 전환)",
