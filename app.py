@@ -12,39 +12,43 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 가치평가", page_icon="📈", layout="wide")
 
-# 💡 모바일 레이아웃 및 디자인 강제 고정 CSS
+# 💡 모바일 가시성 및 폼 컨트롤 가로 정렬 CSS
 st.markdown("""
     <style>
-        /* 1. 모든 제목(타이틀) 크기 1.2rem으로 고정 및 통일 */
-        .main-title, .sub-header, .section-title { 
-            font-size: 1.2rem !important; 
-            font-weight: bold !important; 
-            color: #31333F; 
-        }
-        .main-title { margin-top: -2.5rem; margin-bottom: 0.5rem; }
-        .sub-header { margin-top: 10px; margin-bottom: 5px; }
-        .section-title { margin-top: 15px; margin-bottom: 5px; }
+        /* 1. 최상단 여백 최소화 */
+        .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
+        .main-title { font-size: 1.2rem !important; font-weight: bold; margin-top: -1rem; margin-bottom: 0.5rem; }
+        .sub-header { font-size: 1.1rem !important; font-weight: bold; color: #31333F; margin-top: 10px; margin-bottom: 10px; }
         
-        /* 2. 메트릭 일직선(가로) 정렬을 위한 Flex-start 적용 */
+        /* 2, 4, 5. 입력폼 완벽 가로 정렬 (Inline) */
+        .inline-input-group { display: flex; align-items: center; margin-bottom: 8px; width: 100%; }
+        .inline-label { font-size: 14px; font-weight: bold; color: #31333F; margin-right: 10px; white-space: nowrap; width: 65px; text-align: right; }
+        .inline-input { flex-grow: 1; }
+        
+        /* Streamlit 기본 폼 컨트롤 숨기기 (커스텀 라벨 사용 위함) */
+        .stTextInput label, .stSelectbox label, .stNumberInput label { display: none; }
+        
+        /* 3. 갱신 버튼 크기 축소 및 간격 조정 */
+        .search-btn { margin-left: 5px; width: 60px !important; }
+        div.stButton > button { height: 38px !important; min-height: 38px !important; padding: 0 10px !important; background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 8px !important; }
+        
+        /* 입력창 높이 최적화 */
+        .stTextInput > div > div > input, .stSelectbox > div > div > div, .stNumberInput > div > div > input { height: 38px !important; min-height: 38px !important; font-size: 13px !important; padding: 0 8px !important; }
+        
+        /* 6, 7, 8, 9. 분석 결과 그리드(Grid) 정렬 UI */
         .info-box { background-color: rgba(128, 128, 128, 0.05); padding: 12px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(128, 128, 128, 0.2); }
-        .info-row { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.1); padding-bottom: 6px; margin-bottom: 6px; }
+        .info-row { display: flex; align-items: center; border-bottom: 1px solid rgba(128, 128, 128, 0.1); padding-bottom: 8px; margin-bottom: 8px; font-size: 12px; }
         .info-row:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
         
-        /* 3. 모바일에서 [검색창] + [갱신버튼] 절대 줄바꿈 금지 (가로 나열 강제) */
-        div[data-testid="stHorizontalBlock"]:first-of-type {
-            flex-wrap: nowrap !important;
-            align-items: flex-end !important;
-        }
-        div[data-testid="stHorizontalBlock"]:first-of-type > div:nth-child(1) { flex: 7 !important; min-width: 0 !important; }
-        div[data-testid="stHorizontalBlock"]:first-of-type > div:nth-child(2) { flex: 3 !important; min-width: 0 !important; }
-        
-        /* 버튼 및 입력창 높이 최적화 */
-        div.stButton > button { height: 38px !important; min-height: 38px !important; padding: 0px !important; background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 8px !important; }
-        .stTextInput > div > div > input { height: 38px !important; min-height: 38px !important; font-size: 13px !important; padding: 0px 10px !important; }
-        
-        /* 테이블 폰트 및 여백 제거 */
+        /* 각 항목이 동일한 비율로 공간을 차지하도록 설정 */
+        .col-title { width: 85px; font-weight: bold; color: #555; flex-shrink: 0; }
+        .col-price { flex: 1; text-align: center; font-weight: bold; font-size: 14px; }
+        .col-marcap { flex: 1; text-align: center; color: gray; }
+        .col-rate { flex: 1; text-align: right; font-weight: bold; }
+        .col-divider { color: #ddd; margin: 0 5px; }
+
+        /* 테이블 폰트 */
         [data-testid="stDataFrame"] { font-size: 11px !important; }
-        .block-container { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -128,29 +132,33 @@ def get_hybrid_financials(ticker):
     return pd.DataFrame(rows)
 
 # ==========================================
-# 💡 사이드바 메뉴 
+# 💡 사이드바 메뉴
 # ==========================================
 st.sidebar.title("🧭 메뉴")
 menu = st.sidebar.radio("이동", ["📈 밸류에이션 (PER/POR밴드)", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 업데이트 이력"], label_visibility="collapsed")
 
 if menu == "📈 밸류에이션 (PER/POR밴드)":
     
-    # 💡 1. 메인 타이틀
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 2. 모바일 세로 3단 필터 레이아웃
-    # 1단: 종목명 + 갱신버튼 (CSS로 강제 가로 정렬됨)
-    c1, c2 = st.columns([7, 3])
+    # 💡 입력폼 UI: HTML/CSS를 활용한 커스텀 인라인 레이아웃
+    st.markdown("<div class='inline-input-group'><div class='inline-label'>종목명</div><div class='inline-input'>", unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 0.25])
     with c1: 
-        corp_name = st.text_input("종목명", value="", placeholder="🔍 종목명 (예: 삼성전자)", label_visibility="collapsed").strip()
+        corp_name = st.text_input("종목명", value="", placeholder="예: 삼성전자").strip()
     with c2: 
+        st.markdown("<div class='search-btn'>", unsafe_allow_html=True)
         search_clicked = st.button("갱신", use_container_width=True)
-        
-    # 2단: 방식
-    val_type = st.selectbox("방식", ["PER(순이익)", "POR(영업익)"])
-    
-    # 3단: 목표배수
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='inline-input-group'><div class='inline-label'>평가방식</div><div class='inline-input'>", unsafe_allow_html=True)
+    val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"])
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='inline-input-group'><div class='inline-label'>목표배수</div><div class='inline-input'>", unsafe_allow_html=True)
     target_mult = st.number_input("목표배수", value=10.0, step=0.5, format="%.1f")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
     if corp_name:
         with st.spinner("데이터 분석 중..."):
@@ -177,10 +185,8 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     curr_marcap = (curr_p * stocks_count) / 100_000_000
                     updown = ((curr_p / prev_p) - 1) * 100
                     
-                    # 💡 동일한 타이틀 폰트 크기 적용
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # 목표가 산출
                     y1, y2 = datetime.today().year, datetime.today().year + 1
                     col_p = '영업이익' if "POR" in val_type else '당기순이익'
                     
@@ -195,29 +201,52 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
 
-                    # 💡 3. 가로 일직선 정보 출력 (현재가 80,000원 (4,800억) +1.50%)
-                    st.markdown(f"""
+                    # 💡 6, 7, 8, 9. 일직선(가로) 정렬 및 간격 동일화 UI
+                    html_info = f"""
                         <div class='info-box'>
                             <div class='info-row'>
-                                <span style='color:#555; font-weight:bold;'>현재가:</span>
-                                <span style='font-size:15px; font-weight:bold;'>{curr_p:,.0f}원</span> 
-                                <span style='color:gray; font-size:12px;'>({curr_marcap:,.0f}억)</span> 
-                                <span style='color:{"#ff4b4b" if updown>=0 else "#0068c9"}; font-weight:bold;'>{updown:+.2f}%</span>
+                                <span class='col-title'>현재가</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-price'>{curr_p:,.0f}원</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-marcap'>{curr_marcap:,.0f}억</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-rate' style='color:{"#ff4b4b" if updown>=0 else "#0068c9"};'>{updown:+.2f}%</span>
                             </div>
+                    """
+                    
+                    if tp1 > 0:
+                        html_info += f"""
                             <div class='info-row'>
-                                <span style='color:#555; font-weight:bold;'>{str(y1)[-2:]}년 목표가:</span>
-                                <span style='font-size:15px; font-weight:bold;'>{tp1:,.0f}원</span> 
-                                <span style='color:gray; font-size:12px;'>({tm1:,.0f}억)</span> 
-                                <span style='color:{"#ff4b4b" if up1>0 else "#0068c9"}; font-weight:bold;'>{up1:+.1f}%</span>
+                                <span class='col-title'>목표가(내년)</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-price'>{tp1:,.0f}원</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-marcap'>{tm1:,.0f}억</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-rate' style='color:{"#ff4b4b" if up1>0 else "#0068c9"};'>Up: {up1:+.1f}%</span>
                             </div>
+                        """
+                    else:
+                        html_info += f"<div class='info-row'><span class='col-title'>목표가(내년)</span><span class='col-divider'>|</span><span style='color:gray; flex:1; text-align:center;'>실적 데이터 없음</span></div>"
+                        
+                    if tp2 > 0:
+                        html_info += f"""
                             <div class='info-row'>
-                                <span style='color:#555; font-weight:bold;'>{str(y2)[-2:]}년 목표가:</span>
-                                <span style='font-size:15px; font-weight:bold;'>{tp2:,.0f}원</span> 
-                                <span style='color:gray; font-size:12px;'>({tm2:,.0f}억)</span> 
-                                <span style='color:{"#ff4b4b" if up2>0 else "#0068c9"}; font-weight:bold;'>{up2:+.1f}%</span>
+                                <span class='col-title'>목표가(2년)</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-price'>{tp2:,.0f}원</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-marcap'>{tm2:,.0f}억</span>
+                                <span class='col-divider'>|</span>
+                                <span class='col-rate' style='color:{"#ff4b4b" if up2>0 else "#0068c9"};'>Up: {up2:+.1f}%</span>
                             </div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                        """
+                    else:
+                        html_info += f"<div class='info-row'><span class='col-title'>목표가(2년)</span><span class='col-divider'>|</span><span style='color:gray; flex:1; text-align:center;'>실적 데이터 없음</span></div>"
+                        
+                    html_info += "</div>"
+                    st.markdown(html_info, unsafe_allow_html=True)
 
                     # --- 차트 데이터 준비 ---
                     historical_metric_dict = {row['Plot_Date'].year: float(row['당기순이익' if "PER" in val_type else '영업이익']) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row['당기순이익' if "PER" in val_type else '영업이익'])}
@@ -276,11 +305,9 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                         )
                         return fig
 
-                    # 상단 인터랙티브 차트
                     main_fig = create_valuation_chart(static_mode=False)
                     st.plotly_chart(main_fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False})
 
-                    # 💡 통일된 타이틀 적용
                     st.markdown("<div class='section-title'>연도별 재무 상세 <span style='color:red; font-size:0.85rem;'>(※ 값 입력/수정하여 밸류 측정가능)</span></div>", unsafe_allow_html=True)
                     edited_df = st.data_editor(
                         fin_df[['Label', '매출액', '영업이익', '당기순이익']],
@@ -297,7 +324,6 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     fin_df['영업이익'] = edited_df['영업이익'].values
                     fin_df['당기순이익'] = edited_df['당기순이익'].values
 
-                    # 비교용 하단 이미지 차트
                     st.write("---")
                     st.markdown("<div style='font-size:12px; color:gray; text-align:center;'>⬇️ 아래는 고정 이미지형 그래프입니다 (비교용)</div>", unsafe_allow_html=True)
                     img_fig = create_valuation_chart(static_mode=True)
@@ -328,9 +354,10 @@ elif menu == "📝 증권사 레포트":
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
     df_history = pd.DataFrame({
-        "버전": ["V1.2.3 (레이아웃 픽스)", "V1.2.2", "V1.2.0", "V1.1.4", "V1.0.4"],
+        "버전": ["V1.2.4 (UI 완벽 튜닝)", "V1.2.3", "V1.2.2", "V1.2.0", "V1.1.4", "V1.0.4"],
         "업데이트 내용": [
-            "모든 제목 폰트 사이즈(1.2rem) 통일, 모바일 3단 검색창 세로/가로 비율 강제 고정, 메트릭 가로 일직선(flex-start) 완벽 정렬",
+            "최상단 여백 최소화, 입력폼 완벽 가로 정렬(Inline CSS), 갱신 버튼 크기 축소, 분석 결과 그리드(Grid) 정렬 및 등간격 유지",
+            "모든 제목 폰트 사이즈 통일, 메트릭 가로 일직선 완벽 정렬",
             "AttributeError(ffill) 완벽 픽스 및 TypeError 대응",
             "메이저 UI 개편: 검색 버튼 추가, 재무표 하단 이동, 주가 선 테마 적응형 색상 적용, 이미지형 차트 추가",
             "FnGuide 크롤링 로직 안정화 (21~27년 데이터 완벽 복구)",
