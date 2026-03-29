@@ -1,15 +1,11 @@
 import streamlit as st
 import FinanceDataReader as fdr
 import pandas as pd
-import yfinance as yf
 import numpy as np
 from datetime import datetime, timedelta
-import platform
 import io
 import re
 import requests
-
-# --- Plotly (인터랙티브 차트) ---
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -303,42 +299,32 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     tp1, up1, tm1 = calc_target(year_1)
                     tp2, up2, tm2 = calc_target(year_2)
                     
-                    # 💡 코드 노출 버그 완벽 픽스: f-string 및 HTML 구조 재정립
-                    html_info = f"""
-                    <div class='info-box'>
-                        <div class='info-row'>
-                            <span><b style='color:#333'>현재가:</b> {current_price:,.0f}원 <span style='color:#888;font-size:11px'>({current_marcap_eok:,.0f}억)</span></span>
-                            <span style='color:{curr_color}; font-weight:bold;'>{curr_updown_pct:+.2f}%</span>
-                        </div>
-                    """
+                    # 💡 HTML 구성 방식 변경 (리스트 조인 방식) -> 포맷팅 에러 완벽 차단!
+                    html_lines = []
+                    html_lines.append("<div class='info-box'>")
                     
+                    # 현재가
+                    html_lines.append(f"<div class='info-row'><span><b style='color:#333'>현재가:</b> {current_price:,.0f}원 <span style='color:#888;font-size:11px'>({current_marcap_eok:,.0f}억)</span></span><span style='color:{curr_color}; font-weight:bold;'>{curr_updown_pct:+.2f}%</span></div>")
+                    
+                    # 목표가 1
                     if tp1 > 0:
                         c1_color = "#ff4b4b" if up1 >= 0 else "#0068c9"
-                        html_info += f"""
-                        <div class='info-row'>
-                            <span><b style='color:#333'>{str(year_1)[-2:]}년 목표:</b> {tp1:,.0f}원 <span style='color:#888;font-size:11px'>({tm1:,.0f}억)</span></span>
-                            <span style='color:{c1_color}; font-weight:bold;'>상승여력: {up1:+.1f}%</span>
-                        </div>
-                        """
+                        html_lines.append(f"<div class='info-row'><span><b style='color:#333'>{str(year_1)[-2:]}년 목표:</b> {tp1:,.0f}원 <span style='color:#888;font-size:11px'>({tm1:,.0f}억)</span></span><span style='color:{c1_color}; font-weight:bold;'>상승여력: {up1:+.1f}%</span></div>")
                     else:
-                        html_info += f"<div class='info-row'><span style='color:gray;'>{str(year_1)[-2:]}년 목표: 실적 데이터 없음</span></div>"
-                        
+                        html_lines.append(f"<div class='info-row'><span style='color:gray;'>{str(year_1)[-2:]}년 목표: 실적 데이터 없음</span></div>")
+                    
+                    # 목표가 2
                     if tp2 > 0:
                         c2_color = "#ff4b4b" if up2 >= 0 else "#0068c9"
-                        html_info += f"""
-                        <div class='info-row'>
-                            <span><b style='color:#333'>{str(year_2)[-2:]}년 목표:</b> {tp2:,.0f}원 <span style='color:#888;font-size:11px'>({tm2:,.0f}억)</span></span>
-                            <span style='color:{c2_color}; font-weight:bold;'>상승여력: {up2:+.1f}%</span>
-                        </div>
-                        """
+                        html_lines.append(f"<div class='info-row'><span><b style='color:#333'>{str(year_2)[-2:]}년 목표:</b> {tp2:,.0f}원 <span style='color:#888;font-size:11px'>({tm2:,.0f}억)</span></span><span style='color:{c2_color}; font-weight:bold;'>상승여력: {up2:+.1f}%</span></div>")
                     else:
-                        html_info += f"<div class='info-row'><span style='color:gray;'>{str(year_2)[-2:]}년 목표: 실적 데이터 없음</span></div>"
-                        
-                    html_info += "</div>"
+                        html_lines.append(f"<div class='info-row'><span style='color:gray;'>{str(year_2)[-2:]}년 목표: 실적 데이터 없음</span></div>")
                     
-                    st.markdown(html_info, unsafe_allow_html=True)
+                    html_lines.append("</div>")
                     
-                    # 💡 펼침 상태 Default로 변경 (요청사항 2번)
+                    st.markdown("".join(html_lines), unsafe_allow_html=True)
+                    
+                    # 💡 펼침 상태 Default 설정 적용
                     with st.expander("📋 연도별 재무 상세 (입력/수정 가능)", expanded=True):
                         edit_df = fin_df_cache[['Label', '매출액', '영업이익', '당기순이익']].copy()
                         
@@ -466,7 +452,7 @@ if menu == "📈 밸류에이션 (PER/POR밴드)":
                     fig.update_xaxes(tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=top_x_labels, showticklabels=True, range=x_range, row=1, col=1)
                     fig.update_xaxes(tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True, range=x_range, row=2, col=1)
                     
-                    # 💡 겹침 버그 픽스: top 마진(t)을 50으로 넓히고 범례를 0.99로 살짝 낮춰 제목과 확실히 분리
+                    # 💡 타이틀-범례 겹침 픽스
                     fig.update_layout(
                         height=550, 
                         hovermode="x unified",
@@ -506,9 +492,9 @@ elif menu == "🛠️ 버전 업데이트 이력":
     st.write("본 시뮬레이터가 발전해 온 과정입니다.")
     
     history_data = {
-        "버전": ["V1.1.5 (UI 핫픽스)", "V1.1.4 (버그픽스 & UI 통합)", "V1.0.4", "V1.0.0"],
+        "버전": ["V1.1.6 (핫픽스)", "V1.1.4 (버그픽스 & UI 통합)", "V1.0.4", "V1.0.0"],
         "업데이트 내용": [
-            "버그 픽스: 코드 노출 HTML 버그 픽스, 재무 표 Default 펼침, 밸류에이션 차트 제목-범례 겹침 현상 해결",
+            "코드 노출 HTML 버그 수정, 재무 표 Default 펼침 적용, 밸류에이션 차트 제목-범례 겹침 현상 해결",
             "버그 픽스: FnGuide 크롤링 로직(V1.0.4)으로 롤백하여 21~27년 데이터 누락 완벽 해결 및 모바일 최적화 UI(차트 마진 0, 한줄 배치 등) 적용",
             "버그 픽스: FnGuide 암호키(encparam) 추출 로직으로 21~27년 데이터 누락 픽스",
             "정식 출시: 가상 브라우저 폐기 및 초고속 API 정식 런칭"
