@@ -12,56 +12,50 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 가치평가", page_icon="📈", layout="wide")
 
-# 💡 모바일 최적화 및 강제 라이트(화이트) 모드 CSS
+# 💡 라이트/다크 모드 완벽 대응 및 칼각 CSS
 st.markdown("""
     <style>
-        /* 💡 강제 라이트(화이트) 모드 적용 */
-        .stApp { background-color: #ffffff !important; color: #000000 !important; }
-        .stMarkdown, .stText, p, span, div { color: #000000 !important; }
-        
-        /* 1. 타이틀 여백 정상화 (위로 안 잘리게 내림) */
+        /* 1. 타이틀 여백 정상화 */
         .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
-        .main-title { font-size: 1.4rem !important; font-weight: bold; margin-top: 1rem; margin-bottom: 1rem; color: #000000 !important; }
-        .sub-header { font-size: 1.1rem !important; font-weight: bold; color: #111111 !important; margin-top: 10px; margin-bottom: 10px; }
+        .main-title { font-size: 1.4rem !important; font-weight: bold; margin-top: 1rem; margin-bottom: 1rem; }
+        .sub-header { font-size: 1.1rem !important; font-weight: bold; margin-top: 10px; margin-bottom: 10px; }
         
-        /* 카드형 UI (Flexbox 완벽 고정 너비) */
-        .info-box { background-color: #f8f9fa !important; padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eaeaea !important; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .info-row { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; border-bottom: 1px solid #e0e0e0 !important; padding-bottom: 8px; margin-bottom: 8px; white-space: nowrap; overflow-x: auto; }
+        /* 2. 카드형 UI (테마 적응형 투명도 사용) */
+        .info-box { background-color: rgba(128, 128, 128, 0.05) !important; padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(128, 128, 128, 0.2) !important; }
+        .info-row { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; border-bottom: 1px solid rgba(128, 128, 128, 0.1) !important; padding-bottom: 8px; margin-bottom: 8px; white-space: nowrap; overflow-x: auto; }
         .info-row:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
         
-        /* 완벽한 세로 정렬(칼각) */
-        .col-title { width: 90px; font-weight: bold; color: #333333 !important; font-size: 13px; text-align: left; flex-shrink: 0; }
-        .col-divider { color: #cccccc !important; margin: 0 8px; flex-shrink: 0; }
-        .col-price { width: 80px; font-weight: bold; font-size: 15px; text-align: right; color: #000000 !important; flex-shrink: 0; }
-        .col-marcap { width: 75px; color: #666666 !important; font-size: 12px; text-align: right; flex-shrink: 0; }
+        /* 완벽한 세로 정렬(칼각) 및 다크모드 대응 글자색 */
+        .col-title { width: 90px; font-weight: bold; font-size: 13px; text-align: left; flex-shrink: 0; opacity: 0.85; }
+        .col-divider { margin: 0 8px; flex-shrink: 0; opacity: 0.3; }
+        .col-price { width: 80px; font-weight: bold; font-size: 15px; text-align: right; flex-shrink: 0; }
+        .col-marcap { width: 75px; font-size: 12px; text-align: right; flex-shrink: 0; opacity: 0.6; }
         .col-rate { width: 100px; font-weight: bold; font-size: 14px; text-align: right; flex-shrink: 0; }
         
-        /* 등락률 색상은 CSS 클래스로 강제 지정하여 테마 영향을 안 받게 함 */
+        /* 등락률 고정 색상 */
         .rate-up { color: #ff4b4b !important; }
         .rate-down { color: #0068c9 !important; }
-        .rate-none { color: #888888 !important; }
+        .rate-none { opacity: 0.5; }
 
-        /* 💡 2, 3. 검색폼 한 줄 정렬 및 갱신 버튼 축소 */
+        /* 검색폼 한 줄 정렬 */
         .search-container { display: flex; align-items: center; margin-bottom: 10px; width: 100%; }
-        .search-label { font-size: 14px; font-weight: bold; margin-right: 10px; white-space: nowrap; color: #000000 !important; }
+        .search-label { font-size: 14px; font-weight: bold; margin-right: 10px; white-space: nowrap; }
         .search-input-wrap { flex-grow: 1; margin-right: 8px; }
-        .search-btn-wrap { width: 60px; flex-shrink: 0; }
         
         /* Streamlit 폼 컨트롤 여백 제거 */
         .stTextInput, .stSelectbox, .stNumberInput { margin-bottom: -15px !important; }
         .stTextInput > div > div > input, .stSelectbox > div > div > div, .stNumberInput > div > div > input { 
             height: 36px !important; min-height: 36px !important; font-size: 13px !important; padding: 0 8px !important; 
-            background-color: #ffffff !important; color: #000000 !important; border: 1px solid #cccccc !important;
         }
         
+        /* 갱신 버튼 */
         div.stButton > button { 
             height: 36px !important; min-height: 36px !important; padding: 0 !important; width: 100% !important;
             background-color: #ff4b4b !important; color: white !important; font-weight: bold !important; border-radius: 6px !important; border: none !important; 
         }
         
-        /* 테이블 폰트 및 라이트 모드 강제 */
+        /* 테이블 폰트 */
         [data-testid="stDataFrame"] { font-size: 12px !important; }
-        [data-testid="stDataFrame"] div[data-baseweb="table"] { background-color: #ffffff !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -154,18 +148,18 @@ if menu == "📈 가치평가 시뮬레이터":
     
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 2, 3. 검색폼 한 줄 정렬 (종목명 라벨 추가 및 갱신 버튼 축소)
+    # 검색폼 한 줄 정렬 (종목명 라벨 추가 및 갱신 버튼 축소)
     col_input, col_btn = st.columns([1, 0.2])
     with col_input:
         st.markdown("<div class='search-container'><div class='search-label'>종목명</div><div class='search-input-wrap'>", unsafe_allow_html=True)
         corp_name = st.text_input("종목명", value="", placeholder="예: 삼성전자", label_visibility="collapsed").strip()
         st.markdown("</div></div>", unsafe_allow_html=True)
     with col_btn:
-        st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True) # 버튼 높이 미세조정
+        st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
         search_clicked = st.button("갱신", use_container_width=True)
 
     # 평가방식 / 목표배수 나란히
-    st.write("") # 간격
+    st.write("")
     col_type, col_mult = st.columns(2)
     with col_type:
         st.markdown("<div class='search-container'><div class='search-label'>평가방식</div><div class='search-input-wrap'>", unsafe_allow_html=True)
@@ -219,7 +213,6 @@ if menu == "📈 가치평가 시뮬레이터":
                     
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
 
-                    # 💡 5. 코드 노출 버그 픽스 (문자열 결합 방식 단순화 및 안전한 CSS 클래스 사용)
                     html_divider = "<span class='col-divider'>|</span>"
                     
                     c_updown = "rate-up" if updown >= 0 else "rate-down"
@@ -290,8 +283,8 @@ if menu == "📈 가치평가 시뮬레이터":
 
                         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
                         
-                        # 라이트모드 차트 (선 색상을 확실히 보이게)
-                        fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#222222', width=3)), row=1, col=1)
+                        # 💡 주가선 테마 적응형 색상 (다크 모드에서도 잘 보이는 중립 회색)
+                        fig.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=3)), row=1, col=1)
                         
                         cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
                         for i, b in enumerate(bands):
@@ -310,18 +303,15 @@ if menu == "📈 가치평가 시뮬레이터":
                         fig.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], row=2, col=1)
                         fig.update_yaxes(showticklabels=True, row=1, col=1)
                         
-                        # 차트 백그라운드도 흰색/투명으로
+                        # 💡 폰트 색상 강제 지정 해제 (시스템 테마 상속)
                         fig.update_layout(
                             height=500, margin=dict(l=0, r=0, t=50, b=0),
-                            title=dict(text=f"[{'POR' if 'POR' in val_type else 'PER'} 밴드]", x=0.01, y=0.98, font=dict(size=14, color="#000")),
-                            legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10, color="#000")),
+                            title=dict(text=f"[{'POR' if 'POR' in val_type else 'PER'} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                            legend=dict(orientation="h", yanchor="top", y=0.99, xanchor="left", x=0, font=dict(size=10)),
                             hovermode="x unified",
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)"
                         )
-                        # 그리드 연하게
-                        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)')
-                        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)')
                         return fig
 
                     # 상단 인터랙티브 차트
@@ -367,11 +357,11 @@ elif menu == "📝 증권사 레포트":
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
     df_history = pd.DataFrame({
-        "버전": ["V1.2.8 (최종 UI 패치)", "V1.2.7", "V1.2.6"],
+        "버전": ["V1.2.9 (다크모드 롤백)", "V1.2.8", "V1.2.7"],
         "업데이트 내용": [
-            "타이틀 상단 여백 확보(잘림 해결), 종목명 라벨 추가, 모바일 최적화 갱신버튼 축소, 시스템 강제 라이트모드(화이트) 적용, 목표가 HTML 노출 버그 픽스",
-            "분석 결과 영역(라벨, 구분선, 수치) px 고정으로 완벽한 세로 정렬(칼각) 구현",
-            "입력폼 반응형 구현, 결과창 카드 UI 롤백 및 Flexbox 정렬"
+            "강제 화이트 모드 설정 해제 및 시스템 설정(다크/라이트) 자동 반응 테마 적용 (글씨 안 보임 현상 해결)",
+            "타이틀 상단 여백 확보(잘림 해결), 종목명 라벨 추가, 모바일 최적화 갱신버튼 축소, 목표가 HTML 노출 버그 픽스",
+            "분석 결과 영역(라벨, 구분선, 수치) px 고정으로 완벽한 세로 정렬(칼각) 구현"
         ]
     })
     st.dataframe(df_history, hide_index=True, use_container_width=True)
