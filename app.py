@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 가치평가", page_icon="📈", layout="wide")
 
-# 💡 테마 적응형 UI 및 줄글형 정보창 CSS
+# 💡 테마 적응형 UI 및 아이콘 가시성 확보를 위한 CSS
 st.markdown("""
     <style>
         .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
@@ -135,7 +135,7 @@ def get_hybrid_financials(ticker):
     return pd.DataFrame(rows)
 
 # ==========================================
-# 🧭 사이드바 메뉴
+# 💡 사이드바 메뉴
 # ==========================================
 st.sidebar.title("🧭 메뉴")
 menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 업데이트 이력"])
@@ -231,7 +231,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # --- 차트 데이터 로직 ---
+                    # --- 차트 데이터 준비 ---
                     historical_metric_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row[col_p])}
                     df_hist_daily = df_price.copy()
                     df_hist_daily['Year'] = df_hist_daily.index.year
@@ -258,7 +258,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 상단 차트 [PER/POR 밴드]
+                    # 💡 1. 상단 차트: 상단 여백(t)을 100으로 늘려 아이콘 영역 확보
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=3)))
                     for i, b in enumerate(bands):
@@ -272,18 +272,24 @@ if menu == "📈 가치평가 시뮬레이터":
 
                     fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(target_mult), mode='lines', line=dict(color='blue', width=1.5)))
                     if tp1 > 0:
-                        fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=12, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
+                        target_date_1 = fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0]
+                        fig1.add_annotation(x=target_date_1, y=tp1, text=f"목표: {target_mult:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=12, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
                     y_max = max([curr_p, tp1, tp2]) * 1.15
                     y_min = df_price['Close'].min() * 0.85
                     fig1.update_yaxes(range=[y_min, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
-                    fig1.update_layout(height=350, margin=dict(l=0, r=0, t=50, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    
+                    # 💡 여백(t: 100) 조정
+                    fig1.update_layout(height=400, margin=dict(l=0, r=0, t=100, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     fig1.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                     fig1.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
-                    st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
+                    
+                    # 💡 정밀 도구 모음 설정 (전체화면 아이콘은 살리고, 드래그 줌은 방해 안되게)
+                    st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom', 'pan', 'select', 'lasso2d', 'zoomIn', 'zoomOut', 'autoScale', 'resetScale']})
 
-                    # 💡 하단 차트 [평균 밴드]
+                    # 💡 2. 하단 차트: 여기도 여백 조정
+                    st.write("")
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/safe_metric, mode='lines', line=dict(color='purple', width=1.5)))
@@ -298,12 +304,13 @@ if menu == "📈 가치평가 시뮬레이터":
                     
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
-                    fig2.update_layout(height=250, margin=dict(l=0, r=0, t=50, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.95, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    
+                    fig2.update_layout(height=300, margin=dict(l=0, r=0, t=100, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     fig2.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                     fig2.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
-                    st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
+                    
+                    st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom', 'pan', 'select', 'lasso2d', 'zoomIn', 'zoomOut', 'autoScale', 'resetScale']})
 
-                    # 재무 상세 테이블
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>연도별 재무 상세 <span style='color:red; font-size:12px;'>(※ 값 수정 시 밸류 즉시 재측정)</span></div>", unsafe_allow_html=True)
                     st.data_editor(fin_df[['Label', '매출액', '영업이익', '당기순이익']], hide_index=True, use_container_width=True, key="financial_editor")
 
@@ -312,4 +319,5 @@ if menu == "📈 가치평가 시뮬레이터":
 
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame({"버전": ["V1.3.2", "V1.2.11"], "내용": ["줄글형 정보창 & 하단 밴드 수치 추가", "차트 어노테이션 부활"]}), hide_index=True, use_container_width=True)
+    df_history = pd.DataFrame({"버전": ["V1.3.3", "V1.3.2"], "내용": ["차트 상단 여백(t:100) 확보로 전체화면 아이콘 가시성 개선", "줄글형 정보창 & 하단 밴드 수치 추가"]})
+    st.dataframe(df_history, hide_index=True, use_container_width=True)
