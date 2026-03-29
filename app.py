@@ -12,18 +12,17 @@ from plotly.subplots import make_subplots
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 가치평가", page_icon="📈", layout="wide")
 
-# 💡 강제 라이트모드 삭제 및 자연스러운 줄글형 CSS 적용
+# 💡 테마 적응형 UI 및 줄글형 정보창 CSS
 st.markdown("""
     <style>
-        /* 타이틀 여백 정상화 */
         .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
         .main-title { font-size: 1.4rem !important; font-weight: bold; margin-top: 1rem; margin-bottom: 1rem; }
         .sub-header { font-size: 1.1rem !important; font-weight: bold; margin-top: 10px; margin-bottom: 10px; }
         
-        /* 카드형 UI */
+        /* 정보 표시 카드형 UI */
         .info-box { background-color: rgba(128, 128, 128, 0.05) !important; padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(128, 128, 128, 0.2) !important; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         
-        /* 💡 1. 자연스러운 줄글형 텍스트 박스 */
+        /* 자연스러운 줄글형 텍스트 박스 */
         .info-line { font-size: 13px; margin-bottom: 6px; line-height: 1.5; white-space: normal; word-break: keep-all; }
         .info-line:last-child { margin-bottom: 0; }
         .info-title { font-weight: bold; opacity: 0.75; }
@@ -39,7 +38,7 @@ st.markdown("""
         .search-label { font-size: 14px; font-weight: bold; margin-right: 10px; white-space: nowrap; }
         .search-input-wrap { flex-grow: 1; margin-right: 8px; }
         
-        /* Streamlit 폼 컨트롤 여백 제거 */
+        /* 폼 컨트롤 높이 최적화 */
         .stTextInput, .stSelectbox, .stNumberInput { margin-bottom: -15px !important; }
         .stTextInput > div > div > input, .stSelectbox > div > div > div, .stNumberInput > div > div > input { 
             height: 36px !important; min-height: 36px !important; font-size: 13px !important; padding: 0 8px !important; 
@@ -136,7 +135,7 @@ def get_hybrid_financials(ticker):
     return pd.DataFrame(rows)
 
 # ==========================================
-# 💡 사이드바 메뉴
+# 🧭 사이드바 메뉴
 # ==========================================
 st.sidebar.title("🧭 메뉴")
 menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 업데이트 이력"])
@@ -145,7 +144,6 @@ if menu == "📈 가치평가 시뮬레이터":
     
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 검색폼 한 줄 정렬
     col_input, col_btn = st.columns([1, 0.2])
     with col_input:
         st.markdown("<div class='search-container'><div class='search-label'>종목명</div><div class='search-input-wrap'>", unsafe_allow_html=True)
@@ -155,7 +153,6 @@ if menu == "📈 가치평가 시뮬레이터":
         st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
         search_clicked = st.button("갱신", use_container_width=True)
 
-    # 평가방식 / 목표배수 나란히
     st.write("")
     col_type, col_mult = st.columns(2)
     with col_type:
@@ -167,10 +164,8 @@ if menu == "📈 가치평가 시뮬레이터":
         target_mult = st.number_input("목표배수", value=10.0, step=0.5, format="%.1f", label_visibility="collapsed")
         st.markdown("</div></div>", unsafe_allow_html=True)
 
-    st.write("")
-
     if corp_name:
-        with st.spinner("데이터 분석 중..."):
+        with st.spinner("데이터 수집 중..."):
             listing = get_ticker_listing()
             ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
             
@@ -211,17 +206,12 @@ if menu == "📈 가치평가 시뮬레이터":
                     
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
                     
+                    last_date_str = df_price.index[-1].strftime('%m.%d')
                     c_updown = "rate-up" if updown >= 0 else "rate-down"
                     c_up1 = "rate-none" if tp1 == 0 else ("rate-up" if up1 >= 0 else "rate-down")
                     c_up2 = "rate-none" if tp2 == 0 else ("rate-up" if up2 >= 0 else "rate-down")
-                    
-                    t_up1 = "데이터 없음" if tp1 == 0 else (f"Up: +{up1:.1f}%" if up1 >= 0 else f"Down: {up1:.1f}%")
-                    t_up2 = "데이터 없음" if tp2 == 0 else (f"Up: +{up2:.1f}%" if up2 >= 0 else f"Down: {up2:.1f}%")
-                    
-                    last_date_str = df_price.index[-1].strftime('%m.%d')
 
-                    # 💡 1. 요청하신 자연스러운 줄글 형태로 렌더링
-                    html_info = f"""
+                    st.markdown(f"""
                     <div class='info-box'>
                         <div class='info-line'>
                             <span class='info-title'>현재가:</span> <span class='info-val'>{curr_p:,.0f}원,</span> 
@@ -231,19 +221,18 @@ if menu == "📈 가치평가 시뮬레이터":
                         <div class='info-line'>
                             <span class='info-title'>목표가({str(y1)[-2:]}년):</span> <span class='info-val'>{tp1:,.0f}원,</span> 
                             <span class='info-title'>목표시총:</span> <span class='info-val'>{tm1:,.0f}억</span> 
-                            <span class='{c_up1}' style='margin-left:4px;'>{t_up1}</span>
+                            <span class='{c_up1}' style='margin-left:4px;'>{"Up: +" + f"{up1:.1f}%" if tp1>0 else "데이터 없음"}</span>
                         </div>
                         <div class='info-line'>
                             <span class='info-title'>목표가({str(y2)[-2:]}년):</span> <span class='info-val'>{tp2:,.0f}원,</span> 
                             <span class='info-title'>목표시총:</span> <span class='info-val'>{tm2:,.0f}억</span> 
-                            <span class='{c_up2}' style='margin-left:4px;'>{t_up2}</span>
+                            <span class='{c_up2}' style='margin-left:4px;'>{"Up: +" + f"{up2:.1f}%" if tp2>0 else "데이터 없음"}</span>
                         </div>
                     </div>
-                    """
-                    st.markdown(html_info, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
 
-                    # --- 차트 데이터 준비 ---
-                    historical_metric_dict = {row['Plot_Date'].year: float(row['당기순이익' if "PER" in val_type else '영업이익']) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row['당기순이익' if "PER" in val_type else '영업이익'])}
+                    # --- 차트 데이터 로직 ---
+                    historical_metric_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= 2024].iterrows() if pd.notna(row[col_p])}
                     df_hist_daily = df_price.copy()
                     df_hist_daily['Year'] = df_hist_daily.index.year
                     df_hist_daily['Metric'] = df_hist_daily['Year'].map(historical_metric_dict).ffill().bfill()
@@ -254,165 +243,73 @@ if menu == "📈 가치평가 시뮬레이터":
                         valid_hist['Mult'] = valid_hist['Close'] / valid_hist['Metric']
                         mn, mx = valid_hist['Mult'].min(), valid_hist['Mult'].max()
                         stp = (mx-mn)/3
-                        if not np.isnan(mn) and not np.isnan(stp):
-                            bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
+                        bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     
-                    raw_metrics = pd.to_numeric(fin_df['당기순이익' if "PER" in val_type else '영업이익'], errors='coerce').values
+                    raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics = np.nan_to_num(raw_metrics, nan=0.001) * 100_000_000 / stocks_count
                     cur_metrics = np.where(cur_metrics <= 0, 0.001, cur_metrics)
-                    
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
                     today_m = float(curr_p / ext_interp[len(df_price)-1]) if ext_interp[len(df_price)-1] > 0.1 else 0
                     
                     x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 3. 상단 차트 [PER/POR 밴드] (독립 분리)
+                    # 💡 상단 차트 [PER/POR 밴드]
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#888888', width=3)))
-                    
                     for i, b in enumerate(bands):
                         if pd.notna(b):
-                            fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
-                            fig1.add_annotation(
-                                x=extended_dates[-1], y=float(ext_interp[-1] * float(b)),
-                                text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle",
-                                font=dict(size=11, color=cols[i%4], weight="bold")
-                            )
+                            fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(b), mode='lines', line=dict(color=cols[i%4], width=1, dash='dot')))
+                            fig1.add_annotation(x=extended_dates[-1], y=float(ext_interp[-1] * float(b)), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
 
-                    if pd.notna(today_m) and today_m > 0:
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * today_m, mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
-                        fig1.add_annotation(
-                            x=df_price.index[-1], y=curr_p,
-                            text=f"현재: {today_m:.1f}x",
-                            showarrow=True, arrowhead=2, ax=-40, ay=-30,
-                            font=dict(size=12, color="white", weight="bold"),
-                            bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4
-                        )
+                    if today_m > 0:
+                        fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * today_m, mode='lines', line=dict(color='red', width=1.5)))
+                        fig1.add_annotation(x=df_price.index[-1], y=curr_p, text=f"현재: {today_m:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=12, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
 
-                    fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(target_mult), mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
+                    fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(target_mult), mode='lines', line=dict(color='blue', width=1.5)))
                     if tp1 > 0:
-                        target_date_1 = fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0]
-                        fig1.add_annotation(
-                            x=target_date_1, y=tp1,
-                            text=f"목표: {target_mult:.1f}x",
-                            showarrow=True, arrowhead=2, ax=-40, ay=-30,
-                            font=dict(size=12, color="white", weight="bold"),
-                            bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4
-                        )
+                        fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=12, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
-                    # 다이내믹 Y축 스케일링
-                    valid_maxes = [df_price['Close'].max()]
-                    if tp1 > 0: valid_maxes.append(tp1)
-                    if tp2 > 0: valid_maxes.append(tp2)
-                    y_max = max(valid_maxes) * 1.1
+                    y_max = max([curr_p, tp1, tp2]) * 1.15
                     y_min = df_price['Close'].min() * 0.85
-                    if np.isnan(y_min) or np.isnan(y_max): 
-                        y_min, y_max = curr_p * 0.7, curr_p * 1.3
                     fig1.update_yaxes(range=[y_min, y_max])
-                    
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
-                    
-                    fig1.update_layout(
-                        height=350, margin=dict(l=0, r=0, t=50, b=10),
-                        title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-                    )
+                    fig1.update_layout(height=350, margin=dict(l=0, r=0, t=50, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     fig1.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                     fig1.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+                    st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # --- 변경 후 ---
-                    # 1. 차트를 고해상도 PNG 이미지 바이트로 변환 (scale=2로 선명도 2배)
-                    img_bytes1 = fig1.to_image(format="png", width=800, height=350, scale=2)
-                    # 2. st.image 함수로 진짜 '이미지' 출력 (어디든 터치하면 팝업됨)
-                    st.image(img_bytes1, use_container_width=True)
-
-                    st.caption("🔍 차트를 터치하면 전체화면 원본 크기로 볼 수 있습니다.")
-
-                    # 💡 4. 하단 차트: [평균 PER/POR 밴드] (독립 분리 및 수치 표기)
-                    st.write("")
+                    # 💡 하단 차트 [평균 밴드]
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
-                    fig2.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/safe_metric, mode='lines', name='당일Val', line=dict(color='purple', width=1.5)))
-                    
-                    # 하단 밴드 점선 및 수치 표기 추가
+                    fig2.add_trace(go.Scatter(x=df_price.index, y=df_price['Close']/safe_metric, mode='lines', line=dict(color='purple', width=1.5)))
                     for i, b in enumerate(bands):
                         if pd.notna(b):
                             fig2.add_hline(y=float(b), line_dash="dash", line_color=cols[i%4], line_width=1)
-                            fig2.add_annotation(
-                                x=extended_dates[-1] + timedelta(days=15), y=float(b),
-                                text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle",
-                                font=dict(size=11, color=cols[i%4], weight="bold")
-                            )
+                            fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
-                    if pd.notna(today_m) and today_m > 0:
-                        fig2.add_hline(y=today_m, line_dash="solid", line_color="red", line_width=1.5)
+                    if today_m > 0: fig2.add_hline(y=today_m, line_dash="solid", line_color="red", line_width=1.5)
                     fig2.add_hline(y=target_mult, line_dash="solid", line_color="blue", line_width=1.5)
-
                     fig2.update_yaxes(range=[0, max(bands[-1]*1.1 if bands else 30, target_mult*1.2)])
                     
-                    bottom_x_labels = []
-                    for idx, row in fin_df.iterrows():
-                        val = row.get(col_p, pd.NA)
-                        fmt = f"{val:,.0f}억" if pd.notna(val) else "-"
-                        if pd.notna(val) and val <= 0: fmt = f"{val:,.0f}억(적자)"
-                        bottom_x_labels.append(f"{str(row['Year'])[-2:]}년<br>{fmt}")
-                        
+                    bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
-                    
-                    fig2.update_layout(
-                        height=250, margin=dict(l=0, r=0, t=50, b=0),
-                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.95, font=dict(size=14)),
-                        showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-                    )
+                    fig2.update_layout(height=250, margin=dict(l=0, r=0, t=50, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.95, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     fig2.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                     fig2.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+                    st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
 
-                   # --- 변경 후 ---
-                    img_bytes2 = fig2.to_image(format="png", width=800, height=250, scale=2)
-                    st.image(img_bytes2, use_container_width=True)
-
-                    st.caption("🔍 차트를 터치하면 전체화면 원본 크기로 볼 수 있습니다.")
-
-                    # 연도별 재무 상세
+                    # 재무 상세 테이블
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>연도별 재무 상세 <span style='color:red; font-size:12px;'>(※ 값 수정 시 밸류 즉시 재측정)</span></div>", unsafe_allow_html=True)
-                    edited_df = st.data_editor(
-                        fin_df[['Label', '매출액', '영업이익', '당기순이익']],
-                        column_config={
-                            "Label": st.column_config.Column("연도", disabled=True),
-                            "매출액": st.column_config.NumberColumn("매출(억)", format="%,d"),
-                            "영업이익": st.column_config.NumberColumn("영업익(억)", format="%,d"),
-                            "당기순이익": st.column_config.NumberColumn("순이익(억)", format="%,d"),
-                        },
-                        hide_index=True, use_container_width=True, key="financial_editor"
-                    )
+                    st.data_editor(fin_df[['Label', '매출액', '영업이익', '당기순이익']], hide_index=True, use_container_width=True, key="financial_editor")
 
     else:
         st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
 
-# ==========================================
-# 💡 유지 메뉴
-# ==========================================
-elif menu == "📰 관심종목 - 뉴스":
-    st.markdown("<div class='main-title'>📰 관심종목 - 실시간 뉴스</div>", unsafe_allow_html=True)
-    st.info("🛠️ 현재 서비스 준비 중입니다. 다음 업데이트를 기대해 주세요!")
-
-elif menu == "📝 증권사 레포트":
-    st.markdown("<div class='main-title'>📝 최신 증권사 레포트 요약</div>", unsafe_allow_html=True)
-    st.info("🛠️ 현재 서비스 준비 중입니다. 다음 업데이트를 기대해 주세요!")
-
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
-    df_history = pd.DataFrame({
-        "버전": ["V1.3.2 (UI 최적화 최종)", "V1.3.1", "V1.3.0"],
-        "업데이트 내용": [
-            "정보창 가독성 최적화(자연스러운 줄글 형태), 하단 [평균 밴드] 차트 밴드 수치 라벨 추가",
-            "강제 화이트 모드 및 CSS 오염 원천 제거. 다크/라이트 테마 자동 반응 유지",
-            "네이버 증권 스타일 이미지형 차트 도입 및 다이내믹 Y축 스케일링 적용"
-        ]
-    })
-    st.dataframe(df_history, hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame({"버전": ["V1.3.2", "V1.2.11"], "내용": ["줄글형 정보창 & 하단 밴드 수치 추가", "차트 어노테이션 부활"]}), hide_index=True, use_container_width=True)
