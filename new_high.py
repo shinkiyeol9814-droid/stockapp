@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import FinanceDataReader as fdr
 import re
+import io  # 💡 필수: StringIO 사용을 위해 추가됨
 
 # 공통 헤더
 HEADERS = {
@@ -20,35 +21,42 @@ def get_krx_listing():
 @st.cache_data(ttl=3600)
 def scrape_52w_highs():
     """
-    1순위: 인베스팅닷컴 (요청 URL)
-    2순위: 네이버 금융 (인베스팅닷컴 봇 차단 시 대체)
+    1순위: 네이버 금융 (Streamlit 클라우드 환경에서 훨씬 안정적임)
+    2순위: 인베스팅닷컴 (대체제)
     """
-    # 1. 인베스팅닷컴 크롤링 시도
-    inv_url = "https://kr.investing.com/equities/south-korea/52-week-high"
-    try:
-        res = requests.get(inv_url, headers=HEADERS, timeout=5)
-        if res.status_code == 200:
-            dfs = pd.read_html(res.text)
-            if dfs:
-                df = dfs[0]
-                df = df.rename(columns={'이름': '종목명', '현재가': '현재가', '변동 %': '등락률'})
-                return df[['종목명', '현재가', '등락률']].head(30) # 상위 30개만
-    except:
-        pass # 실패 시 네이버로 넘어감
-
-    # 2. 네이버 금융 (대체제)
+    # 1. 네이버 금융 크롤링 (1순위로 승격)
     nv_url = "https://finance.naver.com/sise/sise_high_up.naver"
     try:
         res = requests.get(nv_url, headers=HEADERS, timeout=5)
         res.encoding = 'euc-kr'
-        dfs = pd.read_html(res.text)
+        # 💡 핵심 수정: 에러 로그 피드백 반영 (StringIO로 래핑)
+        dfs = pd.read_html(io.StringIO(res.text)) 
+        
         for df in dfs:
             if '종목명' in df.columns:
                 df = df.dropna(subset=['종목명'])
-                df = df[df['종목명'] != '종목명']
+                df = df[df['종목명'] != '종목명'] # 테이블 내부 중간 헤더 제거
+                # 데이터가 정상적으로 있으면 바로 반환
+                if not df.empty:
+                    return df[['종목명', '현재가', '등락률']].head(30)
+    except Exception as e:
+        print(f"네이버 금융 크롤링 실패: {e}") # 클라우드 로그 확인용
+
+    # 2. 인베스팅닷컴 크롤링 (2순위로 강등)
+    inv_url = "https://kr.investing.com/equities/south-korea/52-week-high"
+    try:
+        res = requests.get(inv_url, headers=HEADERS, timeout=5)
+        if res.status_code == 200:
+            # 💡 여기도 동일하게 StringIO 적용
+            dfs = pd.read_html(io.StringIO(res.text)) 
+            if dfs:
+                df = dfs[0]
+                df = df.rename(columns={'이름': '종목명', '현재가': '현재가', '변동 %': '등락률'})
                 return df[['종목명', '현재가', '등락률']].head(30)
     except Exception as e:
-        return pd.DataFrame()
+        print(f"인베스팅 크롤링 실패: {e}")
+        
+    # 둘 다 실패하면 빈 데이터프레임 반환
     return pd.DataFrame()
 
 def get_company_details(ticker, corp_name):
