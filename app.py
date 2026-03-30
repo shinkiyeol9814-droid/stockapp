@@ -236,8 +236,7 @@ if menu == "📈 가치평가 시뮬레이터":
                     
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # 💡 V1.3.11 핵심 반영: Data Editor를 위로 끌어올림.
-                    # 여기서 변경된 데이터가 바로 fin_df에 업데이트되어 아래 로직 전체에 영향을 줌.
+                    # Data Editor
                     st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 시 하단 밸류 즉시 재측정)</span></div>", unsafe_allow_html=True)
                     edited_df = st.data_editor(
                         fin_df[['Label', '매출액', '영업이익', '당기순이익']], 
@@ -299,11 +298,11 @@ if menu == "📈 가치평가 시뮬레이터":
                     df_hist_daily['Metric'] = metric_series2.ffill().bfill().values
                     
                     bands = []
-                    avg_m_val = 0 # 평균 밴드 값을 저장할 변수 초기화
+                    avg_m_val = 0
                     valid_hist = df_hist_daily[pd.to_numeric(df_hist_daily['Metric'], errors='coerce') > 0].copy()
                     if not valid_hist.empty:
                         valid_hist['Mult'] = valid_hist['Close'] / valid_hist['Metric']
-                        avg_m_val = valid_hist['Mult'].mean() # 평균 Multiple 계산
+                        avg_m_val = valid_hist['Mult'].mean()
                         mn, mx = valid_hist['Mult'].min(), valid_hist['Mult'].max(); stp = (mx-mn)/3
                         bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
@@ -327,6 +326,13 @@ if menu == "📈 가치평가 시뮬레이터":
                         if pd.notna(b):
                             fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
                     
+                    # 💡 추가: 상단 차트에도 Avg 라인 및 현재/목표 스타일과 동일한 라벨 표기
+                    if avg_m_val > 0:
+                        fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * avg_m_val, mode='lines', name='AvgVal', line=dict(color='green', width=1.5)))
+                        avg_y_curr = ext_interp[len(df_price)-1] * avg_m_val
+                        # 현재가 주석과 겹치지 않도록 ay값을 양수(아래쪽)로 설정
+                        fig1.add_annotation(x=df_price.index[-1], y=avg_y_curr, text=f"Avg: {avg_m_val:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderwidth=1, borderpad=4)
+
                     if today_m > 0:
                         fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * today_m, mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
                         fig1.add_annotation(x=df_price.index[-1], y=curr_p, text=f"현재: {today_m:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
@@ -357,7 +363,6 @@ if menu == "📈 가치평가 시뮬레이터":
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
                             fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
-                    # 💡 V1.3.11 핵심 반영: 평균(Avg) 라인 초록색 실선으로 추가
                     if avg_m_val > 0:
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'Avg {avg_m_val:.1f}x', line=dict(color='green', width=2)))
                         fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="green", weight="bold"))
@@ -389,6 +394,6 @@ elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
     df_history = pd.DataFrame({
         "버전": ["V1.3.11 (반응형 및 Avg 추가)", "V1.3.10 (Select Box 픽스)", "V1.3.9"], 
-        "내용": ["재무 데이터 에디터 상단 배치로 실시간 차트 반응형 구현, 하단 차트 과거 평균(Avg) 밴드 라인 추가", "평가방식 Select Box 내부 텍스트 잘림 현상 완벽 픽스", "검색 폼 세로 3단 전환, 라벨 너비 고정(칼각 정렬)"]
+        "내용": ["재무 데이터 에디터 상단 배치로 실시간 차트 반응형 구현, 상/하단 차트 과거 평균(Avg) 라인 및 라벨 추가", "평가방식 Select Box 내부 텍스트 잘림 현상 완벽 픽스", "검색 폼 세로 3단 전환, 라벨 너비 고정(칼각 정렬)"]
     })
     st.dataframe(df_history, hide_index=True, use_container_width=True)
