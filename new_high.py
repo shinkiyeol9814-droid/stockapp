@@ -67,24 +67,6 @@ def scrape_52w_highs():
         st.error(f"❌ 인베스팅 알 수 없는 에러: {e}")
         
     return pd.DataFrame()
-
-    # 2. 인베스팅닷컴 크롤링 (2순위로 강등)
-    inv_url = "https://kr.investing.com/equities/south-korea/52-week-high"
-    try:
-        res = requests.get(inv_url, headers=HEADERS, timeout=5)
-        if res.status_code == 200:
-            # 💡 여기도 동일하게 StringIO 적용
-            dfs = pd.read_html(io.StringIO(res.text)) 
-            if dfs:
-                df = dfs[0]
-                df = df.rename(columns={'이름': '종목명', '현재가': '현재가', '변동 %': '등락률'})
-                return df[['종목명', '현재가', '등락률']].head(30)
-    except Exception as e:
-        print(f"인베스팅 크롤링 실패: {e}")
-        
-    # 둘 다 실패하면 빈 데이터프레임 반환
-    return pd.DataFrame()
-
 def get_company_details(ticker, corp_name):
     """네이버 금융에서 사업 요약, 뉴스, PER 등을 수집하여 사유 분석"""
     details = {
