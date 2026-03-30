@@ -8,6 +8,7 @@ import re
 import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from new_high import render_new_high_menu 
 
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 가치평가", page_icon="📈", layout="wide")
@@ -150,7 +151,7 @@ def get_hybrid_financials(ticker):
 
 # --- 메뉴 구성 ---
 st.sidebar.title("🧭 메뉴")
-menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "📰 관심종목 - 뉴스", "📝 증권사 레포트", "🛠️ 업데이트 이력"])
+menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 관심종목 - 뉴스", "🛠️ 업데이트 이력"])
 
 if menu == "📈 가치평가 시뮬레이터":
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
@@ -389,6 +390,10 @@ if menu == "📈 가치평가 시뮬레이터":
 
     else:
         st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
+        
+elif menu == "🚀 신고가 트래킹":
+    # 💡 모듈화된 함수 실행
+    render_new_high_menu()
 
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
