@@ -9,7 +9,7 @@ import base64
 # GitHub 저장소 설정 (기열님 환경 맞춤형)
 # ---------------------------------------------------------
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
-GITHUB_BRANCH = "main" # 캡처화면 기준 브랜치명
+GITHUB_BRANCH = "Dev" # 캡처화면 기준 브랜치명
 
 def get_latest_report():
     """data/ 폴더에서 가장 최신 JSON 리포트 파일을 로드"""
