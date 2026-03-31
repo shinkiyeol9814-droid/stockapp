@@ -49,8 +49,7 @@ def save_to_github(file_path, content, message):
     return put_res.status_code in [200, 201]
 
 def render_new_high_menu():
-    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 주도주 모멘텀 & 코멘트 관리 (V1.4.0)</div>", unsafe_allow_html=True)
-    st.info("💡 매일 15:40, 20:20에 시총 1,000억 이상 종목을 전수 분석하며, 텔레그램/뉴스 기반 AI 요약본을 제공합니다.")
+    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 주도주 모멘텀 & 코멘트 관리 (V1.5.0)</div>", unsafe_allow_html=True)
     
     report_data, file_name = get_latest_report()
     
@@ -58,62 +57,68 @@ def render_new_high_menu():
         st.warning("분석된 데이터가 없습니다. 장 마감 후 자동 배치가 실행될 때까지 기다려주세요.")
         return
 
-    st.success(f"📅 **최종 분석 시점:** {report_data.get('analysis_time', 'N/A')} (소스: 네이버뉴스+텔레그램+Gemini)")
+    st.success(f"📅 **최종 분석 시점:** {report_data.get('analysis_time', 'N/A')}")
     
     if not report_data.get('results'):
-        st.write("선택된 기간 내 조건을 만족하는 주도주가 없습니다.")
+        st.write("조건을 만족하는 주도주가 없습니다.")
         return
 
-    # 원본 데이터 보호를 위해 복사본으로 DataFrame 생성
-    df = pd.DataFrame(report_data['results'])
-    disp_df = df.copy()
+    # 원본 데이터 생성
+    all_df = pd.DataFrame(report_data['results'])
     
-    # UI 화면 출력을 위한 데이터 포맷팅 (저장 시에는 원본 숫자값 유지)
-    disp_df['현재가'] = disp_df['현재가'].apply(lambda x: f"{int(x):,}원")
-    disp_df['등락률'] = disp_df['등락률'].apply(lambda x: f"{float(x):.2f}%")
+    # --- [신규 필터링 UI] ---
+    st.markdown("### 🔍 필터 설정")
+    periods = ["전체", "1년(52주) 신고가", "6개월 신고가", "3개월 신고가", "1주 신고가"]
+    selected_periods = st.multiselect("보고 싶은 신고가 기간을 선택하세요 (미선택 시 전체)", periods, default=["전체"])
+
+    # 필터링 로직
+    if "전체" in selected_periods or not selected_periods:
+        filtered_df = all_df.copy()
+    else:
+        filtered_df = all_df[all_df['돌파기간'].isin(selected_periods)].copy()
+    # -----------------------
+
+    # 화면 표시용 가공
+    disp_df = filtered_df.copy()
+    disp_df['현재가'] = disp_df['현재가'].apply(lambda x: f"{int(x):,}원" if str(x).isdigit() else x)
+    disp_df['등락률'] = disp_df['등락률'].apply(lambda x: f"{float(x):.2f}%" if not isinstance(x, str) else x)
     
-    st.markdown("### 📝 분석 결과 리스트")
-    st.caption("🖱️ '추정 사유(AI 코멘트)' 셀을 더블클릭하여 내용을 직접 수정할 수 있습니다.")
+    st.markdown(f"### 📝 분석 결과 리스트 ({len(filtered_df)}건)")
     
-    # 데이터 에디터 UI 적용 ('추정 사유' 외에는 수정 불가하도록 제한)
     edited_df = st.data_editor(
         disp_df[['종목명', '현재가', '등락률', '돌파기간', '추정 사유', '코드']],
         column_config={
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
-            "돌파기간": st.column_config.TextColumn("신고가 기준", width="medium"),
-            "코드": None  # 코드는 UI에서 숨김
+            "코드": None 
         },
-        disabled=['종목명', '현재가', '등락률', '돌파기간'], # 다른 컬럼 조작 방지
+        disabled=['종목명', '현재가', '등락률', '돌파기간'],
         hide_index=True, 
         use_container_width=True, 
         key="high_price_editor"
     )
 
-    # 코멘트 저장 버튼
     if st.button("💾 수정한 코멘트 GitHub에 최종 저장", type="primary"):
-        # UI에서 수정된 데이터 추출
         edited_records = edited_df.to_dict(orient='records')
-        
-        # 종목 코드를 기준으로 수정된 '추정 사유'만 매핑
         comment_map = {row['코드']: row['추정 사유'] for row in edited_records}
         
-        # 원본 JSON 데이터 구조에 수정한 코멘트만 쏙 업데이트 (데이터 타입 오염 방지)
+        # 필터링된 상태여도 원본 report_data의 모든 결과를 업데이트하여 전체 데이터 보존
         for item in report_data['results']:
             if item['코드'] in comment_map:
                 item['추정 사유'] = comment_map[item['코드']]
                 
         json_content = json.dumps(report_data, indent=4, ensure_ascii=False)
         
-        with st.spinner("GitHub 메인 브랜치에 업데이트 중..."):
+        with st.spinner("GitHub dev 브랜치에 업데이트 중..."):
             success = save_to_github(f"data/{file_name}", json_content, f"Update AI comments for {file_name}")
             if success:
-                st.success("✅ 변경사항이 성공적으로 반영되었습니다! (새로고침 시 적용)")
+                st.success("✅ 변경사항이 성공적으로 반영되었습니다!")
             else:
-                st.error("❌ 저장 실패. Streamlit Secrets의 GH_PAT 권한 또는 네트워크 상태를 확인하세요.")
+                st.error("❌ 저장 실패.")
 
     st.markdown("---")
     st.markdown("### 🔍 주요 뉴스 모니터링")
     for _, row in edited_df.iterrows():
-        original_row = next((item for item in report_data['results'] if item['종목명'] == row['종목명']), {})
-        with st.expander(f"[{row['종목명']}] {row['돌파기간']} - {row['추정 사유']}"):
-            st.write(f"**📰 요약 헤드라인:** {original_row.get('최신뉴스', 'N/A')}")
+        original_row = next((item for item in report_data['results'] if item['코드'] == row['코드']), {})
+        with st.expander(f"[{row['종목명']}] {row['돌파기간']} 뉴스 확인"):
+            news_text = original_row.get('최신뉴스', '관련 뉴스 없음')
+            st.write(f"**📰 뉴스 헤드라인:**\n{news_text}")
