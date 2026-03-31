@@ -22,7 +22,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pandas finance-datareader telethon google-generativeai beautifulsoup4 requests
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run Batch Analysis Script
         env:
