@@ -6,9 +6,11 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
-import google.generativeai as genai
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+
+# [수정 1] 구형 google.generativeai 대신 최신 패키지 import
+from google import genai
 
 # ---------------------------------------------------------
 # 환경 변수 세팅 (GitHub Secrets에서 주입됨)
@@ -18,7 +20,8 @@ API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-genai.configure(api_key=GEMINI_KEY)
+# [수정 2] 최신 패키지용 Client 인스턴스 생성
+client_ai = genai.Client(api_key=GEMINI_KEY)
 
 # ---------------------------------------------------------
 # 1. 시총 1000억 이상 주도주 및 신고가 판별
@@ -111,7 +114,6 @@ def summarize_with_gemini(stock_name, tg_text, news_text):
     if not tg_text.strip() and not news_text.strip():
         return "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
         
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt = f"""
     너는 냉철한 주식 분석가야. 아래는 '{stock_name}' 종목의 오늘자 네이버 뉴스(팩트)와 텔레그램 찌라시(루머/수급) 데이터야.
     이 데이터를 교차 검증해서, 이 종목이 오늘 신고가를 뚫은 '핵심 모멘텀(진짜 이유)'을 불필요한 수식어 없이 딱 1줄(50자 이내)로 명확하게 요약해.
@@ -123,7 +125,11 @@ def summarize_with_gemini(stock_name, tg_text, news_text):
     {tg_text}
     """
     try:
-        response = model.generate_content(prompt)
+        # [수정 3] 최신 genai 패키지의 메서드 사용 및 빠르고 안정적인 Flash 모델 적용
+        response = client_ai.models.generate_content(
+            model='gemini-2.5-flash', 
+            contents=prompt,
+        )
         return response.text.strip()
     except Exception as e:
         return f"AI 분석 에러: {e}"
@@ -142,12 +148,12 @@ async def main():
         print(f"총 {len(stocks)}개의 신고가 종목 발견. 텔레그램/뉴스 교차 분석 시작...")
         
         # 텔레그램 클라이언트 연결
-        client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
-        await client.start()
+        client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
+        await client_tg.start()
         
         for s in stocks:
-            print(f" -> [{s['종목명']}] 데이터 수집 중...")
-            tg_text = await get_telegram_news(client, s['종목명'])
+            print(f" -> [{s['종목명']}] 데이터 수집 및 AI 분석 중...")
+            tg_text = await get_telegram_news(client_tg, s['종목명'])
             news_text = get_naver_news(s['종목명'])
             
             # AI 요약 생성
@@ -157,7 +163,10 @@ async def main():
             s['최신뉴스'] = news_text.split('\n')[0] if news_text else "관련 뉴스 없음"
             s['PER'] = "조회필요" # 배치 속도를 위해 생략
             
-        await asyncio.sleep(4)
+            # [수정 4] 무료 티어 429 에러 방지를 위한 필수 딜레이 (4초)
+            await asyncio.sleep(4)
+            
+        await client_tg.disconnect()
 
     # 결과 JSON 저장
     os.makedirs('data', exist_ok=True)
