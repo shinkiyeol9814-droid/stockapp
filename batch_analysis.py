@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import time
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -8,8 +9,6 @@ import pandas as pd
 import FinanceDataReader as fdr
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-
-# [수정 1] 구형 google.generativeai 대신 최신 패키지 import
 from google import genai
 
 # ---------------------------------------------------------
@@ -20,7 +19,7 @@ API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# [수정 2] 최신 패키지용 Client 인스턴스 생성
+# 최신 패키지용 Client 인스턴스 생성
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 # ---------------------------------------------------------
@@ -30,14 +29,10 @@ def get_high_stocks():
     print("데이터 수집 및 1,000억 필터링 시작...")
     df = fdr.StockListing('KRX')
     
-    # 1차 필터: 시총 1000억 이상, 동전주 제외, 거래량 10만 이상
     df = df[(df['Marcap'] >= 100_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
-    
-    # 당일 주도주 파악을 위해 등락률 상위 50개만 우선 추출 (배치 속도 최적화)
     candidates = df.sort_values('ChagesRatio', ascending=False).head(50)
     results = []
     
-    # 과거 1년 차트 조회를 위한 날짜 설정
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
     
     print(f"주도주 {len(candidates)}개 종목 신고가 정밀 연산 중...")
@@ -46,16 +41,14 @@ def get_high_stocks():
             hist = fdr.DataReader(row.Code, start_date)
             if hist.empty or len(hist) < 20: continue
             
-            # 기간별 고가 계산 (1주, 3개월, 6개월, 1년)
             high_1y = hist['High'].max()
-            high_6m = hist['High'].tail(120).max() # 약 6개월 영업일
-            high_3m = hist['High'].tail(60).max()  # 약 3개월 영업일
-            high_1w = hist['High'].tail(5).max()   # 약 1주 영업일
+            high_6m = hist['High'].tail(120).max()
+            high_3m = hist['High'].tail(60).max()
+            high_1w = hist['High'].tail(5).max()
             
             today_high = hist['High'].iloc[-1]
             today_close = int(hist['Close'].iloc[-1])
             
-            # 오늘 고가가 특정 기간의 고가를 뚫었는지(또는 0.5% 내 근접) 확인
             period_flag = ""
             if today_high >= high_1y * 0.995: period_flag = "1년(52주) 신고가"
             elif today_high >= high_6m * 0.995: period_flag = "6개월 신고가"
@@ -83,7 +76,6 @@ async def get_telegram_news(client, stock_name):
     today = datetime.now().date()
     
     try:
-        # 첫 번째 인자 None = 사용자가 가입한 '모든' 대화방 통합 검색
         async for message in client.iter_messages(None, search=stock_name, limit=10):
             if message.date.date() == today and message.text:
                 messages_text.append(message.text)
@@ -108,9 +100,9 @@ def get_naver_news(stock_name):
         return "뉴스 검색 실패"
 
 # ---------------------------------------------------------
-# 4. Gemini API 통합 모멘텀 요약
+# 4. Gemini API 통합 모멘텀 요약 (재시도 로직 추가)
 # ---------------------------------------------------------
-def summarize_with_gemini(stock_name, tg_text, news_text):
+def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
     if not tg_text.strip() and not news_text.strip():
         return "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
         
@@ -124,15 +116,23 @@ def summarize_with_gemini(stock_name, tg_text, news_text):
     [텔레그램 찌라시]:
     {tg_text}
     """
-    try:
-        # [수정 3] 최신 genai 패키지의 메서드 사용 및 빠르고 안정적인 Flash 모델 적용
-        response = client_ai.models.generate_content(
-            model='gemini-2.5-flash', 
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        return f"AI 분석 에러: {e}"
+    
+    for attempt in range(max_retries):
+        try:
+            response = client_ai.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+            )
+            return response.text.strip()
+            
+        except Exception as e:
+            error_msg = str(e)
+            if '503' in error_msg or '429' in error_msg:
+                if attempt < max_retries - 1:
+                    print(f"   ⚠️ [API 대기중] 503/429 에러 발생. 15초 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
+                    time.sleep(15)
+                    continue
+            return f"AI 분석 에러: {e}"
 
 # ---------------------------------------------------------
 # 메인 파이프라인 실행
@@ -147,7 +147,6 @@ async def main():
     else:
         print(f"총 {len(stocks)}개의 신고가 종목 발견. 텔레그램/뉴스 교차 분석 시작...")
         
-        # 텔레그램 클라이언트 연결
         client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
         await client_tg.start()
         
@@ -156,15 +155,14 @@ async def main():
             tg_text = await get_telegram_news(client_tg, s['종목명'])
             news_text = get_naver_news(s['종목명'])
             
-            # AI 요약 생성
             reason = summarize_with_gemini(s['종목명'], tg_text, news_text)
             
             s['추정 사유'] = reason
             s['최신뉴스'] = news_text.split('\n')[0] if news_text else "관련 뉴스 없음"
-            s['PER'] = "조회필요" # 배치 속도를 위해 생략
+            s['PER'] = "조회필요"
             
-            # [수정 4] 무료 티어 429 에러 방지를 위한 필수 딜레이 (4초)
-            await asyncio.sleep(4)
+            # 한도 초과 방지 넉넉한 딜레이 (6초)
+            await asyncio.sleep(6)
             
         await client_tg.disconnect()
 
