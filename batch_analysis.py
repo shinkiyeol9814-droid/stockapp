@@ -87,17 +87,30 @@ async def get_telegram_news(client, stock_name):
 # ---------------------------------------------------------
 # 3. 네이버 특징주 뉴스 스크래핑
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# 3. 네이버 뉴스 스크래핑 (로직 강화)
+# ---------------------------------------------------------
 def get_naver_news(stock_name):
+    # '특징주' 키워드로 우선 검색
     url = f"https://m.search.naver.com/search.naver?where=m_news&sm=mtb_jum&query={stock_name}+특징주"
     headers = {"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/110.0.0.0 Mobile"}
+    
     try:
         res = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
-        news_items = soup.select('.news_tit')[:3]
-        news_list = [item.text.strip() for item in news_items]
-        return " \n".join(news_list)
+        news_items = soup.select('.news_tit')
+        
+        # 만약 '특징주' 결과가 없으면 그냥 종목명으로 재검색
+        if not news_items:
+            url = f"https://m.search.naver.com/search.naver?where=m_news&sm=mtb_jum&query={stock_name}"
+            res = requests.get(url, headers=headers, timeout=5)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            news_items = soup.select('.news_tit')
+
+        news_list = [item.text.strip() for item in news_items[:3]]
+        return " \n".join(news_list) if news_list else ""
     except:
-        return "뉴스 검색 실패"
+        return ""
 
 # ---------------------------------------------------------
 # 4. Gemini API 통합 모멘텀 요약 (재시도 로직 추가)
