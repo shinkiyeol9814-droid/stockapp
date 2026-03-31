@@ -3,7 +3,8 @@ import json
 import asyncio
 import time
 import requests
-from bs4 import BeautifulSoup
+import urllib.parse
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
@@ -19,7 +20,6 @@ API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# 최신 패키지용 Client 인스턴스 생성
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 # ---------------------------------------------------------
@@ -69,7 +69,7 @@ def get_high_stocks():
     return results
 
 # ---------------------------------------------------------
-# 2. 텔레그램 전체 검색 (노이즈 필터링 포함)
+# 2. 텔레그램 전체 검색
 # ---------------------------------------------------------
 async def get_telegram_news(client, stock_name):
     messages_text = []
@@ -85,45 +85,39 @@ async def get_telegram_news(client, stock_name):
     return " \n".join(messages_text)
 
 # ---------------------------------------------------------
-# 3. 네이버 특징주 뉴스 스크래핑
+# 3. 구글 뉴스 RSS 수집 (네이버 봇 차단 우회)
 # ---------------------------------------------------------
-# ---------------------------------------------------------
-# 3. 네이버 뉴스 스크래핑 (로직 강화)
-# ---------------------------------------------------------
-def get_naver_news(stock_name):
-    # '특징주' 키워드로 우선 검색
-    url = f"https://m.search.naver.com/search.naver?where=m_news&sm=mtb_jum&query={stock_name}+특징주"
-    headers = {"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/110.0.0.0 Mobile"}
-    
+def get_google_news(stock_name):
     try:
-        res = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        news_items = soup.select('.news_tit')
+        # 정확도 향상을 위해 검색어 조합 (종목명 + 특징주 OR 주가)
+        query = f'"{stock_name}" 특징주 OR 주가'
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
         
-        # 만약 '특징주' 결과가 없으면 그냥 종목명으로 재검색
-        if not news_items:
-            url = f"https://m.search.naver.com/search.naver?where=m_news&sm=mtb_jum&query={stock_name}"
-            res = requests.get(url, headers=headers, timeout=5)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            news_items = soup.select('.news_tit')
-
-        news_list = [item.text.strip() for item in news_items[:3]]
-        return " \n".join(news_list) if news_list else ""
-    except:
-        return ""
+        res = requests.get(url, timeout=5)
+        root = ET.fromstring(res.text)
+        
+        news_list = []
+        for item in root.findall('.//item')[:3]:  # 상위 3개 뉴스 추출
+            title = item.find('title').text
+            news_list.append(title)
+            
+        return " \n".join(news_list) if news_list else "관련 뉴스 없음"
+    except Exception as e:
+        return f"뉴스 수집 에러: {e}"
 
 # ---------------------------------------------------------
-# 4. Gemini API 통합 모멘텀 요약 (재시도 로직 추가)
+# 4. Gemini API 통합 모멘텀 요약 (재시도 로직 강화)
 # ---------------------------------------------------------
 def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
-    if not tg_text.strip() and not news_text.strip():
+    if not tg_text.strip() and (not news_text.strip() or "관련 뉴스 없음" in news_text):
         return "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
         
     prompt = f"""
-    너는 냉철한 주식 분석가야. 아래는 '{stock_name}' 종목의 오늘자 네이버 뉴스(팩트)와 텔레그램 찌라시(루머/수급) 데이터야.
+    너는 냉철한 주식 분석가야. 아래는 '{stock_name}' 종목의 오늘자 뉴스 헤드라인(팩트)과 텔레그램 찌라시(루머/수급) 데이터야.
     이 데이터를 교차 검증해서, 이 종목이 오늘 신고가를 뚫은 '핵심 모멘텀(진짜 이유)'을 불필요한 수식어 없이 딱 1줄(50자 이내)로 명확하게 요약해.
     
-    [네이버 뉴스]:
+    [뉴스 데이터]:
     {news_text}
     
     [텔레그램 찌라시]:
@@ -132,8 +126,9 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
     
     for attempt in range(max_retries):
         try:
+            # 무료 티어에서 비교적 안정적인 1.5-flash 모델 적용
             response = client_ai.models.generate_content(
-                model='gemini-2.5-flash', 
+                model='gemini-1.5-flash', 
                 contents=prompt,
             )
             return response.text.strip()
@@ -142,8 +137,8 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
             error_msg = str(e)
             if '503' in error_msg or '429' in error_msg:
                 if attempt < max_retries - 1:
-                    print(f"   ⚠️ [API 대기중] 503/429 에러 발생. 15초 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
-                    time.sleep(15)
+                    print(f"   ⚠️ [API 대기중] 과부하/한도초과. 60초 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
+                    time.sleep(60) # 구글 API 요구사항에 맞춰 대기 시간을 60초로 대폭 연장
                     continue
             return f"AI 분석 에러: {e}"
 
@@ -155,7 +150,7 @@ async def main():
     stocks = get_high_stocks()
     
     if not stocks:
-        print("조건을 만족하는 신고가 종목이 없습니다. 빈 리포트를 생성합니다.")
+        print("조건을 만족하는 신고가 종목이 없습니다.")
         stocks = []
     else:
         print(f"총 {len(stocks)}개의 신고가 종목 발견. 텔레그램/뉴스 교차 분석 시작...")
@@ -166,16 +161,17 @@ async def main():
         for s in stocks:
             print(f" -> [{s['종목명']}] 데이터 수집 및 AI 분석 중...")
             tg_text = await get_telegram_news(client_tg, s['종목명'])
-            news_text = get_naver_news(s['종목명'])
+            news_text = get_google_news(s['종목명'])
             
             reason = summarize_with_gemini(s['종목명'], tg_text, news_text)
             
             s['추정 사유'] = reason
+            # 뉴스 전체 텍스트 중 첫 번째 줄만 잘라서 표에 저장
             s['최신뉴스'] = news_text.split('\n')[0] if news_text else "관련 뉴스 없음"
             s['PER'] = "조회필요"
             
-            # 한도 초과 방지 넉넉한 딜레이 (6초)
-            await asyncio.sleep(6)
+            # API 제한 방지를 위해 종목당 10초 대기 (안정성 최우선)
+            await asyncio.sleep(10)
             
         await client_tg.disconnect()
 
