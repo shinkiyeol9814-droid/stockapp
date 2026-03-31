@@ -5,7 +5,7 @@ import os
 import requests
 import base64
 
-GITHUB_REPO = "사용자명/레포지토리명" # ★ 본인의 깃허브 경로로 반드시 수정!
+GITHUB_REPO = "shinkiyeol9814-droid/stockapp" # ★ 본인의 깃허브 경로로 반드시 수정!
 GITHUB_TOKEN = st.secrets.get("GH_PAT")
 
 def get_latest_report():
