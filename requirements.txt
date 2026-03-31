@@ -10,4 +10,4 @@ beautifulsoup4
 html5lib
 kaleido
 telethon
-google-generativeai
+google-genai
