@@ -111,7 +111,7 @@ def summarize_with_gemini(stock_name, tg_text, news_text):
     if not tg_text.strip() and not news_text.strip():
         return "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
         
-    model = genai.GenerativeModel('gemini-3.1-pro-preview')
+    model = genai.GenerativeModel('gemini-3.1-flash')
     prompt = f"""
     너는 냉철한 주식 분석가야. 아래는 '{stock_name}' 종목의 오늘자 네이버 뉴스(팩트)와 텔레그램 찌라시(루머/수급) 데이터야.
     이 데이터를 교차 검증해서, 이 종목이 오늘 신고가를 뚫은 '핵심 모멘텀(진짜 이유)'을 불필요한 수식어 없이 딱 1줄(50자 이내)로 명확하게 요약해.
@@ -157,7 +157,7 @@ async def main():
             s['최신뉴스'] = news_text.split('\n')[0] if news_text else "관련 뉴스 없음"
             s['PER'] = "조회필요" # 배치 속도를 위해 생략
             
-        await client.disconnect()
+        await asyncio.sleep(4)
 
     # 결과 JSON 저장
     os.makedirs('data', exist_ok=True)
