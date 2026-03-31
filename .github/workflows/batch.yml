@@ -11,10 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 💡 경고 해결: v3 -> v4로 업데이트
+        with:
+          ref: dev # 💡 핵심: 처음부터 아예 dev 브랜치를 기준으로 가져오도록 강제 세팅
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # 💡 경고 해결: v4 -> v5로 업데이트
         with:
           python-version: '3.10'
 
@@ -36,4 +38,4 @@ jobs:
           git config --global user.email "action@github.com"
           git add data/*.json
           git commit -m "Auto-update: Daily stock high price report & AI analysis" || echo "No changes to commit"
-          git push origin dev  # 💡 무조건 dev 브랜치로 결과를 쏘도록 수정!
+          git push origin HEAD:dev # 💡 에러 해결: 현재 상태를 무조건 dev로 밀어넣기
