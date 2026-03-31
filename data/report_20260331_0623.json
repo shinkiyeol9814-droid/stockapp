@@ -1,0 +1,345 @@
+{
+    "analysis_time": "2026-03-31 06:23",
+    "results": [
+        {
+            "종목명": "조일알미늄",
+            "코드": "018470",
+            "현재가": 1609,
+            "등락률": 29.97,
+            "돌파기간": "6개월 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "남선알미늄",
+            "코드": "008350",
+            "현재가": 1800,
+            "등락률": 29.96,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "삼아알미늄",
+            "코드": "006110",
+            "현재가": 40200,
+            "등락률": 29.89,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "모티브링크",
+            "코드": "463480",
+            "현재가": 8780,
+            "등락률": 29.88,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "알루코",
+            "코드": "001780",
+            "현재가": 2655,
+            "등락률": 26.81,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "흥아해운",
+            "코드": "003280",
+            "현재가": 3980,
+            "등락률": 24.96,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "케이엔더블유",
+            "코드": "105330",
+            "현재가": 9000,
+            "등락률": 23.54,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "셀레믹스",
+            "코드": "331920",
+            "현재가": 12490,
+            "등락률": 20.52,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "하이드로리튬",
+            "코드": "101670",
+            "현재가": 2380,
+            "등락률": 20.15,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "강원에너지",
+            "코드": "114190",
+            "현재가": 15450,
+            "등락률": 14.97,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "삼미금속",
+            "코드": "012210",
+            "현재가": 13230,
+            "등락률": 14.37,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "대한해운",
+            "코드": "005880",
+            "현재가": 2405,
+            "등락률": 9.29,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "삼성E&A",
+            "코드": "028050",
+            "현재가": 35700,
+            "등락률": 7.97,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "기가레인",
+            "코드": "049080",
+            "현재가": 1211,
+            "등락률": 7.85,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "APS",
+            "코드": "054620",
+            "현재가": 9310,
+            "등락률": 6.46,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "한컴위드",
+            "코드": "054920",
+            "현재가": 5020,
+            "등락률": 5.77,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "지투파워",
+            "코드": "388050",
+            "현재가": 11550,
+            "등락률": 5.65,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "CJ CGV",
+            "코드": "079160",
+            "현재가": 4805,
+            "등락률": 5.42,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "덕산테코피아",
+            "코드": "317330",
+            "현재가": 18580,
+            "등락률": 5.13,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "동방",
+            "코드": "004140",
+            "현재가": 2860,
+            "등락률": 4.86,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "지앤비에스 에코",
+            "코드": "382800",
+            "현재가": 5890,
+            "등락률": 4.8,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "동국제약",
+            "코드": "086450",
+            "현재가": 23650,
+            "등락률": 4.56,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "금양그린파워",
+            "코드": "282720",
+            "현재가": 18240,
+            "등락률": 4.53,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "한일철강",
+            "코드": "002220",
+            "현재가": 3835,
+            "등락률": 4.53,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "티이엠씨",
+            "코드": "425040",
+            "현재가": 13370,
+            "등락률": 4.24,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "더블유씨피",
+            "코드": "393890",
+            "현재가": 14160,
+            "등락률": 4.2,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "아로마티카",
+            "코드": "0015N0",
+            "현재가": 9170,
+            "등락률": 3.93,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "레이저쎌",
+            "코드": "412350",
+            "현재가": 7620,
+            "등락률": 3.91,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "태웅",
+            "코드": "044490",
+            "현재가": 49650,
+            "등락률": 3.84,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "미래나노텍",
+            "코드": "095500",
+            "현재가": 9680,
+            "등락률": 3.81,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "시프트업",
+            "코드": "462870",
+            "현재가": 32400,
+            "등락률": 3.16,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "KSS해운",
+            "코드": "044450",
+            "현재가": 10900,
+            "등락률": 3.07,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "크래프톤",
+            "코드": "259960",
+            "현재가": 254500,
+            "등락률": 2.99,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "이월드",
+            "코드": "084680",
+            "현재가": 1589,
+            "등락률": 2.9,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 models/gemini-3.1-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+            "최신뉴스": "관련 뉴스 없음",
+            "PER": "조회필요"
+        }
+    ]
+}
