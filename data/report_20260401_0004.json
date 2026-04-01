@@ -7,7 +7,7 @@
             "현재가": 1609,
             "등락률": 29.97,
             "돌파기간": "6개월 신고가",
-            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "추정 사유": "저장 분석 테스트",
             "최신뉴스": "[특징주] 중동 생산시설 타격에 알루미늄 '들썩'…남선·조일알미늄 상한가 - 서울와이어 ",
             "PER": "조회필요"
         },
