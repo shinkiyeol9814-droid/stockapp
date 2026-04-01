@@ -34,6 +34,7 @@ def get_high_stocks():
     
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
     
+    print(f"주도주 {len(candidates)}개 종목 신고가 정밀 연산 중...")
     for row in candidates.itertuples():
         try:
             hist = fdr.DataReader(row.Code, start_date)
@@ -94,7 +95,6 @@ def get_google_news(stock_name):
             title = item.find('title').text
             link = item.find('link').text
             news_titles.append(title)
-            # 마크다운 하이퍼링크 형식으로 조립
             news_markdown.append(f"- [{title}]({link})")
             if i == 0:
                 first_link = link
@@ -106,61 +106,91 @@ def get_google_news(stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
-def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
-    if not tg_text.strip() and (not news_text.strip() or "관련 뉴스 없음" in news_text):
-        return "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
-        
-    prompt = f"""
-    너는 냉철한 주식 분석가야. 아래는 '{stock_name}' 종목의 오늘자 뉴스 헤드라인(팩트)과 텔레그램 찌라시(루머/수급) 데이터야.
-    이 데이터를 교차 검증해서, 이 종목이 오늘 신고가를 뚫은 '핵심 모멘텀(진짜 이유)'을 불필요한 수식어 없이 딱 1줄(50자 이내)로 명확하게 요약해.
-    
-    [뉴스 데이터]:
-    {news_text}
-    [텔레그램 찌라시]:
-    {tg_text}
-    """
-    
+# 💡 [핵심] 여러 종목을 한 번에 분석하는 일괄 처리 함수
+def summarize_batch_with_gemini(batch_data, max_retries=3):
+    prompt = """너는 냉철한 주식 분석가야. 아래 전달하는 '여러 종목'의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
+반드시 아래와 같은 순수 JSON 형식으로만 반환해. 마크다운 기호나 다른 설명은 절대 넣지마.
+
+{
+  "종목명1": "요약내용",
+  "종목명2": "요약내용"
+}
+
+[분석할 데이터]
+"""
+    for data in batch_data:
+        prompt += f"■ {data['name']}\n- 뉴스: {data['news']}\n- 찌라시: {data['tg']}\n\n"
+
     for attempt in range(max_retries):
         try:
-            # 💡 일 1,500회 무료인 Lite 모델로 고정!
+            # 10번 호출로 줄었으므로 가장 똑똑한 2.5-flash 사용 가능!
             response = client_ai.models.generate_content(
-                model='gemini-flash-latest', 
+                model='gemini-2.5-flash', 
                 contents=prompt,
             )
-            return response.text.strip()
+            res_text = response.text.strip()
+            
+            # JSON 텍스트 파싱 방어 로직
+            if res_text.startswith("```json"):
+                res_text = res_text[7:-3].strip()
+            elif res_text.startswith("```"):
+                res_text = res_text[3:-3].strip()
+                
+            return json.loads(res_text)
+            
         except Exception as e:
-            error_msg = str(e)
-            if '503' in error_msg or '429' in error_msg:
-                if attempt < max_retries - 1:
-                    time.sleep(15) 
-                    continue
-            return f"AI 분석 에러: {e}"
+            print(f"   ⚠️ AI 일괄 분석 에러 재시도 중... ({e})")
+            time.sleep(10)
+            
+    return {}
 
 async def main():
     start_time = time.time()
     print("=== 주도주 트래킹 배치 시작 ===")
     stocks = get_high_stocks()
     
-    if stocks:
+    if not stocks:
+        print("조건을 만족하는 신고가 종목이 없습니다.")
+        stocks = []
+    else:
         client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
         await client_tg.start()
         
+        # 1. API 호출 없이 일단 데이터만 싹 다 긁어모으기
+        analysis_queue = []
         for s in stocks:
-            print(f" -> [{s['종목명']}] 분석 중...")
+            print(f" -> [{s['종목명']}] 데이터 수집 중...")
             tg_text = await get_telegram_news(client_tg, s['종목명'])
             ai_news_text, ui_news_markdown, first_link = get_google_news(s['종목명'])
             
-            reason = summarize_with_gemini(s['종목명'], tg_text, ai_news_text)
-            
-            s['추정 사유'] = reason
             s['최신뉴스'] = ai_news_text.split('\n')[0] if ai_news_text != "관련 뉴스 없음" else "관련 뉴스 없음"
-            s['최신뉴스_링크'] = first_link # UI 표에 링크 버튼을 달기 위한 데이터
+            s['최신뉴스_링크'] = first_link 
             s['뉴스목록'] = ui_news_markdown
             s['PER'] = "조회필요"
             
-            await asyncio.sleep(4) 
+            if not tg_text.strip() and ai_news_text == "관련 뉴스 없음":
+                s['추정 사유'] = "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
+            else:
+                s['추정 사유'] = "분석 대기"
+                analysis_queue.append({'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s})
+            
+            await asyncio.sleep(1) # 크롤링은 속도 제한이 없으므로 빠르게 수집
             
         await client_tg.disconnect()
+
+        # 2. 모아둔 데이터를 10개 단위로 쪼개서 AI에게 한 번에 질문하기 (API 한도 우회)
+        chunk_size = 10
+        for i in range(0, len(analysis_queue), chunk_size):
+            chunk = analysis_queue[i:i+chunk_size]
+            print(f"\n🚀 AI 일괄 분석 중 ({i+1}~{min(i+chunk_size, len(analysis_queue))}) / {len(analysis_queue)}개...")
+            
+            reasons_dict = summarize_batch_with_gemini(chunk)
+            
+            # 분석 결과를 원본 데이터에 매핑
+            for item in chunk:
+                item['ref']['추정 사유'] = reasons_dict.get(item['name'], "AI 분석 요약 실패 (수동 확인 필요)")
+            
+            time.sleep(5) # 청크 사이에 5초 휴식
 
     end_time = time.time()
     m, sec = divmod(end_time - start_time, 60)
@@ -179,7 +209,7 @@ async def main():
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"=== 완료. 소요시간: {execution_time_str} ===")
+    print(f"\n=== 완료. 소요시간: {execution_time_str} ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
