@@ -59,7 +59,12 @@ def render_new_high_menu():
         st.warning("분석된 데이터가 없습니다. 장 마감 후 자동 배치가 실행될 때까지 기다려주세요.")
         return
 
-    st.success(f"📅 **최종 분석 시점:** {report_data.get('analysis_time', 'N/A')}")
+    # 💡 [추가/수정] 분석 시간과 소요 시간을 함께 추출하여 표시
+    # (예전 리포트에는 execution_time이 없을 수 있으므로 기본값 '알 수 없음' 처리)
+    analysis_time = report_data.get('analysis_time', 'N/A')
+    exec_time = report_data.get('execution_time', '알 수 없음')
+    
+    st.success(f"📅 **최종 분석 시점:** {analysis_time} ⏱️ **(소요시간: {exec_time})**")
     
     if not report_data.get('results'):
         st.write("조건을 만족하는 주도주가 없습니다.")
