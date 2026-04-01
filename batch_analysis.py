@@ -109,9 +109,10 @@ def get_google_news(stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
+# 💡 AI의 수다와 대괄호 기호를 완벽하게 방어하는 클렌징 로직 적용
 def summarize_batch_with_gemini(batch_data, max_retries=3):
     prompt = """너는 냉철한 주식 분석가야. 아래 전달하는 '여러 종목'의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
-반드시 아래와 같이 [종목명|요약내용] 규칙의 텍스트로만 대답해. 부가 설명이나 기호는 절대 넣지마.
+반드시 아래 출력 예시처럼 '종목명|요약내용' 형식으로만 대답해. (이름 양옆에 대괄호 [ ] 같은 특수문자는 절대 넣지마)
 
 [출력 예시]
 삼성전자|반도체 업황 회복 및 HBM 수혜 기대
@@ -124,7 +125,6 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            # 💡 [핵심] 가장 성능이 좋고 하루 20번 가능한 2.5-flash 모델 사용
             response = client_ai.models.generate_content(
                 model='gemini-2.5-flash', 
                 contents=prompt,
@@ -135,8 +135,9 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             for line in res_text.split('\n'):
                 if '|' in line:
                     parts = line.split('|', 1)
-                    stock_name = parts[0].strip().replace("-", "").replace("*", "")
-                    summary = parts[1].strip()
+                    # 💡 [핵심] AI가 멋대로 붙인 대괄호 [, ] 나 불필요한 기호를 완벽하게 세척(Clean)
+                    stock_name = parts[0].strip().replace("-", "").replace("*", "").replace("[", "").replace("]", "")
+                    summary = parts[1].strip().replace("[", "").replace("]", "")
                     reasons_dict[stock_name] = summary
                     
             if not reasons_dict:
@@ -148,7 +149,6 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | 15초 대기 후 재시도... 사유: {e}")
             time.sleep(15)
             
-    # 3번 다 실패하면 에러 메시지 자체를 넘겨버림
     return False, f"AI 분석 에러: {e}"
 
 async def main():
