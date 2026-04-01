@@ -29,7 +29,10 @@ def get_high_stocks():
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
     df = df[(df['Marcap'] >= 100_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
-    candidates = df.sort_values('ChagesRatio', ascending=False).head(50)
+    
+    # 💡 [수정] 당일 2% 이상 상승한 종목 중 상위 200개까지 검색 범위를 대폭 확장!
+    df = df[df['ChagesRatio'] >= 2.0] 
+    candidates = df.sort_values('ChagesRatio', ascending=False).head(200)
     results = []
     
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
