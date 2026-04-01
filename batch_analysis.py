@@ -126,7 +126,7 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
         try:
             # 💡 [수정됨] 일 1,500회 제한으로 넉넉한 1.5-flash-latest 모델 적용
             response = client_ai.models.generate_content(
-                model='gemini-1.5-flash-latest', 
+                model='gemini-flash-latest', 
                 contents=prompt,
             )
             return response.text.strip()
