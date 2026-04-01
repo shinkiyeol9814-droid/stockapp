@@ -29,13 +29,25 @@ def get_high_stocks():
     print("데이터 수집 및 1,000억 필터링 시작...")
     df = fdr.StockListing('KRX')
     
+    # 💡 [추가된 핵심 로직] 텍스트(str)로 잘못 들어온 데이터를 숫자형(float/int)으로 강제 변환
+    # 변환할 수 없는 이상한 문자열이 있으면 에러를 내지 않고 NaN(빈 값)으로 처리한 뒤 0으로 채움
+    df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
+    df['Close'] = pd.to_numeric(df['Close'], errors='coerce').fillna(0)
+    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
+    df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
+    
+    # 1차 필터: 시총 1000억 이상, 동전주 제외, 거래량 10만 이상
     df = df[(df['Marcap'] >= 100_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
+    
+    # 당일 주도주 파악을 위해 등락률 상위 50개만 우선 추출 (배치 속도 최적화)
     candidates = df.sort_values('ChagesRatio', ascending=False).head(50)
     results = []
     
+    # 과거 1년 차트 조회를 위한 날짜 설정
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
     
     print(f"주도주 {len(candidates)}개 종목 신고가 정밀 연산 중...")
+
     for row in candidates.itertuples():
         try:
             hist = fdr.DataReader(row.Code, start_date)
