@@ -5,6 +5,7 @@ import time
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
+import re 
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
@@ -20,7 +21,7 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 def get_high_stocks():
-    print("데이터 수집 및 1,000억 필터링 시작...")
+    print("데이터 수집 및 필터링 시작...")
     df = fdr.StockListing('KRX')
     
     df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
@@ -93,7 +94,7 @@ def get_google_news(stock_name):
         news_markdown = []
         first_link = "" 
         
-        for i, item in enumerate(root.findall('.//item')[:5]):
+        for i, item in enumerate(root.findall('.//item')[:3]):
             title = item.find('title').text
             link = item.find('link').text
             news_titles.append(title)
@@ -108,7 +109,6 @@ def get_google_news(stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
-# 💡 [핵심 개선] JSON 파싱 오류를 원천 차단하는 텍스트 분리 기법 적용
 def summarize_batch_with_gemini(batch_data, max_retries=3):
     prompt = """너는 냉철한 주식 분석가야. 아래 전달하는 '여러 종목'의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
 반드시 아래와 같이 [종목명|요약내용] 규칙의 텍스트로만 대답해. 부가 설명이나 기호는 절대 넣지마.
@@ -124,15 +124,14 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            # 💡 [모델 변경] 하루 1,500회 제한으로 가장 넉넉하고 똑똑한 2.0-flash 고정
+            # 💡 [핵심] 가장 성능이 좋고 하루 20번 가능한 2.5-flash 모델 사용
             response = client_ai.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-2.5-flash', 
                 contents=prompt,
             )
             res_text = response.text.strip()
             
             reasons_dict = {}
-            # 한 줄씩 읽으면서 파이프(|) 기준으로 종목명과 사유를 분리 (안전함)
             for line in res_text.split('\n'):
                 if '|' in line:
                     parts = line.split('|', 1)
@@ -143,13 +142,14 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             if not reasons_dict:
                 raise ValueError("파이프(|)로 구분된 결과를 찾을 수 없습니다.")
                 
-            return reasons_dict
+            return True, reasons_dict
             
         except Exception as e:
-            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | 10초 대기 후 재시도... 사유: {e}")
-            time.sleep(10)
+            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | 15초 대기 후 재시도... 사유: {e}")
+            time.sleep(15)
             
-    return {}
+    # 3번 다 실패하면 에러 메시지 자체를 넘겨버림
+    return False, f"AI 분석 에러: {e}"
 
 async def main():
     start_time = time.time()
@@ -184,18 +184,22 @@ async def main():
             
         await client_tg.disconnect()
 
-        chunk_size = 10
+        # 💡 [핵심] 글자 수(Token) 초과 에러를 막기 위해 5개씩 쪼개기
+        chunk_size = 7 
         for i in range(0, len(analysis_queue), chunk_size):
             chunk = analysis_queue[i:i+chunk_size]
             print(f"\n🚀 AI 일괄 분석 중 ({i+1}~{min(i+chunk_size, len(analysis_queue))}) / {len(analysis_queue)}개...")
             
-            reasons_dict = summarize_batch_with_gemini(chunk)
+            success, result_data = summarize_batch_with_gemini(chunk)
             
             for item in chunk:
-                # 텍스트 추출 결과를 맵핑
-                item['ref']['추정 사유'] = reasons_dict.get(item['name'], "AI 분석 요약 실패 (수동 확인 필요)")
+                if success:
+                    item['ref']['추정 사유'] = result_data.get(item['name'], "추출 누락 (수동 확인 필요)")
+                else:
+                    item['ref']['추정 사유'] = result_data # 실패 시 에러 메시지가 표에 찍힘
             
-            time.sleep(5) 
+            # 💡 [핵심] 분당 글자 수 제한을 피하기 위해 묶음 사이에 15초 푹 쉬기
+            time.sleep(15) 
 
     end_time = time.time()
     m, sec = divmod(end_time - start_time, 60)
