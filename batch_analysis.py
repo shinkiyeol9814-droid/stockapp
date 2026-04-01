@@ -124,7 +124,7 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
         try:
             # 💡 일 1,500회 무료인 Lite 모델로 고정!
             response = client_ai.models.generate_content(
-                model='gemini-2.0-flash-lite-001', 
+                model='gemini-flash-latest', 
                 contents=prompt,
             )
             return response.text.strip()
