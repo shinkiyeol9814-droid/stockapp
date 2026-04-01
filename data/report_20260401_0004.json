@@ -1,0 +1,325 @@
+{
+    "analysis_time": "2026-04-01 00:04",
+    "results": [
+        {
+            "종목명": "조일알미늄",
+            "코드": "018470",
+            "현재가": 1609,
+            "등락률": 29.97,
+            "돌파기간": "6개월 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "[특징주] 중동 생산시설 타격에 알루미늄 '들썩'…남선·조일알미늄 상한가 - 서울와이어 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "남선알미늄",
+            "코드": "008350",
+            "현재가": 1800,
+            "등락률": 29.96,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "남선알미늄 주가 장중 상한가, 알루미늄 가격 상승에 관련주 강세 - 비즈니스포스트 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "삼아알미늄",
+            "코드": "006110",
+            "현재가": 40200,
+            "등락률": 29.89,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "삼아알미늄, 자회사 삼아소이전자 차입에 담보 제공 기간 정정 - 디지털투데이 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "모티브링크",
+            "코드": "463480",
+            "현재가": 8780,
+            "등락률": 29.88,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "모티브링크, 2,700억 규모 현대모비스 전동화부품 수주에 上 - 동양뉴스 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "흥아해운",
+            "코드": "003280",
+            "현재가": 3980,
+            "등락률": 29.85,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "\"하루 7억 넘게 번다\" 유조선 대박 터지자…주가 19% 뛴 회사 [종목+] - 한국경제 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "강원에너지",
+            "코드": "114190",
+            "현재가": 15610,
+            "등락률": 26.29,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "강원에너지 주가 폭등랠리... 리튬 가공 모멘텀 주목을 - 핀포인트뉴스 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "알루코",
+            "코드": "001780",
+            "현재가": 2655,
+            "등락률": 23.78,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "특징주, 알루코-비철금속 테마 상승세에 15.62% ↑ - 매일경제 마켓 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "케이엔더블유",
+            "코드": "105330",
+            "현재가": 8950,
+            "등락률": 19.02,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "케이엔더블유, +6.59% VI 발동 - 조선비즈 - Chosunbiz ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "셀레믹스",
+            "코드": "331920",
+            "현재가": 12620,
+            "등락률": 17.72,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "셀레믹스, 투자경고종목 지정→주가 변동성 주의 - topstarnews.net ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "하이드로리튬",
+            "코드": "101670",
+            "현재가": 2355,
+            "등락률": 15.72,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "리튬 관련주, '봄꽃만개' 리튬포어스·강원에너지·하이드로리튬... '시들시들' 에코프로·앱튼 - 현대경제신문 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "삼미금속",
+            "코드": "012210",
+            "현재가": 13140,
+            "등락률": 12.4,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "방위산업·전쟁·테러 관련주, '봄바람 살랑' 삼미금속·센서뷰·한화오션... '꽃샘추위' 우리기술·에이스테크 - 현대경제신문 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "미래나노텍",
+            "코드": "095500",
+            "현재가": 9650,
+            "등락률": 8.18,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "미래나노텍 투자분석 2026. 03. 23 - 주달 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "삼성E&A",
+            "코드": "028050",
+            "현재가": 35700,
+            "등락률": 7.37,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "[헬로스톡] 3월 31일 주목할 종목: 크래프톤·RFHIC·삼성E&A·롯데이노베이트 - 헬로티 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "대한해운",
+            "코드": "005880",
+            "현재가": 2395,
+            "등락률": 5.97,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "대한해운 주가 5%↑, 오후 들어 껑충…어떤 마침표를? - CBC뉴스 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "금양그린파워",
+            "코드": "282720",
+            "현재가": 18000,
+            "등락률": 5.88,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "금양그린파워 주가 불기둥... 무슨 호재 있나? - 핀포인트뉴스 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "태웅",
+            "코드": "044490",
+            "현재가": 49650,
+            "등락률": 5.86,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "태웅 주가, 3월 31일 장중 54,000원 15.14% 상승 - topstarnews.net ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "APS",
+            "코드": "054620",
+            "현재가": 9310,
+            "등락률": 5.44,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "[주가를 흔든 오늘의 공시] 상한가 찍고 급락한 APS - 주주경제신문 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "지투파워",
+            "코드": "388050",
+            "현재가": 11560,
+            "등락률": 5.28,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "[서치 e종목] 지투파워, 올해 정부 예산 증가로 수혜 지속 전망…주가 상승 지속? - dailyinvest.kr ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "한일철강",
+            "코드": "002220",
+            "현재가": 3835,
+            "등락률": 5.21,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "한일철강 투자분석 2026. 03. 25 - 주달 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "한컴위드",
+            "코드": "054920",
+            "현재가": 4995,
+            "등락률": 4.83,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "한컴위드 주가, 3월 31일 장중 5,240원 10.00% 상승 - 중앙이코노미뉴스 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "지앤비에스 에코",
+            "코드": "382800",
+            "현재가": 5880,
+            "등락률": 4.63,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "지앤비에스 에코, 2026년 기업가치 제고 계획 발표 - 디지털투데이 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "에스엠벡셀",
+            "코드": "010580",
+            "현재가": 2155,
+            "등락률": 4.61,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "에스엠벡셀 최대주주 에스엠하이플러스, 에스엠벡셀 주식등의 수 2만1500주 증가…총 지분율 87.6% - 디지털투데이 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "CJ CGV",
+            "코드": "079160",
+            "현재가": 4805,
+            "등락률": 4.12,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "CJ CGV 투자분석 2026. 03. 31 - 주달 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "한텍",
+            "코드": "098070",
+            "현재가": 48900,
+            "등락률": 3.38,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "한텍 최대주주 후성, 한텍 주식등의 수 62만9095주 감소…총 지분율 63.94% - 디지털투데이 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "에이피알",
+            "코드": "278470",
+            "현재가": 337000,
+            "등락률": 3.37,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "27만원 넘던 주가가 일주일 만에…개미들 '비명' 터졌다 [종목+] - 한국경제 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "DI동일",
+            "코드": "001530",
+            "현재가": 21650,
+            "등락률": 3.1,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "특징주, DI동일-비철금속 테마 상승세에 5.48% ↑ - 매일경제 마켓 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "HD현대에너지솔루션",
+            "코드": "322000",
+            "현재가": 139100,
+            "등락률": 2.96,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "신재생에너지 관련주 뜬다…‘태양광’ HD현대에너지솔루션에 주목 [매경 자이앤트] - v.daum.net ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "동방",
+            "코드": "004140",
+            "현재가": 2860,
+            "등락률": 2.88,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "동방 주가, 3월 31일 장중 2,830원 1.80% 상승 - topstarnews.net ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "더블유씨피",
+            "코드": "393890",
+            "현재가": 14150,
+            "등락률": 2.54,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "더블유씨피 투자분석 2026. 03. 29 - 주달 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "덕산테코피아",
+            "코드": "317330",
+            "현재가": 18580,
+            "등락률": 2.54,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "덕산테코피아 투자분석 2026. 03. 30 - 주달 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "이월드",
+            "코드": "084680",
+            "현재가": 1589,
+            "등락률": 2.52,
+            "돌파기간": "1주 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "놀이기구만 있는 줄 알았더니… 이월드, 주얼리로 실적을 만든다 - 핀포인트뉴스 ",
+            "PER": "조회필요"
+        },
+        {
+            "종목명": "코메론",
+            "코드": "049430",
+            "현재가": 20500,
+            "등락률": 2.5,
+            "돌파기간": "1년(52주) 신고가",
+            "추정 사유": "AI 분석 에러: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+            "최신뉴스": "코메론 투자분석 2026. 03. 27 - 주달 ",
+            "PER": "조회필요"
+        }
+    ]
+}
