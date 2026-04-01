@@ -5,6 +5,7 @@ import time
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
+import re # 💡 [추가] 문자열에서 JSON만 완벽하게 발라내기 위한 모듈
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
@@ -20,7 +21,7 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 def get_high_stocks():
-    print("데이터 수집 및 1,000억 필터링 시작...")
+    print("데이터 수집 및 필터링 시작...")
     df = fdr.StockListing('KRX')
     
     df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
@@ -30,7 +31,6 @@ def get_high_stocks():
     
     df = df[(df['Marcap'] >= 100_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
     
-    # 💡 [수정] 당일 2% 이상 상승한 종목 중 상위 200개까지 검색 범위를 대폭 확장!
     df = df[df['ChagesRatio'] >= 2.0] 
     candidates = df.sort_values('ChagesRatio', ascending=False).head(200)
     results = []
@@ -109,10 +109,9 @@ def get_google_news(stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
-# 💡 [핵심] 여러 종목을 한 번에 분석하는 일괄 처리 함수
 def summarize_batch_with_gemini(batch_data, max_retries=3):
     prompt = """너는 냉철한 주식 분석가야. 아래 전달하는 '여러 종목'의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
-반드시 아래와 같은 순수 JSON 형식으로만 반환해. 마크다운 기호나 다른 설명은 절대 넣지마.
+반드시 아래와 같은 순수 JSON 형식으로만 반환해. 다른 인사말이나 설명은 절대 생략해.
 
 {
   "종목명1": "요약내용",
@@ -126,24 +125,23 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            # 10번 호출로 줄었으므로 가장 똑똑한 2.5-flash 사용 가능!
             response = client_ai.models.generate_content(
                 model='gemini-2.5-flash', 
                 contents=prompt,
             )
             res_text = response.text.strip()
             
-            # JSON 텍스트 파싱 방어 로직
-            if res_text.startswith("```json"):
-                res_text = res_text[7:-3].strip()
-            elif res_text.startswith("```"):
-                res_text = res_text[3:-3].strip()
+            # 💡 [핵심 개선] 정규식을 이용해 AI가 사족을 붙여도 완벽하게 JSON({ ... })만 발라냄
+            match = re.search(r'\{.*\}', res_text, re.DOTALL)
+            if match:
+                clean_json = match.group(0)
+                return json.loads(clean_json)
+            else:
+                raise ValueError("JSON 형식을 찾을 수 없습니다.")
                 
-            return json.loads(res_text)
-            
         except Exception as e:
-            print(f"   ⚠️ AI 일괄 분석 에러 재시도 중... ({e})")
-            time.sleep(10)
+            print(f"   ⚠️ AI 일괄 분석 에러 (시도 {attempt+1}/{max_retries}) | 20초 대기 후 재시도... 사유: {e}")
+            time.sleep(20) 
             
     return {}
 
@@ -159,7 +157,6 @@ async def main():
         client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
         await client_tg.start()
         
-        # 1. API 호출 없이 일단 데이터만 싹 다 긁어모으기
         analysis_queue = []
         for s in stocks:
             print(f" -> [{s['종목명']}] 데이터 수집 중...")
@@ -177,11 +174,10 @@ async def main():
                 s['추정 사유'] = "분석 대기"
                 analysis_queue.append({'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s})
             
-            await asyncio.sleep(1) # 크롤링은 속도 제한이 없으므로 빠르게 수집
+            await asyncio.sleep(1) 
             
         await client_tg.disconnect()
 
-        # 2. 모아둔 데이터를 10개 단위로 쪼개서 AI에게 한 번에 질문하기 (API 한도 우회)
         chunk_size = 10
         for i in range(0, len(analysis_queue), chunk_size):
             chunk = analysis_queue[i:i+chunk_size]
@@ -189,11 +185,10 @@ async def main():
             
             reasons_dict = summarize_batch_with_gemini(chunk)
             
-            # 분석 결과를 원본 데이터에 매핑
             for item in chunk:
                 item['ref']['추정 사유'] = reasons_dict.get(item['name'], "AI 분석 요약 실패 (수동 확인 필요)")
             
-            time.sleep(5) # 청크 사이에 5초 휴식
+            time.sleep(5) 
 
     end_time = time.time()
     m, sec = divmod(end_time - start_time, 60)
