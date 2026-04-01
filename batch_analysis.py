@@ -112,7 +112,7 @@ def get_google_news(stock_name):
 # 💡 AI의 수다와 대괄호 기호를 완벽하게 방어하는 클렌징 로직 적용
 def summarize_batch_with_gemini(batch_data, max_retries=3):
     prompt = """너는 냉철한 주식 분석가야. 아래 전달하는 '여러 종목'의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
-반드시 아래 출력 예시처럼 '종목명|요약내용' 형식으로만 대답해. (이름 양옆에 대괄호 [ ] 같은 특수문자는 절대 넣지마)
+반드시 아래와 같이 [종목명|요약내용] 규칙의 텍스트로만 대답해. 부가 설명이나 기호는 절대 넣지마.
 
 [출력 예시]
 삼성전자|반도체 업황 회복 및 HBM 수혜 기대
@@ -123,8 +123,11 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
     for data in batch_data:
         prompt += f"■ {data['name']}\n- 뉴스: {data['news']}\n- 찌라시: {data['tg']}\n\n"
 
+    error_message = "알 수 없는 에러"
+    
     for attempt in range(max_retries):
         try:
+            # 💡 [최종 확정] 가장 성능이 좋은 2.5-flash 모델! (하루 1번 돌리면 20회 한도 절대 안 넘음)
             response = client_ai.models.generate_content(
                 model='gemini-2.5-flash', 
                 contents=prompt,
@@ -135,7 +138,6 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             for line in res_text.split('\n'):
                 if '|' in line:
                     parts = line.split('|', 1)
-                    # 💡 [핵심] AI가 멋대로 붙인 대괄호 [, ] 나 불필요한 기호를 완벽하게 세척(Clean)
                     stock_name = parts[0].strip().replace("-", "").replace("*", "").replace("[", "").replace("]", "")
                     summary = parts[1].strip().replace("[", "").replace("]", "")
                     reasons_dict[stock_name] = summary
@@ -146,10 +148,11 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             return True, reasons_dict
             
         except Exception as e:
-            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | 15초 대기 후 재시도... 사유: {e}")
-            time.sleep(15)
+            error_message = str(e)
+            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | 20초 대기 후 재시도... 사유: {error_message}")
+            time.sleep(20) # 💡 에러 시 20초 대기
             
-    return False, f"AI 분석 에러: {e}"
+    return False, f"AI 분석 에러: {error_message}"
 
 async def main():
     start_time = time.time()
@@ -185,6 +188,7 @@ async def main():
         await client_tg.disconnect()
 
         # 💡 [핵심] 글자 수(Token) 초과 에러를 막기 위해 5개씩 쪼개기
+        # 💡 [main 함수 하단 수정] 7개씩 묶어서 질문하고, 20초씩 여유롭게 쉬기
         chunk_size = 7 
         for i in range(0, len(analysis_queue), chunk_size):
             chunk = analysis_queue[i:i+chunk_size]
@@ -196,10 +200,10 @@ async def main():
                 if success:
                     item['ref']['추정 사유'] = result_data.get(item['name'], "추출 누락 (수동 확인 필요)")
                 else:
-                    item['ref']['추정 사유'] = result_data # 실패 시 에러 메시지가 표에 찍힘
+                    item['ref']['추정 사유'] = result_data 
             
-            # 💡 [핵심] 분당 글자 수 제한을 피하기 위해 묶음 사이에 15초 푹 쉬기
-            time.sleep(15) 
+            # 💡 분당 요청 수(RPM) 제한에 안 걸리도록 묶음마다 20초 푹 쉬기
+            time.sleep(20)
 
     end_time = time.time()
     m, sec = divmod(end_time - start_time, 60)
