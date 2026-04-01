@@ -34,7 +34,6 @@ def get_high_stocks():
     
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
     
-    print(f"주도주 {len(candidates)}개 종목 신고가 정밀 연산 중...")
     for row in candidates.itertuples():
         try:
             hist = fdr.DataReader(row.Code, start_date)
@@ -70,17 +69,14 @@ def get_high_stocks():
 async def get_telegram_news(client, stock_name):
     messages_text = []
     today = datetime.now().date()
-    
     try:
         async for message in client.iter_messages(None, search=stock_name, limit=10):
             if message.date.date() == today and message.text:
                 messages_text.append(message.text)
     except Exception as e:
-        print(f"텔레그램 검색 에러 ({stock_name}): {e}")
-        
+        print(f"텔레그램 에러: {e}")
     return " \n".join(messages_text)
 
-# 💡 [수정됨] 뉴스 5개 추출 및 링크 마크다운 생성
 def get_google_news(stock_name):
     try:
         query = f'"{stock_name}" 특징주 OR 주가'
@@ -92,22 +88,20 @@ def get_google_news(stock_name):
         
         news_titles = []
         news_markdown = []
-        first_link = "" # 💡 [추가] 첫 번째 뉴스 링크 저장용
+        first_link = "" 
         
         for i, item in enumerate(root.findall('.//item')[:5]):
             title = item.find('title').text
             link = item.find('link').text
             news_titles.append(title)
+            # 마크다운 하이퍼링크 형식으로 조립
             news_markdown.append(f"- [{title}]({link})")
-            
-            # 💡 [추가] 표에서 바로 클릭할 수 있게 첫 번째 링크만 따로 빼두기
             if i == 0:
                 first_link = link
                 
         ai_text = " \n".join(news_titles) if news_titles else "관련 뉴스 없음"
         ui_markdown = " \n".join(news_markdown) if news_markdown else "관련 뉴스 없음"
         
-        # 💡 리턴값 3개로 변경
         return ai_text, ui_markdown, first_link
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
@@ -122,57 +116,49 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
     
     [뉴스 데이터]:
     {news_text}
-    
     [텔레그램 찌라시]:
     {tg_text}
     """
     
     for attempt in range(max_retries):
         try:
-            # 💡 [수정됨] 일 1,500회 제한으로 넉넉한 1.5-flash-latest 모델 적용
+            # 💡 일 1,500회 무료인 Lite 모델로 고정!
             response = client_ai.models.generate_content(
-                model='gemini-flash-lite-latest', 
+                model='gemini-2.0-flash-lite-001', 
                 contents=prompt,
             )
             return response.text.strip()
-            
         except Exception as e:
             error_msg = str(e)
             if '503' in error_msg or '429' in error_msg:
                 if attempt < max_retries - 1:
-                    print(f"   ⚠️ [API 대기중] 과부하/한도초과. 15초 후 재시도... ({attempt+1}/{max_retries})")
                     time.sleep(15) 
                     continue
             return f"AI 분석 에러: {e}"
 
 async def main():
     start_time = time.time()
-    print("=== 주도주 트래킹 배치 프로세스 시작 ===")
+    print("=== 주도주 트래킹 배치 시작 ===")
     stocks = get_high_stocks()
     
-    if not stocks:
-        print("조건을 만족하는 신고가 종목이 없습니다.")
-        stocks = []
-    else:
+    if stocks:
         client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
         await client_tg.start()
         
         for s in stocks:
-            print(f" -> [{s['종목명']}] 데이터 수집 및 AI 분석 중...")
+            print(f" -> [{s['종목명']}] 분석 중...")
             tg_text = await get_telegram_news(client_tg, s['종목명'])
-            
-            # 💡 [수정] 3개의 리턴값을 받도록 변경
             ai_news_text, ui_news_markdown, first_link = get_google_news(s['종목명'])
             
             reason = summarize_with_gemini(s['종목명'], tg_text, ai_news_text)
             
             s['추정 사유'] = reason
             s['최신뉴스'] = ai_news_text.split('\n')[0] if ai_news_text != "관련 뉴스 없음" else "관련 뉴스 없음"
-            s['최신뉴스_링크'] = first_link # 💡 [추가] UI 표 렌더링용 링크 데이터
+            s['최신뉴스_링크'] = first_link # UI 표에 링크 버튼을 달기 위한 데이터
             s['뉴스목록'] = ui_news_markdown
             s['PER'] = "조회필요"
             
-            await asyncio.sleep(5) # 1.5-flash는 빠르므로 대기시간 5초로 단축
+            await asyncio.sleep(4) 
             
         await client_tg.disconnect()
 
@@ -193,7 +179,7 @@ async def main():
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"=== 배치 완료. 소요시간: {execution_time_str} ===")
+    print(f"=== 완료. 소요시간: {execution_time_str} ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
