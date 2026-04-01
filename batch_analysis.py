@@ -128,7 +128,7 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
         try:
             # 무료 티어에서 비교적 안정적인 1.5-flash 모델 적용
             response = client_ai.models.generate_content(
-                model='gemini-1.5-flash', 
+                model='gemini-2.5-flash', 
                 contents=prompt,
             )
             return response.text.strip()
