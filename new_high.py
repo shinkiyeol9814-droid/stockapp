@@ -9,7 +9,7 @@ import base64
 # GitHub 저장소 설정
 # ---------------------------------------------------------
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
-GITHUB_BRANCH = "dev" # 캡처화면 기준 브랜치명
+GITHUB_BRANCH = "dev" 
 
 def get_latest_report():
     """data/ 폴더에서 가장 최신 JSON 리포트 파일을 로드"""
@@ -22,11 +22,10 @@ def get_latest_report():
         return json.load(f), latest_file
 
 def save_to_github(file_path, content, message):
-    """수정된 코멘트를 GitHub 저장소(dev 브랜치)에 직접 커밋"""
+    """수정된 코멘트를 GitHub 저장소에 직접 커밋 및 에러 반환"""
     github_token = st.secrets.get("GH_PAT")
     if not github_token:
-        st.error("보안 키 누락: Streamlit Secrets에 GH_PAT가 설정되어 있지 않습니다.")
-        return False
+        return False, "Streamlit Secrets에 GH_PAT (GitHub 토큰)가 없습니다."
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
     headers = {
@@ -34,7 +33,7 @@ def save_to_github(file_path, content, message):
         "Accept": "application/vnd.github.v3+json"
     }
     
-    # 덮어쓰기를 위해 기존 파일의 SHA 해시값 조회
+    # 기존 파일 SHA 조회
     res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH})
     sha = res.json().get('sha') if res.status_code == 200 else None
     
@@ -46,10 +45,13 @@ def save_to_github(file_path, content, message):
     if sha: payload["sha"] = sha
     
     put_res = requests.put(url, headers=headers, json=payload)
-    return put_res.status_code in [200, 201]
+    if put_res.status_code in [200, 201]:
+        return True, "성공"
+    else:
+        return False, put_res.text # 에러 상세 내용 리턴
 
 def render_new_high_menu():
-    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 주도주 모멘텀 & 코멘트 관리 (V1.5.0)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 주도주 모멘텀 & 코멘트 관리 (V1.6.0)</div>", unsafe_allow_html=True)
     
     report_data, file_name = get_latest_report()
     
@@ -66,59 +68,60 @@ def render_new_high_menu():
     # 원본 데이터 생성
     all_df = pd.DataFrame(report_data['results'])
     
-    # --- [신규 필터링 UI] ---
+    # --- [UI 개선: Select Box 형태의 필터링] ---
     st.markdown("### 🔍 필터 설정")
     periods = ["전체", "1년(52주) 신고가", "6개월 신고가", "3개월 신고가", "1주 신고가"]
-    selected_periods = st.multiselect("보고 싶은 신고가 기간을 선택하세요 (미선택 시 전체)", periods, default=["전체"])
+    
+    # multiselect 대신 단일 선택이 가능한 selectbox 사용
+    selected_period = st.selectbox("보고 싶은 신고가 기간을 선택하세요", periods, index=0)
 
     # 필터링 로직
-    if "전체" in selected_periods or not selected_periods:
+    if selected_period == "전체":
         filtered_df = all_df.copy()
     else:
-        filtered_df = all_df[all_df['돌파기간'].isin(selected_periods)].copy()
-    # -----------------------
+        filtered_df = all_df[all_df['돌파기간'] == selected_period].copy()
+    # ----------------------------------------
 
-    # 화면 표시용 가공
+    # 화면 표시용 데이터 가공
     disp_df = filtered_df.copy()
     disp_df['현재가'] = disp_df['현재가'].apply(lambda x: f"{int(x):,}원" if str(x).isdigit() else x)
     disp_df['등락률'] = disp_df['등락률'].apply(lambda x: f"{float(x):.2f}%" if not isinstance(x, str) else x)
     
-    st.markdown(f"### 📝 분석 결과 리스트 ({len(filtered_df)}건)")
+    st.markdown(f"### 📝 통합 분석 결과 ({len(filtered_df)}건)")
+    st.caption("💡 '추정 사유' 셀을 더블클릭하여 수정 후, 반드시 **`Enter` 키**를 누르고 하단의 저장 버튼을 눌러주세요.")
     
+    # --- [UI 개선: 뉴스와 코멘트 통합 뷰] ---
+    # 최신뉴스 컬럼을 에디터에 함께 배치하여 한눈에 비교 가능하게 수정
     edited_df = st.data_editor(
-        disp_df[['종목명', '현재가', '등락률', '돌파기간', '추정 사유', '코드']],
+        disp_df[['종목명', '현재가', '등락률', '돌파기간', '추정 사유', '최신뉴스', '코드']],
         column_config={
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
+            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="large"),
             "코드": None 
         },
-        disabled=['종목명', '현재가', '등락률', '돌파기간'],
+        disabled=['종목명', '현재가', '등락률', '돌파기간', '최신뉴스'], # 추정 사유 제외 모두 잠금
         hide_index=True, 
         use_container_width=True, 
         key="high_price_editor"
     )
 
-    if st.button("💾 수정한 코멘트 GitHub에 최종 저장", type="primary"):
+    # --- [명칭 변경 및 에러 트래킹 추가] ---
+    if st.button("저장", type="primary"):
         edited_records = edited_df.to_dict(orient='records')
         comment_map = {row['코드']: row['추정 사유'] for row in edited_records}
         
-        # 필터링된 상태여도 원본 report_data의 모든 결과를 업데이트하여 전체 데이터 보존
+        # 전체 데이터 보존 업데이트
         for item in report_data['results']:
             if item['코드'] in comment_map:
                 item['추정 사유'] = comment_map[item['코드']]
                 
         json_content = json.dumps(report_data, indent=4, ensure_ascii=False)
         
-        with st.spinner("GitHub dev 브랜치에 업데이트 중..."):
-            success = save_to_github(f"data/{file_name}", json_content, f"Update AI comments for {file_name}")
+        with st.spinner("GitHub 서버에 덮어쓰는 중..."):
+            success, error_msg = save_to_github(f"data/{file_name}", json_content, f"Update comments via Web UI")
+            
             if success:
-                st.success("✅ 변경사항이 성공적으로 반영되었습니다!")
+                st.success("✅ 변경사항이 안전하게 저장되었습니다!")
             else:
-                st.error("❌ 저장 실패.")
-
-    st.markdown("---")
-    st.markdown("### 🔍 주요 뉴스 모니터링")
-    for _, row in edited_df.iterrows():
-        original_row = next((item for item in report_data['results'] if item['코드'] == row['코드']), {})
-        with st.expander(f"[{row['종목명']}] {row['돌파기간']} 뉴스 확인"):
-            news_text = original_row.get('최신뉴스', '관련 뉴스 없음')
-            st.write(f"**📰 뉴스 헤드라인:**\n{news_text}")
+                # 권한 등의 에러가 발생하면 어떤 이유인지 화면에 출력해 줌
+                st.error(f"❌ 저장 실패: {error_msg}")
