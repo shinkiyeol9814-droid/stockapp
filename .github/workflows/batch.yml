@@ -2,9 +2,9 @@ name: Stock High Price Batch (Telegram + Gemini)
 
 on:
   schedule:
-    - cron: '40 6 * * 1-5'  # 월~금 한국시간 15:40 (정규장 종료 후)
-    - cron: '20 11 * * 1-5' # 월~금 한국시간 20:20 (시간외 종료 후)
-  workflow_dispatch: # 수동 실행 버튼 활성화
+    - cron: '30 6 * * 1-5'  # 한국시간 월~금 15:30 (정규장 종료 후)
+    - cron: '5 11 * * 1-5'  # 한국시간 월~금 20:05 (시간외 종료 후)
+  workflow_dispatch:
 
 jobs:
   run-analysis:
