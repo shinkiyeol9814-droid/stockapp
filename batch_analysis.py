@@ -158,6 +158,7 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
 # 메인 파이프라인 실행
 # ---------------------------------------------------------
 async def main():
+    start_time = time.time() # 💡 [추가] 배치 시작 시간 기록
     print("=== 주도주 트래킹 배치 프로세스 시작 ===")
     stocks = get_high_stocks()
     
@@ -186,13 +187,21 @@ async def main():
             await asyncio.sleep(10)
             
         await client_tg.disconnect()
-
+        
+    # 💡 [추가] 소요 시간 계산 (분, 초)
+    end_time = time.time()
+    elapsed_sec = end_time - start_time
+    m, s = divmod(elapsed_sec, 60)
+    execution_time_str = f"{int(m)}분 {int(s)}초"
+    
     # 결과 JSON 저장
     os.makedirs('data', exist_ok=True)
-    # 기존: now = datetime.now()
-    now = datetime.utcnow() + timedelta(hours=9) # 한국 시간(KST)으로 강제 변환
+    # now = datetime.now() -> UTC 기반인 경우 아래처럼 KST 변환 적용
+    now = datetime.utcnow() + timedelta(hours=9)
+    
     report = {
         "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
+        "execution_time": execution_time_str, # 💡 [추가] JSON에 소요 시간 데이터 포함
         "results": stocks
     }
     
@@ -200,7 +209,7 @@ async def main():
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"=== 배치 완료. {file_name} 저장 성공 ===")
+    print(f"=== 배치 완료. 소요시간: {execution_time_str} | {file_name} 저장 성공 ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
