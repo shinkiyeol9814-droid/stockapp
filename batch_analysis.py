@@ -92,20 +92,25 @@ def get_google_news(stock_name):
         
         news_titles = []
         news_markdown = []
+        first_link = "" # 💡 [추가] 첫 번째 뉴스 링크 저장용
         
-        for item in root.findall('.//item')[:5]:  # 최대 5개 추출
+        for i, item in enumerate(root.findall('.//item')[:5]):
             title = item.find('title').text
             link = item.find('link').text
             news_titles.append(title)
-            # 링크를 포함한 마크다운 형식으로 저장
             news_markdown.append(f"- [{title}]({link})")
             
+            # 💡 [추가] 표에서 바로 클릭할 수 있게 첫 번째 링크만 따로 빼두기
+            if i == 0:
+                first_link = link
+                
         ai_text = " \n".join(news_titles) if news_titles else "관련 뉴스 없음"
         ui_markdown = " \n".join(news_markdown) if news_markdown else "관련 뉴스 없음"
         
-        return ai_text, ui_markdown
+        # 💡 리턴값 3개로 변경
+        return ai_text, ui_markdown, first_link
     except Exception as e:
-        return f"뉴스 수집 에러: {e}", "관련 뉴스 없음"
+        return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
 def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
     if not tg_text.strip() and (not news_text.strip() or "관련 뉴스 없음" in news_text):
@@ -126,7 +131,7 @@ def summarize_with_gemini(stock_name, tg_text, news_text, max_retries=3):
         try:
             # 💡 [수정됨] 일 1,500회 제한으로 넉넉한 1.5-flash-latest 모델 적용
             response = client_ai.models.generate_content(
-                model='gemini-flash-latest', 
+                model='gemini-flash-lite-latest', 
                 contents=prompt,
             )
             return response.text.strip()
@@ -155,13 +160,16 @@ async def main():
         for s in stocks:
             print(f" -> [{s['종목명']}] 데이터 수집 및 AI 분석 중...")
             tg_text = await get_telegram_news(client_tg, s['종목명'])
-            ai_news_text, ui_news_markdown = get_google_news(s['종목명'])
+            
+            # 💡 [수정] 3개의 리턴값을 받도록 변경
+            ai_news_text, ui_news_markdown, first_link = get_google_news(s['종목명'])
             
             reason = summarize_with_gemini(s['종목명'], tg_text, ai_news_text)
             
             s['추정 사유'] = reason
             s['최신뉴스'] = ai_news_text.split('\n')[0] if ai_news_text != "관련 뉴스 없음" else "관련 뉴스 없음"
-            s['뉴스목록'] = ui_news_markdown # UI 표시용 5개 링크 리스트 저장
+            s['최신뉴스_링크'] = first_link # 💡 [추가] UI 표 렌더링용 링크 데이터
+            s['뉴스목록'] = ui_news_markdown
             s['PER'] = "조회필요"
             
             await asyncio.sleep(5) # 1.5-flash는 빠르므로 대기시간 5초로 단축
