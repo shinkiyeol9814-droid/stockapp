@@ -77,17 +77,26 @@ def render_new_high_menu():
     disp_df['현재가'] = disp_df['현재가'].apply(lambda x: f"{int(x):,}원" if str(x).isdigit() else x)
     disp_df['등락률'] = disp_df['등락률'].apply(lambda x: f"{float(x):.2f}%" if not isinstance(x, str) else x)
     
+# 💡 [추가] 과거 데이터 로드 시 '최신뉴스_링크' 컬럼이 없어서 에러나는 것 방지
+    disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
+    
     st.markdown(f"### 📝 통합 분석 결과 ({len(filtered_df)}건)")
     st.caption("💡 '추정 사유' 셀을 더블클릭하여 수정 후, 반드시 **`Enter` 키**를 누르고 하단의 저장 버튼을 눌러주세요.")
     
+    # 💡 [수정] '최신뉴스_링크' 컬럼 추가 및 LinkColumn 세팅
     edited_df = st.data_editor(
-        disp_df[['종목명', '현재가', '등락률', '돌파기간', '추정 사유', '최신뉴스', '코드']],
+        disp_df[['종목명', '현재가', '등락률', '돌파기간', '추정 사유', '최신뉴스', '최신뉴스_링크', '코드']],
         column_config={
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
-            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="large"),
+            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
+            "최신뉴스_링크": st.column_config.LinkColumn(
+                "원문 링크", 
+                display_text="기사 보기 🔗", 
+                width="small"
+            ),
             "코드": None 
         },
-        disabled=['종목명', '현재가', '등락률', '돌파기간', '최신뉴스'], 
+        disabled=['종목명', '현재가', '등락률', '돌파기간', '최신뉴스', '최신뉴스_링크'], 
         hide_index=True, 
         use_container_width=True, 
         key="high_price_editor"
