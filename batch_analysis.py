@@ -177,7 +177,8 @@ async def main():
 
     # 결과 JSON 저장
     os.makedirs('data', exist_ok=True)
-    now = datetime.now()
+    # 기존: now = datetime.now()
+    now = datetime.utcnow() + timedelta(hours=9) # 한국 시간(KST)으로 강제 변환
     report = {
         "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
         "results": stocks
