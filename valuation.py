@@ -149,10 +149,15 @@ if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-    corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
-    st.session_state.search_corp_name = corp_name
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    col_input, col_btn = st.columns([1, 0.25])
+    with col_input:
+        st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
+        corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
+        st.session_state.search_corp_name = corp_name
+        st.markdown("</div></div>", unsafe_allow_html=True)
+    with col_btn:
+        st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
+        search_clicked = st.button("갱신", use_container_width=True)
 
     st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
@@ -274,7 +279,6 @@ def render_valuation_menu():
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     
-                    # 💡 [요청사항 완벽 반영] 직관적인 원클릭 기간 필터링 라디오 버튼
                     chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=0, horizontal=True, label_visibility="collapsed")
                     
                     end_date_dt = df_price.index[-1]
@@ -297,7 +301,6 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
-                    # 💡 [버그 픽스 유지] 선택된 기간(date_mask) 내에서만 합리적인 평균값 동적 계산
                     date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
                     interp_history = ext_interp[:len(df_price)]
                     metric_mask = interp_history > 0
@@ -361,12 +364,12 @@ def render_valuation_menu():
                     fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
+                    # 💡 [버그 픽스] title의 y를 허용 범위인 0.99로 수정하여 ValueError 원천 방지
                     fig1.update_layout(
                         height=400, 
-                        # 💡 [UI 수정] t(위쪽 마진)를 충분히 주고, 범례를 우측 끝으로 밀어서 타이틀과 절대 안 겹치게 처리!
                         margin=dict(l=0, r=40, t=70, b=10), 
-                        title=dict(text=f"[{band_name} 밴드]", x=0.0, y=1.02, font=dict(size=14)),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
+                        title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
@@ -380,7 +383,6 @@ def render_valuation_menu():
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     
-                    # 💡 하단 차트 좌측 예쁜 뱃지 적용 및 라벨 겹침 방지 계단식 좌표
                     x_pos_avg = start_date_chart + timedelta(days=10)
                     x_pos_today = start_date_chart + timedelta(days=60)
                     x_pos_target = start_date_chart + timedelta(days=110)
@@ -408,11 +410,12 @@ def render_valuation_menu():
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
+                    # 💡 [버그 픽스] title의 y를 허용 범위인 0.99로 수정하여 ValueError 원천 방지
                     fig2.update_layout(
                         height=300, 
                         margin=dict(l=0, r=40, t=50, b=80), 
-                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.98, font=dict(size=14)),
-                        showlegend=False, # 하단 차트 범례 완전 제거 (상단과 중복 방지)
+                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
+                        showlegend=False, 
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
