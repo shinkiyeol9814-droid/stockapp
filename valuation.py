@@ -144,30 +144,25 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
-# 💡 [추가] Session State 초기화용 변수 추가
 if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 1단: 종목명
     st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
     st.session_state.search_corp_name = corp_name
     st.markdown("</div></div>", unsafe_allow_html=True)
 
-    # 2단: 평가방식
     st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
     
-    # 💡 [UI 로직 수정] 목표배수를 출력하기 전에 평균배수(Avg)를 먼저 계산해서 업데이트
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
         if not ticker_row.empty:
             ticker = ticker_row['Code'].values[0]
-            # 종목명이 바뀌거나 평가방식이 바뀌었을 때만 평균 갱신
             if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
                 temp_fin = get_hybrid_financials(ticker)
                 temp_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
@@ -200,17 +195,14 @@ def render_valuation_menu():
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
 
-    # 3단: 목표배수 (갱신된 기본값으로 표시)
     st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     target_mult = st.number_input("목표배수", value=st.session_state.target_mult, step=1, format="%d", label_visibility="collapsed")
-    st.session_state.target_mult = target_mult # 사용자가 수정한 값 반영
+    st.session_state.target_mult = target_mult 
     st.markdown("</div></div>", unsafe_allow_html=True)
     
-    # 4단: 갱신 버튼 (모바일 친화적인 풀사이즈 버튼)
     st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
     search_clicked = st.button("갱신", use_container_width=True)
 
-    # --- 분석 및 차트 렌더링 로직 ---
     if corp_name:
         with st.spinner("데이터 분석 중..."):
             listing = get_ticker_listing()
@@ -282,22 +274,15 @@ def render_valuation_menu():
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     
-                    min_d = df_price.index[0].date()
-                    max_d = df_price.index[-1].date()
-                    default_start = max_d - timedelta(days=365*3)
-                    if default_start < min_d: default_start = min_d
+                    # 💡 [요청사항 완벽 반영] 직관적인 원클릭 기간 필터링 라디오 버튼
+                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=0, horizontal=True, label_visibility="collapsed")
                     
-                    col_d1, _ = st.columns([1.5, 1])
-                    with col_d1:
-                        st.markdown("<div style='font-size:13px; font-weight:bold; color:#555; margin-bottom:5px;'>📅 조회 기간 설정 (년-월-일)</div>", unsafe_allow_html=True)
-                        dates = st.date_input("조회 기간", value=(default_start, max_d), min_value=min_d, max_value=max_d, format="YYYY-MM-DD", label_visibility="collapsed")
-                        
-                    if len(dates) == 2:
-                        start_date_chart = pd.to_datetime(dates[0])
-                        end_date_chart = pd.to_datetime(dates[1])
-                    else:
-                        start_date_chart = pd.to_datetime(dates[0])
-                        end_date_chart = pd.to_datetime(max_d)
+                    end_date_dt = df_price.index[-1]
+                    if chart_period == "1년": start_date_chart = end_date_dt - pd.DateOffset(years=1)
+                    elif chart_period == "2년": start_date_chart = end_date_dt - pd.DateOffset(years=2)
+                    elif chart_period == "3년": start_date_chart = end_date_dt - pd.DateOffset(years=3)
+                    elif chart_period == "5년": start_date_chart = end_date_dt - pd.DateOffset(years=5)
+                    else: start_date_chart = pd.to_datetime("2021-01-01")
 
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
@@ -312,7 +297,8 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
-                    date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_chart)
+                    # 💡 [버그 픽스 유지] 선택된 기간(date_mask) 내에서만 합리적인 평균값 동적 계산
+                    date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
                     interp_history = ext_interp[:len(df_price)]
                     metric_mask = interp_history > 0
                     valid_mask = date_mask & metric_mask
@@ -336,7 +322,7 @@ def render_valuation_menu():
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
-                    x_range = [start_date_chart, end_date_chart + timedelta(days=120)]
+                    x_range = [start_date_chart, end_date_dt + timedelta(days=120)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
                     # --- 1. 상단 차트 (주가 vs 밴드) ---
@@ -365,7 +351,7 @@ def render_valuation_menu():
                     if tp1 > 0:
                         fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
-                    df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_chart)]
+                    df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
                     y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
                     y_max_cands = [df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p]
                     if tp1 > 0: y_max_cands.append(tp1)
@@ -377,9 +363,10 @@ def render_valuation_menu():
                     
                     fig1.update_layout(
                         height=400, 
-                        margin=dict(l=0, r=60, t=40, b=50), 
-                        title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
+                        # 💡 [UI 수정] t(위쪽 마진)를 충분히 주고, 범례를 우측 끝으로 밀어서 타이틀과 절대 안 겹치게 처리!
+                        margin=dict(l=0, r=40, t=70, b=10), 
+                        title=dict(text=f"[{band_name} 밴드]", x=0.0, y=1.02, font=dict(size=14)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
@@ -393,6 +380,7 @@ def render_valuation_menu():
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     
+                    # 💡 하단 차트 좌측 예쁜 뱃지 적용 및 라벨 겹침 방지 계단식 좌표
                     x_pos_avg = start_date_chart + timedelta(days=10)
                     x_pos_today = start_date_chart + timedelta(days=60)
                     x_pos_target = start_date_chart + timedelta(days=110)
@@ -422,9 +410,9 @@ def render_valuation_menu():
                     
                     fig2.update_layout(
                         height=300, 
-                        margin=dict(l=0, r=60, t=50, b=80), 
-                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=False, 
+                        margin=dict(l=0, r=40, t=50, b=80), 
+                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.98, font=dict(size=14)),
+                        showlegend=False, # 하단 차트 범례 완전 제거 (상단과 중복 방지)
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
