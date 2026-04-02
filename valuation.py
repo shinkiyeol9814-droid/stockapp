@@ -149,7 +149,6 @@ if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 [버그 픽스] 중복 버튼 원인이었던 컬럼 레이아웃 삭제. 심플한 1열 세로 배치
     st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
     st.session_state.search_corp_name = corp_name
@@ -201,7 +200,6 @@ def render_valuation_menu():
     st.session_state.target_mult = target_mult 
     st.markdown("</div></div>", unsafe_allow_html=True)
     
-    # 💡 [버그 픽스] 이 자리에만 '갱신' 버튼 1개 존재! (중복 에러 해결)
     st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
     search_clicked = st.button("갱신", use_container_width=True)
 
@@ -325,7 +323,7 @@ def render_valuation_menu():
                     x_range = [start_date_chart, end_date_dt + timedelta(days=120)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # --- 1. 상단 차트 (주가 vs 밴드) ---
+                    # --- 💡 1. 상단 차트 라벨 회피 알고리즘 ---
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -334,22 +332,38 @@ def render_valuation_menu():
                             band_y = np.where(ext_interp > 0, ext_interp * float(b), np.nan)
                             fig1.add_trace(go.Scatter(x=extended_dates, y=band_y, mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
                     
-                    if avg_m_val > 0:
-                        avg_y = np.where(ext_interp > 0, ext_interp * avg_m_val, np.nan)
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=avg_y, mode='lines', name='AvgVal', line=dict(color='green', width=1.5)))
-                        avg_y_curr = ext_interp[len(df_price)-1] * avg_m_val
-                        if avg_y_curr > 0:
-                            fig1.add_annotation(x=df_price.index[-1], y=avg_y_curr, text=f"Avg: {avg_m_val:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderwidth=1, borderpad=4)
+                    target_line_y = np.where(ext_interp > 0, ext_interp * target_mult, np.nan)
+                    fig1.add_trace(go.Scatter(x=extended_dates, y=target_line_y, mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
 
+                    # Y축 높이를 기준으로 정렬하여 화살표 방향(ay)과 x위치(ax)를 계단식으로 분산
+                    ann_pts1 = []
+                    if avg_m_val > 0:
+                        avg_y_curr = ext_interp[len(df_price)-1] * avg_m_val
+                        fig1.add_trace(go.Scatter(x=extended_dates, y=np.where(ext_interp > 0, ext_interp * avg_m_val, np.nan), mode='lines', name='AvgVal', line=dict(color='green', width=1.5)))
+                        ann_pts1.append({'y': avg_y_curr, 'text': f"Avg: {avg_m_val:.1f}x", 'color': 'green', 'bg': 'rgba(0,128,0,0.8)'})
                     if today_m > 0 and today_m < 300:
                         today_line_y = np.where(ext_interp > 0, ext_interp * today_m, np.nan)
                         fig1.add_trace(go.Scatter(x=extended_dates, y=today_line_y, mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
-                        fig1.add_annotation(x=df_price.index[-1], y=curr_p, text=f"현재: {today_m:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
+                        ann_pts1.append({'y': curr_p, 'text': f"현재: {today_m:.1f}x", 'color': 'red', 'bg': 'rgba(255,0,0,0.8)'})
+                    if target_mult > 0:
+                        target_y_curr = ext_interp[len(df_price)-1] * target_mult
+                        ann_pts1.append({'y': target_y_curr, 'text': f"목표: {target_mult}x", 'color': 'blue', 'bg': 'rgba(0,0,255,0.8)'})
 
-                    target_line_y = np.where(ext_interp > 0, ext_interp * target_mult, np.nan)
-                    fig1.add_trace(go.Scatter(x=extended_dates, y=target_line_y, mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
-                    if tp1 > 0:
-                        fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
+                    ann_pts1.sort(key=lambda v: v['y'], reverse=True) # 높은 순 정렬
+                    
+                    ay_list1 = [-40, 0, 40]
+                    ax_list1 = [-40, -60, -40] # 중간 라벨은 텍스트를 좌측으로 더 빼서 선 겹침 방지
+                    if len(ann_pts1) == 2:
+                        ay_list1, ax_list1 = [-30, 30], [-40, -40]
+                    elif len(ann_pts1) == 1:
+                        ay_list1, ax_list1 = [0], [-40]
+
+                    for i, pt in enumerate(ann_pts1):
+                        fig1.add_annotation(
+                            x=df_price.index[-1], y=pt['y'], text=pt['text'], showarrow=True, arrowhead=2, 
+                            ax=ax_list1[i], ay=ay_list1[i], font=dict(size=11, color="white", weight="bold"), 
+                            bgcolor=pt['bg'], bordercolor=pt['color'], borderwidth=1, borderpad=4
+                        )
 
                     df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
                     y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
@@ -362,15 +376,13 @@ def render_valuation_menu():
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
                     fig1.update_layout(
-                        height=400, 
-                        margin=dict(l=0, r=40, t=70, b=10), 
-                        title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
+                        height=400, margin=dict(l=0, r=40, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # --- 2. 하단 차트 (과거 밸류에이션 추이) ---
+                    # --- 💡 2. 하단 차트 라벨 회피 알고리즘 ---
                     st.write("")
                     fig2 = go.Figure()
                     
@@ -379,27 +391,44 @@ def render_valuation_menu():
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     
-                    x_pos_avg = start_date_chart + timedelta(days=10)
-                    x_pos_today = start_date_chart + timedelta(days=60)
-                    x_pos_target = start_date_chart + timedelta(days=110)
-
                     for i, b in enumerate(bands):
                         if pd.notna(b):
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
                             fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
-                    if avg_m_val > 0:
-                        fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'Avg {avg_m_val:.1f}x', line=dict(color='green', width=2)))
-                        fig2.add_annotation(x=x_pos_avg, y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="bottom", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderwidth=1, borderpad=4)
+                    fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
                     
                     y2_max = max([bands[-1]*1.1 if bands else 30, target_mult*1.2])
+
+                    ann_pts2 = []
+                    if avg_m_val > 0:
+                        fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'Avg {avg_m_val:.1f}x', line=dict(color='green', width=2)))
+                        ann_pts2.append({'y': avg_m_val, 'text': f"Avg: {avg_m_val:.1f}x", 'color': 'green', 'bg': 'rgba(0,128,0,0.8)'})
+                    
                     if today_m > 0 and today_m < 300: 
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
-                        fig2.add_annotation(x=x_pos_today, y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="bottom", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
+                        ann_pts2.append({'y': today_m, 'text': f"현재: {today_m:.1f}x", 'color': 'red', 'bg': 'rgba(255,0,0,0.8)'})
                         y2_max = max(y2_max, today_m * 1.2)
                         
-                    fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
-                    fig2.add_annotation(x=x_pos_target, y=target_mult, text=f"목표: {target_mult}x", showarrow=False, xanchor="left", yanchor="bottom", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
+                    if target_mult > 0:
+                        ann_pts2.append({'y': target_mult, 'text': f"목표: {target_mult}x", 'color': 'blue', 'bg': 'rgba(0,0,255,0.8)'})
+
+                    ann_pts2.sort(key=lambda v: v['y'], reverse=True)
+                    
+                    ay_list2 = [-30, 0, 30]
+                    ax_list2 = [40, 60, 40]
+                    if len(ann_pts2) == 2:
+                        ay_list2, ax_list2 = [-25, 25], [40, 40]
+                    elif len(ann_pts2) == 1:
+                        ay_list2, ax_list2 = [0], [40]
+
+                    x_base = start_date_chart + timedelta(days=15)
+                    for i, pt in enumerate(ann_pts2):
+                        fig2.add_annotation(
+                            x=x_base, y=pt['y'], text=pt['text'], showarrow=True, arrowhead=2, 
+                            ax=ax_list2[i], ay=ay_list2[i], font=dict(size=11, color="white", weight="bold"), 
+                            bgcolor=pt['bg'], bordercolor=pt['color'], borderwidth=1, borderpad=4
+                        )
                     
                     fig2.update_yaxes(range=[0, y2_max])
                     
@@ -407,11 +436,8 @@ def render_valuation_menu():
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
                     fig2.update_layout(
-                        height=300, 
-                        margin=dict(l=0, r=40, t=50, b=80), 
-                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.98, font=dict(size=14)),
-                        showlegend=False, 
-                        hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+                        height=300, margin=dict(l=0, r=40, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
+                        showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
 
