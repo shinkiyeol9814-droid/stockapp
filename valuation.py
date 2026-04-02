@@ -100,11 +100,31 @@ def get_hybrid_financials(ticker):
         rows.append(row)
     return pd.DataFrame(rows)
 
-# --- 💡 가치평가 메뉴 UI 렌더링 함수 ---
+# 💡 [추가] 모바일 대응 깔쌈한 카드 UI 생성 함수
+def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
+    # 한국 증시 기준: 상승은 빨간색, 하락은 파란색
+    if is_zero:
+        color = "#888888"
+        bg_color = "#f4f4f4"
+    else:
+        color = "#ff4b4b" if is_up else "#0068c9"
+        bg_color = f"{color}15" # 투명도 15% 배경
+
+    return f"""
+    <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e0e0e0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px;">
+        <div style="font-size: 14px; color: #777; font-weight: 600; margin-bottom: 6px;">{title}</div>
+        <div style="font-size: 24px; font-weight: 900; color: #222; margin-bottom: 4px;">{price_str}</div>
+        <div style="font-size: 13px; color: #888; margin-bottom: 12px;">시총: {marcap_str}</div>
+        <div style="display: inline-block; font-size: 15px; font-weight: 800; color: {color}; background-color: {bg_color}; padding: 4px 12px; border-radius: 8px;">
+            {rate_str}
+        </div>
+    </div>
+    """
+
+# --- 가치평가 메뉴 UI 렌더링 함수 ---
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 1단: 종목명 + 갱신
     col_input, col_btn = st.columns([1, 0.25])
     with col_input:
         st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
@@ -115,12 +135,10 @@ def render_valuation_menu():
         st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
         search_clicked = st.button("갱신", use_container_width=True)
 
-    # 2단: 평가방식
     st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
     
-    # 평균 배수 자동 계산 로직
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
@@ -153,7 +171,6 @@ def render_valuation_menu():
                             st.session_state.target_mult = max(1, int(round(avg_m)))
                 st.session_state.last_ticker = ticker
 
-    # 3단: 목표배수
     st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     target_mult = st.number_input("목표배수", value=st.session_state.target_mult, step=1, format="%d", label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
@@ -210,32 +227,46 @@ def render_valuation_menu():
                         return 0, 0, 0
                     
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
-                    
                     last_date_str = df_price.index[-1].strftime('%m.%d')
-                    c_updown = "rate-up" if updown >= 0 else "rate-down"
-                    c_up1 = "rate-none" if tp1 == 0 else ("rate-up" if up1 >= 0 else "rate-down")
-                    c_up2 = "rate-none" if tp2 == 0 else ("rate-up" if up2 >= 0 else "rate-down")
 
-                    st.markdown(f"""
-                    <div class='info-box'>
-                        <div class='info-line'>
-                            <span class='info-title'>현재가:</span> <span class='info-val'>{curr_p:,.0f}원,</span> 
-                            <span class='info-title'>시가총액:</span> <span class='info-val'>{curr_marcap:,.0f}억</span> 
-                            <span class='{c_updown}' style='margin-left:4px;'>({last_date_str}) {updown:+.2f}%</span>
-                        </div>
-                        <div class='info-line'>
-                            <span class='info-title'>목표가({str(y1)[-2:]}년):</span> <span class='info-val'>{tp1:,.0f}원,</span> 
-                            <span class='info-title'>목표시총:</span> <span class='info-val'>{tm1:,.0f}억</span> 
-                            <span class='{c_up1}' style='margin-left:4px;'>{"Up: +" + f"{up1:.1f}%" if tp1>0 else "데이터 없음"}</span>
-                        </div>
-                        <div class='info-line'>
-                            <span class='info-title'>목표가({str(y2)[-2:]}년):</span> <span class='info-val'>{tp2:,.0f}원,</span> 
-                            <span class='info-title'>목표시총:</span> <span class='info-val'>{tm2:,.0f}억</span> 
-                            <span class='{c_up2}' style='margin-left:4px;'>{"Up: +" + f"{up2:.1f}%" if tp2>0 else "데이터 없음"}</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # 💡 [핵심 반영 1] 모바일 친화적인 3분할 카드 UI 적용
+                    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        rate_str = f"{updown:+.2f}%"
+                        st.markdown(make_card_ui(f"현재가 ({last_date_str})", f"{curr_p:,.0f}원", f"{curr_marcap:,.0f}억", rate_str, updown > 0, is_zero=(updown==0)), unsafe_allow_html=True)
+                    
+                    with col2:
+                        if tp1 > 0:
+                            rate_str = f"목표대비 {up1:+.1f}%"
+                            st.markdown(make_card_ui(f"목표가 ({str(y1)[-2:]}년)", f"{tp1:,.0f}원", f"{tm1:,.0f}억", rate_str, up1 > 0), unsafe_allow_html=True)
+                        else:
+                            st.markdown(make_card_ui(f"목표가 ({str(y1)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
 
+                    with col3:
+                        if tp2 > 0:
+                            rate_str = f"목표대비 {up2:+.1f}%"
+                            st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", f"{tp2:,.0f}원", f"{tm2:,.0f}억", rate_str, up2 > 0), unsafe_allow_html=True)
+                        else:
+                            st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
+
+
+                    # 💡 [핵심 반영 2] 차트 기간 설정 필터 추가
+                    st.markdown("<div class='sub-header' style='margin-top:15px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
+                    chart_period = st.radio("조회 기간", ["1년", "3년", "5년", "전체"], index=3, horizontal=True, label_visibility="collapsed")
+                    
+                    end_date_dt = df_price.index[-1]
+                    if chart_period == "1년":
+                        start_date_chart = end_date_dt - pd.DateOffset(years=1)
+                    elif chart_period == "3년":
+                        start_date_chart = end_date_dt - pd.DateOffset(years=3)
+                    elif chart_period == "5년":
+                        start_date_chart = end_date_dt - pd.DateOffset(years=5)
+                    else:
+                        start_date_chart = pd.to_datetime("2021-01-01")
+
+                    # --- 차트 데이터 로직 ---
                     current_year = datetime.today().year
                     historical_metric_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= current_year].iterrows() if pd.notna(row[col_p])}
                     df_hist_daily = df_price.copy()
@@ -262,7 +293,8 @@ def render_valuation_menu():
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
                     today_m = float(curr_p / ext_interp[len(df_price)-1]) if ext_interp[len(df_price)-1] > 0.1 else 0
                     
-                    x_range = [pd.to_datetime("2021-01-01"), fin_df['Plot_Date'].max() + timedelta(days=90)]
+                    # 💡 X축 범위를 필터 선택값으로 제한 (미래 예측 밴드는 유지)
+                    x_range = [start_date_chart, fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
                     fig1 = go.Figure()
@@ -285,16 +317,21 @@ def render_valuation_menu():
                     if tp1 > 0:
                         fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
-                    y_max = max([curr_p, tp1, tp2]) * 1.15; y_min = df_price['Close'].min() * 0.85
+                    # 💡 Y축 범위도 선택된 기간 내의 최저/최고가에 맞춰 줌인되게 수정
+                    df_filtered_price = df_price[df_price.index >= start_date_chart]
+                    y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
+                    y_max = max([df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p, tp1, tp2]) * 1.15
+                    
                     fig1.update_yaxes(range=[y_min, y_max]); fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
                     fig1.update_layout(
-                        height=400, margin=dict(l=0, r=0, t=80, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                        height=400, margin=dict(l=0, r=0, t=60, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
+                    # 하단 차트
                     st.write("")
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
@@ -321,7 +358,7 @@ def render_valuation_menu():
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
                     fig2.update_layout(
-                        height=300, margin=dict(l=0, r=0, t=80, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                        height=300, margin=dict(l=0, r=0, t=60, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
