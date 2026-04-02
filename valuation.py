@@ -171,8 +171,14 @@ def render_valuation_menu():
                     valid_hist_mult = daily_val[~np.isnan(daily_val)]
                     
                     if len(valid_hist_mult) > 0:
-                        avg_m = np.mean(valid_hist_mult)
-                        st.session_state.target_mult = max(1, int(round(avg_m)))
+                        # 💡 [핵심] 상위 5%, 하위 5%의 극단값을 잘라내어 정상적인 평균 계산
+                        q_min = np.percentile(valid_hist_mult, 5)
+                        q_max = np.percentile(valid_hist_mult, 95)
+                        filtered_mult = valid_hist_mult[(valid_hist_mult >= q_min) & (valid_hist_mult <= q_max)]
+                        
+                        if len(filtered_mult) > 0:
+                            avg_m = np.mean(filtered_mult)
+                            st.session_state.target_mult = max(1, int(round(avg_m)))
                 st.session_state.last_ticker = ticker
 
     st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
@@ -258,12 +264,13 @@ def render_valuation_menu():
                     elif chart_period == "5년": start_date_chart = end_date_dt - pd.DateOffset(years=5)
                     else: start_date_chart = pd.to_datetime("2021-01-01")
 
-                    # 💡 [핵심 보완] 로직 통일 (보간법 기반 밴드 및 밸류에이션 계산)
+                    # 💡 [핵심 버그 픽스] 극단치 필터링을 통해 밴드 스케일 정상화
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     
                     raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics = pd.Series(raw_metrics).ffill().bfill().values * 100_000_000 / stocks_count
+                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics) # 음수나 0 방어
                     
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
@@ -271,7 +278,6 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
-                    # 당일Val 라인 및 밴드 계산을 위한 과거 Multiple 배열 생성
                     interp_history = ext_interp[:len(df_price)]
                     valid_metrics = np.where(interp_history > 0, interp_history, np.nan)
                     daily_val = df_price['Close'].values / valid_metrics
@@ -280,10 +286,17 @@ def render_valuation_menu():
                     bands = []
                     avg_m_val = 0
                     if len(valid_hist_mult) > 0:
-                        avg_m_val = np.mean(valid_hist_mult)
-                        mn, mx = np.min(valid_hist_mult), np.max(valid_hist_mult)
-                        stp = (mx-mn)/3
-                        bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
+                        # 상하위 5% 아웃라이어를 잘라내서 정상적인 최소/최대값 확보
+                        q_min = np.percentile(valid_hist_mult, 5)
+                        q_max = np.percentile(valid_hist_mult, 95)
+                        filtered_hist = valid_hist_mult[(valid_hist_mult >= q_min) & (valid_hist_mult <= q_max)]
+                        
+                        if len(filtered_hist) > 0:
+                            avg_m_val = np.mean(filtered_hist)
+                            mn, mx = np.min(filtered_hist), np.max(filtered_hist)
+                            if mx <= mn: mx = mn + 10
+                            stp = (mx - mn) / 3
+                            bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
                     x_range = [start_date_chart, fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
@@ -315,7 +328,6 @@ def render_valuation_menu():
 
                     df_filtered_price = df_price[df_price.index >= start_date_chart]
                     y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
-                    
                     y_max_cands = [df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p]
                     if tp1 > 0: y_max_cands.append(tp1)
                     if tp2 > 0: y_max_cands.append(tp2)
@@ -326,7 +338,7 @@ def render_valuation_menu():
                     
                     fig1.update_layout(
                         height=400, 
-                        margin=dict(l=0, r=50, t=60, b=10), # 💡 [UI 수정] 우측 여백 50 확보
+                        margin=dict(l=0, r=40, t=60, b=50), # 여백 확보
                         title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
@@ -336,7 +348,6 @@ def render_valuation_menu():
                     # --- 하단 차트 ---
                     st.write("")
                     fig2 = go.Figure()
-                    # 💡 [핵심 보완] 당일Val 곡선을 위 차트의 로직과 100% 동일하게 그리기
                     fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
@@ -364,7 +375,7 @@ def render_valuation_menu():
                     
                     fig2.update_layout(
                         height=300, 
-                        margin=dict(l=0, r=50, t=60, b=60), # 💡 [UI 수정] 우측 여백 50, 하단 모바일 여백 60 확보
+                        margin=dict(l=0, r=40, t=60, b=60), # 여백 확보
                         title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
@@ -377,5 +388,4 @@ def render_valuation_menu():
     else:
         st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
         
-    # 모바일 스크롤 확보용 투명 여백
     st.markdown("<div style='height: 50px;'></div>", unsafe_allow_html=True)
