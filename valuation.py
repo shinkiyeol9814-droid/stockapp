@@ -149,15 +149,11 @@ if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    col_input, col_btn = st.columns([1, 0.25])
-    with col_input:
-        st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-        corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
-        st.session_state.search_corp_name = corp_name
-        st.markdown("</div></div>", unsafe_allow_html=True)
-    with col_btn:
-        st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
-        search_clicked = st.button("갱신", use_container_width=True)
+    # 💡 [버그 픽스] 중복 버튼 원인이었던 컬럼 레이아웃 삭제. 심플한 1열 세로 배치
+    st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
+    corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
+    st.session_state.search_corp_name = corp_name
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
     st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
@@ -205,6 +201,7 @@ def render_valuation_menu():
     st.session_state.target_mult = target_mult 
     st.markdown("</div></div>", unsafe_allow_html=True)
     
+    # 💡 [버그 픽스] 이 자리에만 '갱신' 버튼 1개 존재! (중복 에러 해결)
     st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
     search_clicked = st.button("갱신", use_container_width=True)
 
@@ -364,12 +361,11 @@ def render_valuation_menu():
                     fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
-                    # 💡 [버그 픽스] title의 y를 허용 범위인 0.99로 수정하여 ValueError 원천 방지
                     fig1.update_layout(
                         height=400, 
                         margin=dict(l=0, r=40, t=70, b=10), 
                         title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
@@ -410,11 +406,10 @@ def render_valuation_menu():
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
-                    # 💡 [버그 픽스] title의 y를 허용 범위인 0.99로 수정하여 ValueError 원천 방지
                     fig2.update_layout(
                         height=300, 
                         margin=dict(l=0, r=40, t=50, b=80), 
-                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
+                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.98, font=dict(size=14)),
                         showlegend=False, 
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
