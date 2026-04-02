@@ -257,7 +257,6 @@ def render_valuation_menu():
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     
-                    # 💡 [요청 반영] 다시 돌아온 직관적인 라디오 버튼
                     chart_period = st.radio("Choose a date range", ["1년", "3년", "5년", "전체"], index=3, horizontal=True)
                     
                     end_date_dt = df_price.index[-1]
@@ -279,7 +278,6 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
-                    # 💡 [버그 픽스 핵심] 밴드 평균은 '전체 기간'을 기준으로 고정 산출!
                     interp_history = ext_interp[:len(df_price)]
                     daily_val = np.full(len(df_price), np.nan)
                     valid_idx = interp_history > 0
@@ -343,7 +341,6 @@ def render_valuation_menu():
                     
                     fig1.update_layout(
                         height=400, 
-                        # 💡 [버그 픽스] t=100 으로 대폭 상향하여 범례 겹침 완벽 해결!
                         margin=dict(l=0, r=50, t=100, b=10), 
                         title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.99, font=dict(size=14)),
                         legend=dict(orientation="h", yanchor="bottom", y=1.15, xanchor="left", x=0, font=dict(size=10)),
@@ -357,22 +354,34 @@ def render_valuation_menu():
                     fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
+                    
+                    # 💡 [핵심 UI] 라벨이 서로 겹치지 않게 가로로 살짝 엇갈리게 배치하는 꼼수 좌표
+                    x_pos_avg = start_date_chart + timedelta(days=10)
+                    x_pos_today = start_date_chart + timedelta(days=60)
+                    x_pos_target = start_date_chart + timedelta(days=110)
+
                     for i, b in enumerate(bands):
                         if pd.notna(b):
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
+                            # 밴드 숫자(점선 우측)는 그대로 유지
                             fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
                     if avg_m_val > 0:
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'Avg {avg_m_val:.1f}x', line=dict(color='green', width=2)))
-                        fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="green", weight="bold"))
+                        # 💡 차트 첫 부분(좌측)에 위 그래프와 동일한 뱃지 적용
+                        fig2.add_annotation(x=x_pos_avg, y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="bottom", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderwidth=1, borderpad=4)
                     
-                    # 💡 하단 차트 Y축 높이 안전하게 계산
                     y2_max = max([bands[-1]*1.1 if bands else 30, target_mult*1.2])
                     if today_m > 0 and today_m < 300: 
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
+                        # 💡 차트 첫 부분(좌측)에 뱃지 적용 (기존 우측 텍스트 삭제)
+                        fig2.add_annotation(x=x_pos_today, y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="bottom", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
                         y2_max = max(y2_max, today_m * 1.2)
                         
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
+                    # 💡 차트 첫 부분(좌측)에 뱃지 적용
+                    fig2.add_annotation(x=x_pos_target, y=target_mult, text=f"목표: {target_mult}x", showarrow=False, xanchor="left", yanchor="bottom", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
+                    
                     fig2.update_yaxes(range=[0, y2_max])
                     
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
@@ -380,9 +389,9 @@ def render_valuation_menu():
                     
                     fig2.update_layout(
                         height=300, 
-                        margin=dict(l=0, r=50, t=100, b=50), # 💡 [버그 픽스] 여기도 동일하게 t=100 확보
+                        margin=dict(l=0, r=50, t=100, b=50), 
                         title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.99, font=dict(size=14)),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.15, xanchor="left", x=0, font=dict(size=10)),
+                        showlegend=False, # 💡 [수정] 하단 차트 범례 완전 제거
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
