@@ -98,7 +98,6 @@ def render_new_high_menu():
     disp_df['등락률'] = disp_df['등락률'].apply(lambda x: f"{float(x):.2f}%" if not isinstance(x, str) else x)
     disp_df['시가총액'] = disp_df['시가총액'].apply(lambda x: f"{int(x) // 100000000:,}억" if pd.notnull(x) and x > 0 else "N/A")
     
-    # 마크다운 대신 LinkColumn이 인식할 수 있는 순수 URL을 담아둡니다.
     disp_df['가치평가_이동'] = "/?stock_code=" + disp_df['코드']
     disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
     
@@ -106,26 +105,27 @@ def render_new_high_menu():
     st.caption("💡 '추정 사유' 셀을 더블클릭하여 수정 후, 반드시 **`Enter` 키**를 누르고 하단의 저장 버튼을 눌러주세요.")
     
     # ---------------------------------------------------------
-    # ✨ Data Editor 렌더링 (LinkColumn 적용)
+    # ✨ Data Editor 렌더링 (돋보기 아이콘 적용 및 컬럼 순서 재배치)
     # ---------------------------------------------------------
     edited_df = st.data_editor(
-        disp_df[['종목명', '등락률', '시가총액', '돌파기간', '추정 사유', '가치평가_이동', '최신뉴스', '최신뉴스_링크', '코드']],
+        # 컬럼 순서: 종목명 -> 가치평가(돋보기) -> 등락률 ... -> 최신뉴스 -> 기사링크(돋보기)
+        disp_df[['종목명', '가치평가_이동', '등락률', '시가총액', '돌파기간', '추정 사유', '최신뉴스', '최신뉴스_링크', '코드']],
         column_config={
             "종목명": st.column_config.TextColumn("종목명", width="small"),
-            "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
-            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
-            "시가총액": st.column_config.TextColumn("시가총액"),
-            # 링크 전용 컬럼 세팅 (display_text로 버튼처럼 깔끔하게 표시)
+            # 디스플레이 텍스트를 돋보기만 나오도록 변경
             "가치평가_이동": st.column_config.LinkColumn(
                 "분석", 
-                display_text="시뮬레이터 🔍", 
+                display_text="🔍", 
                 width="small"
             ),
+            "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
+            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
             "최신뉴스_링크": st.column_config.LinkColumn(
-                "기사", 
-                display_text="원문보기 📰", 
+                "원문", 
+                display_text="🔍", 
                 width="small"
             ),
+            "시가총액": st.column_config.TextColumn("시가총액"),
             "코드": None  
         },
         disabled=['종목명', '등락률', '시가총액', '돌파기간', '가치평가_이동', '최신뉴스', '최신뉴스_링크'], 
