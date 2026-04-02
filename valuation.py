@@ -14,15 +14,13 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
 }
 
-# --- 💡 [핵심] 주식수 빵꾸 방어용 3중 안전장치 함수 ---
+# --- 주식수 방어용 함수 (그대로 유지) ---
 def get_stocks_count(ticker_row, ticker):
-    # 1. 기본 Stocks 컬럼 확인
     try:
         sc = pd.to_numeric(ticker_row['Stocks'], errors='coerce').fillna(0).values[0]
         if sc > 0: return sc
     except: pass
     
-    # 2. 실패 시 (시가총액 / 현재가) 로 역산
     try:
         marcap = pd.to_numeric(ticker_row['Marcap'], errors='coerce').fillna(0).values[0]
         close_p = pd.to_numeric(ticker_row['Close'], errors='coerce').fillna(0).values[0]
@@ -30,14 +28,13 @@ def get_stocks_count(ticker_row, ticker):
             return int(marcap / close_p)
     except: pass
     
-    # 3. 최후의 보루: 네이버 모바일 API 찔러보기
     try:
         res_m = requests.get(f"https://m.stock.naver.com/api/stock/{ticker}/integration", headers=HEADERS, timeout=5).json()
         return int(res_m['stockEndType']['totalInfo']['stockCount'])
     except:
         return 1
 
-# --- 데이터 캐싱 함수들 ---
+# --- 데이터 캐싱 함수들 (그대로 유지) ---
 @st.cache_data(ttl=86400)
 def get_ticker_listing():
     for _ in range(3):
@@ -123,7 +120,7 @@ def get_hybrid_financials(ticker):
         rows.append(row)
     return pd.DataFrame(rows)
 
-# 💡 [수정] 모바일 대응 다이어트 버전 카드 UI
+# --- 카드 UI 생성 함수 (다이어트 버전 유지) ---
 def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     if is_zero:
         color = "#888888"
@@ -173,7 +170,6 @@ def render_valuation_menu():
                 if not temp_price.empty:
                     col_p = '영업이익' if "POR" in val_type else '당기순이익'
                     
-                    # 💡 주식수 3중 방어막 적용
                     stocks_count = get_stocks_count(ticker_row, ticker)
                     
                     current_year = datetime.today().year
@@ -204,7 +200,6 @@ def render_valuation_menu():
             else:
                 ticker = ticker_row['Code'].values[0]
                 
-                # 💡 메인 로직에도 3중 방어막 주식수 적용
                 stocks_count = get_stocks_count(ticker_row, ticker)
 
                 fin_df = get_hybrid_financials(ticker)
@@ -301,9 +296,14 @@ def render_valuation_menu():
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics = np.nan_to_num(raw_metrics, nan=0.001) * 100_000_000 / stocks_count
-                    cur_metrics = np.where(cur_metrics <= 0, 0.001, cur_metrics)
+                    
+                    # 💡 [Problem 1 해결 핵심] 과거 음수 재무 데이터는 최소값(0.1)로 강제 보정하여 밴드 폭발 방지
+                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics)
+                    
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
-                    today_m = float(curr_p / ext_interp[len(df_price)-1]) if ext_interp[len(df_price)-1] > 0.1 else 0
+                    
+                    # 💡 [Problem 1 해결 결과] 보정된Metric 사용으로 안정적인 현재Val 계산
+                    today_m = float(curr_p / ext_interp[len(df_price)-1]) if ext_interp[len(df_price)-1] > 1 else 0
                     
                     x_range = [start_date_chart, fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
@@ -322,13 +322,13 @@ def render_valuation_menu():
 
                     if today_m > 0:
                         fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * today_m, mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
+                        # 💡 라벨도 위쪽 차트는 '현재: xx배'로 표기 통일
                         fig1.add_annotation(x=df_price.index[-1], y=curr_p, text=f"현재: {today_m:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
 
                     fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(target_mult), mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
                     if tp1 > 0:
                         fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
-                    # 💡 Y축 범위를 필터링된 데이터 기반으로 줌인 (0이나 빈값 방어)
                     df_filtered_price = df_price[df_price.index >= start_date_chart]
                     y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
                     
@@ -340,13 +340,15 @@ def render_valuation_menu():
                     fig1.update_yaxes(range=[y_min, y_max]); fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
                     fig1.update_layout(
-                        height=400, margin=dict(l=0, r=0, t=60, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                        height=400, 
+                        # 💡 [Problem 2 & 3 해결 UI] 오른쪽 여백 r=40, 아래 여백 b=50으로 설정
+                        margin=dict(l=0, r=40, t=60, b=50), 
+                        title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 하단 차트
                     st.write("")
                     safe_metric = pd.to_numeric(df_hist_daily['Metric'], errors='coerce').replace([0, np.nan], np.inf)
                     fig2 = go.Figure()
@@ -364,6 +366,7 @@ def render_valuation_menu():
                     
                     if today_m > 0: 
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
+                        # 💡 아래 차트는 '현재Val' 범례 라벨 유지 (일관성)
                         
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
                     
@@ -376,7 +379,10 @@ def render_valuation_menu():
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
                     fig2.update_layout(
-                        height=300, margin=dict(l=0, r=0, t=60, b=0), title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
+                        height=300, 
+                        # 💡 [Problem 2 & 3 해결 UI] 오른쪽 여백 r=40, 아래 여백 b=50으로 설정
+                        margin=dict(l=0, r=40, t=60, b=50), 
+                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
