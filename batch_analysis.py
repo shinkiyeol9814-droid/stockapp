@@ -29,7 +29,8 @@ def get_high_stocks():
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    df = df[(df['Marcap'] >= 100_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
+    # 💡 [수정] 500억 이상 종목부터 긁어오도록 필터 기준 하향
+    df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
     
     df = df[df['ChagesRatio'] >= 2.0] 
     candidates = df.sort_values('ChagesRatio', ascending=False).head(200)
@@ -46,7 +47,7 @@ def get_high_stocks():
             high_1y = hist['High'].max()
             high_6m = hist['High'].tail(120).max()
             high_3m = hist['High'].tail(60).max()
-            high_1w = hist['High'].tail(5).max()
+            # 💡 [수정] 1주 신고가 조건 제거
             
             today_high = hist['High'].iloc[-1]
             today_close = int(hist['Close'].iloc[-1])
@@ -55,13 +56,13 @@ def get_high_stocks():
             if today_high >= high_1y * 0.995: period_flag = "1년(52주) 신고가"
             elif today_high >= high_6m * 0.995: period_flag = "6개월 신고가"
             elif today_high >= high_3m * 0.995: period_flag = "3개월 신고가"
-            elif today_high >= high_1w * 0.995: period_flag = "1주 신고가"
             
             if period_flag:
                 results.append({
                     "종목명": row.Name,
                     "코드": row.Code,
                     "현재가": today_close,
+                    "시가총액": int(row.Marcap), # 💡 [추가] 시가총액 데이터 저장
                     "등락률": row.ChagesRatio,
                     "돌파기간": period_flag
                 })
