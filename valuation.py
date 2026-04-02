@@ -147,6 +147,7 @@ def render_valuation_menu():
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
     
+    # 목표배수 자동계산을 위한 초기화 로직
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
@@ -166,19 +167,22 @@ def render_valuation_menu():
                     band_dates_ts = temp_fin['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(temp_price.index.map(datetime.timestamp).values, band_dates_ts, cur_m)
                     
-                    valid_metrics = np.where(ext_interp > 0, ext_interp, np.nan)
-                    daily_val = temp_price['Close'].values / valid_metrics
-                    valid_hist_mult = daily_val[~np.isnan(daily_val)]
+                    # 💡 [버그 픽스] 과거 배수 계산 시 0이나 음수는 철저히 배제
+                    valid_idx = ext_interp > 0
+                    daily_val = np.full(len(temp_price), np.nan)
+                    daily_val[valid_idx] = temp_price['Close'].values[valid_idx] / ext_interp[valid_idx]
                     
+                    valid_hist_mult = daily_val[~np.isnan(daily_val)]
                     if len(valid_hist_mult) > 0:
-                        # 💡 [핵심] 상위 5%, 하위 5%의 극단값을 잘라내어 정상적인 평균 계산
-                        q_min = np.percentile(valid_hist_mult, 5)
-                        q_max = np.percentile(valid_hist_mult, 95)
-                        filtered_mult = valid_hist_mult[(valid_hist_mult >= q_min) & (valid_hist_mult <= q_max)]
-                        
-                        if len(filtered_mult) > 0:
-                            avg_m = np.mean(filtered_mult)
-                            st.session_state.target_mult = max(1, int(round(avg_m)))
+                        # 비정상적인 폭등 배수(예: 300배 초과)는 잘라내고 평균 계산
+                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < 300)]
+                        if len(realistic_mults) > 0:
+                            q_min = np.percentile(realistic_mults, 5)
+                            q_max = np.percentile(realistic_mults, 95)
+                            filtered_mult = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
+                            if len(filtered_mult) > 0:
+                                avg_m = np.mean(filtered_mult)
+                                st.session_state.target_mult = max(1, int(round(avg_m)))
                 st.session_state.last_ticker = ticker
 
     st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
@@ -254,7 +258,6 @@ def render_valuation_menu():
                         else:
                             st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
 
-
                     st.markdown("<div class='sub-header' style='margin-top:15px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     chart_period = st.radio("조회 기간", ["1년", "3년", "5년", "전체"], index=3, horizontal=True, label_visibility="collapsed")
                     
@@ -264,13 +267,12 @@ def render_valuation_menu():
                     elif chart_period == "5년": start_date_chart = end_date_dt - pd.DateOffset(years=5)
                     else: start_date_chart = pd.to_datetime("2021-01-01")
 
-                    # 💡 [핵심 버그 픽스] 극단치 필터링을 통해 밴드 스케일 정상화
+                    # 💡 [핵심 버그 픽스] 음수(적자) 구간은 강제로 NaN 처리하여 차트 계산에서 원천 배제
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     
                     raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics = pd.Series(raw_metrics).ffill().bfill().values * 100_000_000 / stocks_count
-                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics) # 음수나 0 방어
                     
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
@@ -278,30 +280,34 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
+                    # 당일 Valuation 
                     interp_history = ext_interp[:len(df_price)]
-                    valid_metrics = np.where(interp_history > 0, interp_history, np.nan)
-                    daily_val = df_price['Close'].values / valid_metrics
+                    daily_val = np.full(len(df_price), np.nan)
+                    valid_idx = interp_history > 0
+                    daily_val[valid_idx] = df_price['Close'].values[valid_idx] / interp_history[valid_idx]
                     
                     valid_hist_mult = daily_val[~np.isnan(daily_val)]
                     bands = []
                     avg_m_val = 0
                     if len(valid_hist_mult) > 0:
-                        # 상하위 5% 아웃라이어를 잘라내서 정상적인 최소/최대값 확보
-                        q_min = np.percentile(valid_hist_mult, 5)
-                        q_max = np.percentile(valid_hist_mult, 95)
-                        filtered_hist = valid_hist_mult[(valid_hist_mult >= q_min) & (valid_hist_mult <= q_max)]
-                        
-                        if len(filtered_hist) > 0:
-                            avg_m_val = np.mean(filtered_hist)
-                            mn, mx = np.min(filtered_hist), np.max(filtered_hist)
-                            if mx <= mn: mx = mn + 10
-                            stp = (mx - mn) / 3
-                            bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
+                        # 너무 비정상적으로 높은 밸류(예: 300배 이상)는 아웃라이어로 간주하여 제외
+                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < 300)]
+                        if len(realistic_mults) > 0:
+                            q_min = np.percentile(realistic_mults, 5)
+                            q_max = np.percentile(realistic_mults, 95)
+                            filtered_hist = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
+                            
+                            if len(filtered_hist) > 0:
+                                avg_m_val = np.mean(filtered_hist)
+                                mn, mx = np.min(filtered_hist), np.max(filtered_hist)
+                                if mx <= mn: mx = mn + 5
+                                stp = (mx - mn) / 3
+                                bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
                     x_range = [start_date_chart, fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # --- 상단 차트 ---
+                    # --- 1. 상단 차트 (주가 vs 밴드) ---
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -333,19 +339,19 @@ def render_valuation_menu():
                     if tp2 > 0: y_max_cands.append(tp2)
                     y_max = max(y_max_cands) * 1.15
                     
-                    fig1.update_yaxes(range=[y_min, y_max])
+                    fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
                     fig1.update_layout(
                         height=400, 
-                        margin=dict(l=0, r=40, t=60, b=50), # 여백 확보
+                        margin=dict(l=0, r=70, t=60, b=50), # 💡 [UI 수정] 라벨 잘림 방지 r=70
                         title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # --- 하단 차트 ---
+                    # --- 2. 하단 차트 (과거 밸류에이션 추이) ---
                     st.write("")
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
@@ -365,9 +371,16 @@ def render_valuation_menu():
                         
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
                     
+                    # Y축 줌인 스케일 개선
                     bottom_y_max_cands = [bands[-1]*1.1] if bands else [30]
                     bottom_y_max_cands.append(target_mult*1.2)
                     if today_m > 0: bottom_y_max_cands.append(today_m * 1.2)
+                    
+                    visible_daily_val = daily_val[len(df_price) - len(df_filtered_price):]
+                    visible_daily_val = visible_daily_val[~np.isnan(visible_daily_val)]
+                    if len(visible_daily_val) > 0:
+                        bottom_y_max_cands.append(np.percentile(visible_daily_val, 95) * 1.2)
+                        
                     fig2.update_yaxes(range=[0, max(bottom_y_max_cands)])
                     
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
@@ -375,7 +388,7 @@ def render_valuation_menu():
                     
                     fig2.update_layout(
                         height=300, 
-                        margin=dict(l=0, r=40, t=60, b=60), # 여백 확보
+                        margin=dict(l=0, r=70, t=60, b=80), # 💡 [UI 수정] 모바일 하단 잘림 방지 b=80
                         title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
