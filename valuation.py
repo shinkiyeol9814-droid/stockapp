@@ -8,30 +8,26 @@ import re
 import requests
 import plotly.graph_objects as go
 
-# 공통 헤더 (KIND 데이터 등 일반 웹용)
+# 공통 헤더 설정
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
 }
-# 💡 [버그 픽스] API 통신용 심플 헤더 (기존 헤더 충돌로 인한 주식수 '1' 폭주 완벽 차단)
 API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 def get_stocks_count(ticker_row, ticker):
-    # 1. fdr 자체 데이터
     try:
         if 'Stocks' in ticker_row.columns:
             sc = pd.to_numeric(ticker_row['Stocks'], errors='coerce').fillna(0).values[0]
             if sc > 0: return sc
     except: pass
     
-    # 2. 네이버 모바일 JSON API
     try:
         url = f"https://m.stock.naver.com/api/stock/{ticker}/integration"
         res = requests.get(url, headers=API_HEADERS, timeout=5).json()
         return int(res['stockEndType']['totalInfo']['stockCount'])
     except: pass
 
-    # 3. 최후의 보루: 네이버 금융 웹 크롤링
     try:
         url = f"https://finance.naver.com/item/main.naver?code={ticker}"
         res = requests.get(url, headers=API_HEADERS, timeout=5)
@@ -39,7 +35,6 @@ def get_stocks_count(ticker_row, ticker):
         if match: return int(match.group(1).replace(',', ''))
     except: pass
 
-    # 4. 시가총액 / 현재가 역산
     try:
         marcap = pd.to_numeric(ticker_row.get('Marcap', 0), errors='coerce').fillna(0).values[0]
         close_p = pd.to_numeric(ticker_row.get('Close', 0), errors='coerce').fillna(0).values[0]
@@ -149,29 +144,31 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
+# 💡 [추가] Session State 초기화용 변수 추가
+if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
+
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    col_input, col_btn = st.columns([1, 0.25])
-    with col_input:
-        st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-        corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
-        st.session_state.search_corp_name = corp_name
-        st.markdown("</div></div>", unsafe_allow_html=True)
-    with col_btn:
-        st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
-        search_clicked = st.button("갱신", use_container_width=True)
+    # 1단: 종목명
+    st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
+    corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
+    st.session_state.search_corp_name = corp_name
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
+    # 2단: 평가방식
     st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
     st.markdown("</div></div>", unsafe_allow_html=True)
     
+    # 💡 [UI 로직 수정] 목표배수를 출력하기 전에 평균배수(Avg)를 먼저 계산해서 업데이트
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
         if not ticker_row.empty:
             ticker = ticker_row['Code'].values[0]
-            if st.session_state.last_ticker != ticker:
+            # 종목명이 바뀌거나 평가방식이 바뀌었을 때만 평균 갱신
+            if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
                 temp_fin = get_hybrid_financials(ticker)
                 temp_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
                 
@@ -199,12 +196,21 @@ def render_valuation_menu():
                             if len(filtered_mult) > 0:
                                 avg_m = np.mean(filtered_mult)
                                 st.session_state.target_mult = max(1, int(round(avg_m)))
+                                
                 st.session_state.last_ticker = ticker
+                st.session_state.last_val_type = val_type
 
+    # 3단: 목표배수 (갱신된 기본값으로 표시)
     st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
     target_mult = st.number_input("목표배수", value=st.session_state.target_mult, step=1, format="%d", label_visibility="collapsed")
+    st.session_state.target_mult = target_mult # 사용자가 수정한 값 반영
     st.markdown("</div></div>", unsafe_allow_html=True)
+    
+    # 4단: 갱신 버튼 (모바일 친화적인 풀사이즈 버튼)
+    st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+    search_clicked = st.button("갱신", use_container_width=True)
 
+    # --- 분석 및 차트 렌더링 로직 ---
     if corp_name:
         with st.spinner("데이터 분석 중..."):
             listing = get_ticker_listing()
@@ -276,7 +282,6 @@ def render_valuation_menu():
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     
-                    # 💡 [복구] 에러 안 나는 달력 방식 (YYYY-MM-DD 포맷 적용)
                     min_d = df_price.index[0].date()
                     max_d = df_price.index[-1].date()
                     default_start = max_d - timedelta(days=365*3)
@@ -307,7 +312,6 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
-                    # 💡 [복구] 선택한 기간에 연동된 스마트 '동적 평균(Avg)' 로직
                     date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_chart)
                     interp_history = ext_interp[:len(df_price)]
                     metric_mask = interp_history > 0
@@ -323,11 +327,11 @@ def render_valuation_menu():
                         if len(realistic_mults) > 0:
                             q_min = np.percentile(realistic_mults, 5)
                             q_max = np.percentile(realistic_mults, 95)
-                            filtered_mult = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
+                            filtered_hist = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
                             
-                            if len(filtered_mult) > 0:
-                                avg_m_val = np.mean(filtered_mult)
-                                mn, mx = np.min(filtered_mult), np.max(filtered_mult)
+                            if len(filtered_hist) > 0:
+                                avg_m_val = np.mean(filtered_hist)
+                                mn, mx = np.min(filtered_hist), np.max(filtered_hist)
                                 if mx <= mn: mx = mn + 5
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
@@ -389,7 +393,6 @@ def render_valuation_menu():
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     
-                    # 💡 [복구] 하단 차트 좌측 예쁜 뱃지 적용 및 라벨 겹침 방지
                     x_pos_avg = start_date_chart + timedelta(days=10)
                     x_pos_today = start_date_chart + timedelta(days=60)
                     x_pos_target = start_date_chart + timedelta(days=110)
@@ -421,7 +424,7 @@ def render_valuation_menu():
                         height=300, 
                         margin=dict(l=0, r=60, t=50, b=80), 
                         title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=False, # 💡 [복구] 하단 차트 범례 완전 제거
+                        showlegend=False, 
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
