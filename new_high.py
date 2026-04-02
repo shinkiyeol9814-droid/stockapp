@@ -101,38 +101,37 @@ def render_new_high_menu():
 
     disp_df = filtered_df.copy()
     
-    # 포맷팅
-    disp_df['현재가'] = disp_df['현재가'].apply(lambda x: f"{int(x):,}원" if str(x).isdigit() else x)
+    # ---------------------------------------------------------
+    # ✨ 데이터 포맷팅 및 링크 처리
+    # ---------------------------------------------------------
+    # 현재가는 화면에서 제외하므로 포맷팅 삭제
     disp_df['등락률'] = disp_df['등락률'].apply(lambda x: f"{float(x):.2f}%" if not isinstance(x, str) else x)
     disp_df['시가총액'] = disp_df['시가총액'].apply(lambda x: f"{int(x) // 100000000:,}억" if pd.notnull(x) and x > 0 else "N/A")
-    disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
     
-    # 💡 [추가] 가치평가 시뮬레이터 페이지 연동 링크 생성
-    # Streamlit의 현재 URL 파라미터에 주식 코드를 실어서 넘김
-    disp_df['가치평가_이동'] = "?stock_code=" + disp_df['코드']
+    # (1) 종목명 마크다운 링크 처리 (가치평가 시뮬레이터 연동)
+    disp_df['종목명'] = disp_df.apply(lambda x: f"[{x['종목명']}](/?stock_code={str(x['코드']).zfill(6)})", axis=1)
+
+    # (2) 기사 원문 마크다운 링크 처리 ('기사'라는 텍스트에 하이퍼링크 적용)
+    disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
+    disp_df['기사'] = disp_df['최신뉴스_링크'].apply(lambda x: f"[기사]({x})" if pd.notnull(x) and str(x).strip() != "" else "")
     
     st.markdown(f"### 📝 통합 분석 결과 ({len(filtered_df)}건)")
-    st.caption("💡 '추정 사유' 셀을 더블클릭하여 수정 후, 반드시 **`Enter` 키**를 누르고 하단의 저장 버튼을 눌러주세요.")
+    st.caption("💡 '추정 사유' 셀을 더블클릭하여 수정 후, 반드시 **`Enter` 키**를 누르고 하단의 저장 버튼을 눌러주세요. / 종목명을 클릭하면 시뮬레이터로 이동합니다.")
     
+    # ---------------------------------------------------------
+    # ✨ Data Editor 렌더링 (불필요한 컬럼 제거 및 재배치)
+    # ---------------------------------------------------------
     edited_df = st.data_editor(
-        disp_df[['종목명', '현재가', '등락률', '시가총액', '돌파기간', '추정 사유', '가치평가_이동', '최신뉴스', '최신뉴스_링크', '코드']],
+        disp_df[['종목명', '등락률', '시가총액', '돌파기간', '추정 사유', '최신뉴스', '기사', '코드']],
         column_config={
+            "종목명": st.column_config.TextColumn("종목명 (분석이동)"), # 마크다운 자동 렌더링
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
             "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
             "시가총액": st.column_config.TextColumn("시가총액"),
-            "가치평가_이동": st.column_config.LinkColumn(
-                "가치평가", 
-                display_text="분석하기 🔍", 
-                width="small"
-            ),
-            "최신뉴스_링크": st.column_config.LinkColumn(
-                "기사 이동", 
-                display_text="원문 보기 🔗", 
-                width="small"
-            ),
-            "코드": None 
+            "기사": st.column_config.TextColumn("원문보기"), # 마크다운 자동 렌더링
+            "코드": None  # 데이터 매핑용으로 존재하되 화면엔 숨김
         },
-        disabled=['종목명', '현재가', '등락률', '시가총액', '돌파기간', '가치평가_이동', '최신뉴스', '최신뉴스_링크'], 
+        disabled=['종목명', '등락률', '시가총액', '돌파기간', '최신뉴스', '기사'], 
         hide_index=True, 
         use_container_width=True, 
         key="high_price_editor"
@@ -159,6 +158,11 @@ def render_new_high_menu():
     st.markdown("### 🔍 주요 뉴스 모니터링 (최대 3개)")
     for _, row in edited_df.iterrows():
         original_row = next((item for item in report_data['results'] if item['코드'] == row['코드']), {})
-        with st.expander(f"[{row['종목명']}] 주요 뉴스 살펴보기"):
+        
+        # 💡 [버그 방지] edited_df의 '종목명'은 마크다운 링크 문법이 포함되어 있어 
+        # 그대로 쓰면 제목이 깨지므로 original_row에서 순수 텍스트 종목명을 가져옵니다.
+        corp_name_clean = original_row.get('종목명', '알 수 없음')
+        
+        with st.expander(f"[{corp_name_clean}] 주요 뉴스 살펴보기"):
             news_md = original_row.get('뉴스목록', '관련 뉴스 없음')
             st.markdown(news_md)
