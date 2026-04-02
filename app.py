@@ -62,6 +62,7 @@ st.markdown("""
 # 세션 상태 초기화
 if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
 if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
+if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
 
 # --- 데이터 캐싱 함수들 ---
 @st.cache_data(ttl=86400)
@@ -149,9 +150,25 @@ def get_hybrid_financials(ticker):
         rows.append(row)
     return pd.DataFrame(rows)
 
+
+# --- 💡 URL 파라미터 확인 및 연동 로직 (신고가 트래킹 연동) ---
+query_stock_code = st.query_params.get("stock_code", "")
+default_menu_idx = 0 # 0은 가치평가 시뮬레이터 메뉴
+
+if query_stock_code:
+    listing = get_ticker_listing()
+    matched = listing[listing['Code'] == str(query_stock_code).zfill(6)]
+    if not matched.empty:
+        st.session_state.search_corp_name = matched['Name'].values[0]
+    
+    # 처리 완료 후 파라미터 지워서 새로고침 시 다시 덮어씌워지는 것 방지
+    st.query_params.clear()
+    default_menu_idx = 0 
+
+
 # --- 메뉴 구성 ---
 st.sidebar.title("🧭 메뉴")
-menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 관심종목 - 뉴스", "🛠️ 업데이트 이력"])
+menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 관심종목 - 뉴스", "🛠️ 업데이트 이력"], index=default_menu_idx)
 
 if menu == "📈 가치평가 시뮬레이터":
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
@@ -160,7 +177,9 @@ if menu == "📈 가치평가 시뮬레이터":
     col_input, col_btn = st.columns([1, 0.25])
     with col_input:
         st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-        corp_name = st.text_input("종목명", value="", placeholder="예: 삼성전자", label_visibility="collapsed").strip()
+        # 💡 value 속성에 세션 스테이트 연결
+        corp_name = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자", label_visibility="collapsed").strip()
+        st.session_state.search_corp_name = corp_name
         st.markdown("</div></div>", unsafe_allow_html=True)
     with col_btn:
         st.markdown("<div style='margin-top:2px;'></div>", unsafe_allow_html=True)
@@ -327,11 +346,9 @@ if menu == "📈 가치평가 시뮬레이터":
                         if pd.notna(b):
                             fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * float(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
                     
-                    # 💡 추가: 상단 차트에도 Avg 라인 및 현재/목표 스타일과 동일한 라벨 표기
                     if avg_m_val > 0:
                         fig1.add_trace(go.Scatter(x=extended_dates, y=ext_interp * avg_m_val, mode='lines', name='AvgVal', line=dict(color='green', width=1.5)))
                         avg_y_curr = ext_interp[len(df_price)-1] * avg_m_val
-                        # 현재가 주석과 겹치지 않도록 ay값을 양수(아래쪽)로 설정
                         fig1.add_annotation(x=df_price.index[-1], y=avg_y_curr, text=f"Avg: {avg_m_val:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderwidth=1, borderpad=4)
 
                     if today_m > 0:
@@ -395,10 +412,14 @@ elif menu == "🚀 신고가 트래킹":
     # 💡 모듈화된 함수 실행
     render_new_high_menu()
 
+elif menu == "📰 관심종목 - 뉴스":
+    st.markdown("<div class='main-title'>📰 관심종목 - 뉴스</div>", unsafe_allow_html=True)
+    st.info("준비 중입니다.")
+
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
     df_history = pd.DataFrame({
-        "버전": ["V1.3.11 (반응형 및 Avg 추가)", "V1.3.10 (Select Box 픽스)", "V1.3.9"], 
-        "내용": ["재무 데이터 에디터 상단 배치로 실시간 차트 반응형 구현, 상/하단 차트 과거 평균(Avg) 라인 및 라벨 추가", "평가방식 Select Box 내부 텍스트 잘림 현상 완벽 픽스", "검색 폼 세로 3단 전환, 라벨 너비 고정(칼각 정렬)"]
+        "버전": ["V2.0 (신고가 연동)", "V1.3.11 (반응형 및 Avg 추가)", "V1.3.10", "V1.3.9"], 
+        "내용": ["신고가 트래킹 분석 표에서 종목 클릭 시 시뮬레이터로 자동 연동 기능 추가", "재무 데이터 에디터 상단 배치로 실시간 차트 반응형 구현, 상/하단 차트 과거 평균(Avg) 라인 추가", "평가방식 Select Box 내부 텍스트 잘림 현상 완벽 픽스", "검색 폼 세로 3단 전환, 라벨 너비 고정(칼각 정렬)"]
     })
     st.dataframe(df_history, hide_index=True, use_container_width=True)
