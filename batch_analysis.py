@@ -33,7 +33,7 @@ def get_high_stocks():
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
     
     df = df[df['ChagesRatio'] >= 2.0] 
-    candidates = df.sort_values('ChagesRatio', ascending=False).head(200)
+    candidates = df.sort_values('ChagesRatio', ascending=False)
     results = []
     
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
