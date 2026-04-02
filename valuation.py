@@ -257,29 +257,21 @@ def render_valuation_menu():
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     
-                    min_d = df_price.index[0].date()
-                    max_d = df_price.index[-1].date()
-                    default_start = max_d - timedelta(days=365*3)
-                    if default_start < min_d: default_start = min_d
+                    # 💡 [요청 반영] 다시 돌아온 직관적인 라디오 버튼
+                    chart_period = st.radio("Choose a date range", ["1년", "3년", "5년", "전체"], index=3, horizontal=True)
                     
-                    col_d1, _ = st.columns([1.5, 1])
-                    with col_d1:
-                        st.markdown("<div style='font-size:13px; font-weight:bold; color:#555; margin-bottom:5px;'>📅 조회 기간 설정 (년-월-일)</div>", unsafe_allow_html=True)
-                        # 💡 [버그 수정] format을 YYYY-MM-DD로 변경하여 StreamlitAPIException 방지!
-                        dates = st.date_input("조회 기간", value=(default_start, max_d), min_value=min_d, max_value=max_d, format="YYYY-MM-DD", label_visibility="collapsed")
-                        
-                    if len(dates) == 2:
-                        start_date_chart = pd.to_datetime(dates[0])
-                        end_date_chart = pd.to_datetime(dates[1])
-                    else:
-                        start_date_chart = pd.to_datetime(dates[0])
-                        end_date_chart = pd.to_datetime(max_d)
+                    end_date_dt = df_price.index[-1]
+                    if chart_period == "1년": start_date_chart = end_date_dt - pd.DateOffset(years=1)
+                    elif chart_period == "3년": start_date_chart = end_date_dt - pd.DateOffset(years=3)
+                    elif chart_period == "5년": start_date_chart = end_date_dt - pd.DateOffset(years=5)
+                    else: start_date_chart = pd.to_datetime("2021-01-01")
 
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     
                     raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics = pd.Series(raw_metrics).ffill().bfill().values * 100_000_000 / stocks_count
+                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics)
                     
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
@@ -287,14 +279,13 @@ def render_valuation_menu():
                     today_metric = ext_interp[len(df_price)-1]
                     today_m = float(curr_p / today_metric) if today_metric > 0 else 0
                     
-                    date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_chart)
+                    # 💡 [버그 픽스 핵심] 밴드 평균은 '전체 기간'을 기준으로 고정 산출!
                     interp_history = ext_interp[:len(df_price)]
-                    metric_mask = interp_history > 0
-                    valid_mask = date_mask & metric_mask
+                    daily_val = np.full(len(df_price), np.nan)
+                    valid_idx = interp_history > 0
+                    daily_val[valid_idx] = df_price['Close'].values[valid_idx] / interp_history[valid_idx]
                     
-                    period_daily_val = df_price['Close'].values[valid_mask] / interp_history[valid_mask]
-                    valid_hist_mult = period_daily_val[~np.isnan(period_daily_val)]
-                    
+                    valid_hist_mult = daily_val[~np.isnan(daily_val)]
                     bands = []
                     avg_m_val = 0
                     if len(valid_hist_mult) > 0:
@@ -302,18 +293,19 @@ def render_valuation_menu():
                         if len(realistic_mults) > 0:
                             q_min = np.percentile(realistic_mults, 5)
                             q_max = np.percentile(realistic_mults, 95)
-                            filtered_hist = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
+                            filtered_mult = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
                             
-                            if len(filtered_hist) > 0:
-                                avg_m_val = np.mean(filtered_hist)
-                                mn, mx = np.min(filtered_hist), np.max(filtered_hist)
+                            if len(filtered_mult) > 0:
+                                avg_m_val = np.mean(filtered_mult)
+                                mn, mx = np.min(filtered_mult), np.max(filtered_mult)
                                 if mx <= mn: mx = mn + 5
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
-                    x_range = [start_date_chart, end_date_chart + timedelta(days=120)]
+                    x_range = [start_date_chart, end_date_dt + timedelta(days=120)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
+                    # --- 1. 상단 차트 (주가 vs 밴드) ---
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -329,7 +321,7 @@ def render_valuation_menu():
                         if avg_y_curr > 0:
                             fig1.add_annotation(x=df_price.index[-1], y=avg_y_curr, text=f"Avg: {avg_m_val:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderwidth=1, borderpad=4)
 
-                    if today_m > 0:
+                    if today_m > 0 and today_m < 300:
                         today_line_y = np.where(ext_interp > 0, ext_interp * today_m, np.nan)
                         fig1.add_trace(go.Scatter(x=extended_dates, y=today_line_y, mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
                         fig1.add_annotation(x=df_price.index[-1], y=curr_p, text=f"현재: {today_m:.1f}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderwidth=1, borderpad=4)
@@ -339,7 +331,7 @@ def render_valuation_menu():
                     if tp1 > 0:
                         fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
-                    df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_chart)]
+                    df_filtered_price = df_price[df_price.index >= start_date_chart]
                     y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
                     y_max_cands = [df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p]
                     if tp1 > 0: y_max_cands.append(tp1)
@@ -351,18 +343,18 @@ def render_valuation_menu():
                     
                     fig1.update_layout(
                         height=400, 
-                        margin=dict(l=0, r=60, t=40, b=50), 
-                        title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
+                        # 💡 [버그 픽스] t=100 으로 대폭 상향하여 범례 겹침 완벽 해결!
+                        margin=dict(l=0, r=50, t=100, b=10), 
+                        title=dict(text=f"[{band_name} 밴드]", x=0.01, y=0.99, font=dict(size=14)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.15, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
+                    # --- 2. 하단 차트 (과거 밸류에이션 추이) ---
                     st.write("")
                     fig2 = go.Figure()
-                    
-                    daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
-                    fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val_y, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
+                    fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     for i, b in enumerate(bands):
@@ -374,17 +366,13 @@ def render_valuation_menu():
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'Avg {avg_m_val:.1f}x', line=dict(color='green', width=2)))
                         fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="green", weight="bold"))
                     
+                    # 💡 하단 차트 Y축 높이 안전하게 계산
                     y2_max = max([bands[-1]*1.1 if bands else 30, target_mult*1.2])
-                    
-                    if today_m > 0: 
+                    if today_m > 0 and today_m < 300: 
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name='현재Val', line=dict(color='red', width=1.5)))
-                        if today_m > y2_max:
-                            fig2.add_annotation(x=extended_dates[-1] + timedelta(days=30), y=y2_max*0.95, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="red", weight="bold"))
-                        else:
-                            fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="red", weight="bold"))
+                        y2_max = max(y2_max, today_m * 1.2)
                         
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
-                    
                     fig2.update_yaxes(range=[0, y2_max])
                     
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
@@ -392,9 +380,9 @@ def render_valuation_menu():
                     
                     fig2.update_layout(
                         height=300, 
-                        margin=dict(l=0, r=60, t=40, b=80),
-                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.98, font=dict(size=14)),
-                        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0, font=dict(size=10)),
+                        margin=dict(l=0, r=50, t=100, b=50), # 💡 [버그 픽스] 여기도 동일하게 t=100 확보
+                        title=dict(text=f"[평균 {band_name} 밴드]", x=0.01, y=0.99, font=dict(size=14)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.15, xanchor="left", x=0, font=dict(size=10)),
                         hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                     )
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
