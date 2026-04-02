@@ -29,7 +29,7 @@ def get_high_stocks():
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    # 💡 [수정] 500억 이상 종목부터 긁어오도록 필터 기준 하향
+    # 500억 이상 종목부터 긁어오도록 필터 기준 하향
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
     
     df = df[df['ChagesRatio'] >= 2.0] 
@@ -47,7 +47,6 @@ def get_high_stocks():
             high_1y = hist['High'].max()
             high_6m = hist['High'].tail(120).max()
             high_3m = hist['High'].tail(60).max()
-            # 💡 [수정] 1주 신고가 조건 제거
             
             today_high = hist['High'].iloc[-1]
             today_close = int(hist['Close'].iloc[-1])
@@ -62,7 +61,7 @@ def get_high_stocks():
                     "종목명": row.Name,
                     "코드": row.Code,
                     "현재가": today_close,
-                    "시가총액": int(row.Marcap), # 💡 [추가] 시가총액 데이터 저장
+                    "시가총액": int(row.Marcap),
                     "등락률": row.ChagesRatio,
                     "돌파기간": period_flag
                 })
@@ -110,10 +109,13 @@ def get_google_news(stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
-# 💡 AI의 수다와 대괄호 기호를 완벽하게 방어하는 클렌징 로직 적용
+# 💡 [업데이트] 성공한 데이터만 깔끔하게 딕셔너리로 반환하는 AI 로직
 def summarize_batch_with_gemini(batch_data, max_retries=3):
-    prompt = """너는 냉철한 주식 분석가야. 아래 전달하는 '여러 종목'의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
-반드시 아래와 같이 [종목명|요약내용] 규칙의 텍스트로만 대답해. 부가 설명이나 기호는 절대 넣지마.
+    if not batch_data:
+        return {}
+
+    prompt = f"""너는 냉철한 주식 분석가야. 아래 전달하는 {len(batch_data)}개 종목의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
+반드시 아래와 같이 [종목명|요약내용] 규칙의 텍스트로만 대답하고, 전달된 {len(batch_data)}개 종목을 단 하나도 빠짐없이 전부 출력해. 부가 설명이나 기호는 절대 넣지마.
 
 [출력 예시]
 삼성전자|반도체 업황 회복 및 HBM 수혜 기대
@@ -124,11 +126,8 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
     for data in batch_data:
         prompt += f"■ {data['name']}\n- 뉴스: {data['news']}\n- 찌라시: {data['tg']}\n\n"
 
-    error_message = "알 수 없는 에러"
-    
     for attempt in range(max_retries):
         try:
-            # 💡 [최종 확정] 가장 성능이 좋은 2.5-flash 모델! (하루 1번 돌리면 20회 한도 절대 안 넘음)
             response = client_ai.models.generate_content(
                 model='gemini-2.5-flash', 
                 contents=prompt,
@@ -143,17 +142,17 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
                     summary = parts[1].strip().replace("[", "").replace("]", "")
                     reasons_dict[stock_name] = summary
                     
-            if not reasons_dict:
-                raise ValueError("파이프(|)로 구분된 결과를 찾을 수 없습니다.")
-                
-            return True, reasons_dict
+            # 파싱된 결과(일부 누락이 있더라도) 반환
+            return reasons_dict
             
         except Exception as e:
             error_message = str(e)
-            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | 20초 대기 후 재시도... 사유: {error_message}")
-            time.sleep(20) # 💡 에러 시 20초 대기
+            # 💡 [핵심] 429 에러(분당 한도 초과) 발생 시 구글 서버 기준에 맞춰 65초 대기
+            wait_time = 65 if "429" in error_message else 20
+            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기 후 재시도... 사유: {error_message}")
+            time.sleep(wait_time) 
             
-    return False, f"AI 분석 에러: {error_message}"
+    return {} # 끝까지 실패하면 빈 딕셔너리 반환
 
 async def main():
     start_time = time.time()
@@ -188,23 +187,48 @@ async def main():
             
         await client_tg.disconnect()
 
-        # 💡 [핵심] 글자 수(Token) 초과 에러를 막기 위해 5개씩 쪼개기
-        # 💡 [main 함수 하단 수정] 7개씩 묶어서 질문하고, 20초씩 여유롭게 쉬기
-        chunk_size = 7 
+        # ---------------------------------------------------
+        # 💡 [설계 반영] 20개 묶음 1차 분석 & 누락분 스마트 재시도(Retry) 로직
+        # ---------------------------------------------------
+        chunk_size = 20 
+        retry_queue = []
+        
+        # [1차 본 분석]
         for i in range(0, len(analysis_queue), chunk_size):
             chunk = analysis_queue[i:i+chunk_size]
-            print(f"\n🚀 AI 일괄 분석 중 ({i+1}~{min(i+chunk_size, len(analysis_queue))}) / {len(analysis_queue)}개...")
+            print(f"\n🚀 1차 AI 일괄 분석 중 ({i+1}~{min(i+chunk_size, len(analysis_queue))}) / {len(analysis_queue)}개...")
             
-            success, result_data = summarize_batch_with_gemini(chunk)
+            result_dict = summarize_batch_with_gemini(chunk)
             
             for item in chunk:
-                if success:
-                    item['ref']['추정 사유'] = result_data.get(item['name'], "추출 누락 (수동 확인 필요)")
+                stock_name = item['name']
+                if stock_name in result_dict and result_dict[stock_name]:
+                    item['ref']['추정 사유'] = result_dict[stock_name]
                 else:
-                    item['ref']['추정 사유'] = result_data 
+                    print(f"   🚨 AI 요약 누락: [{stock_name}] -> 재시도 대기열 추가")
+                    retry_queue.append(item)
             
-            # 💡 분당 요청 수(RPM) 제한에 안 걸리도록 묶음마다 20초 푹 쉬기
-            time.sleep(20)
+            time.sleep(15) # 분당 API 한도 보호용 휴식
+
+        # [2차 재시도 분석 - 패자부활전]
+        if retry_queue:
+            print(f"\n♻️ 누락된 {len(retry_queue)}개 종목에 대해 2차 재시도 분석을 시작합니다...")
+            for i in range(0, len(retry_queue), chunk_size):
+                chunk = retry_queue[i:i+chunk_size]
+                print(f"   -> 재시도 분석 중 ({i+1}~{min(i+chunk_size, len(retry_queue))}) / {len(retry_queue)}개...")
+                
+                result_dict = summarize_batch_with_gemini(chunk)
+                
+                for item in chunk:
+                    stock_name = item['name']
+                    if stock_name in result_dict and result_dict[stock_name]:
+                        item['ref']['추정 사유'] = result_dict[stock_name]
+                        print(f"   ✅ 복구 완료: [{stock_name}]")
+                    else:
+                        print(f"   ❌ 최종 누락: [{stock_name}] -> 수동 확인 필요")
+                        item['ref']['추정 사유'] = "추출 누락 (수동 확인 필요)"
+                
+                time.sleep(15)
 
     end_time = time.time()
     m, sec = divmod(end_time - start_time, 60)
@@ -223,7 +247,7 @@ async def main():
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"\n=== 완료. 소요시간: {execution_time_str} ===")
+    print(f"\n=== 모든 분석 완료. 소요시간: {execution_time_str} ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
