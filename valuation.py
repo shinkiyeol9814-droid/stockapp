@@ -14,6 +14,29 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
 }
 
+# --- 💡 [핵심] 주식수 빵꾸 방어용 3중 안전장치 함수 ---
+def get_stocks_count(ticker_row, ticker):
+    # 1. 기본 Stocks 컬럼 확인
+    try:
+        sc = pd.to_numeric(ticker_row['Stocks'], errors='coerce').fillna(0).values[0]
+        if sc > 0: return sc
+    except: pass
+    
+    # 2. 실패 시 (시가총액 / 현재가) 로 역산
+    try:
+        marcap = pd.to_numeric(ticker_row['Marcap'], errors='coerce').fillna(0).values[0]
+        close_p = pd.to_numeric(ticker_row['Close'], errors='coerce').fillna(0).values[0]
+        if marcap > 0 and close_p > 0:
+            return int(marcap / close_p)
+    except: pass
+    
+    # 3. 최후의 보루: 네이버 모바일 API 찔러보기
+    try:
+        res_m = requests.get(f"https://m.stock.naver.com/api/stock/{ticker}/integration", headers=HEADERS, timeout=5).json()
+        return int(res_m['stockEndType']['totalInfo']['stockCount'])
+    except:
+        return 1
+
 # --- 데이터 캐싱 함수들 ---
 @st.cache_data(ttl=86400)
 def get_ticker_listing():
@@ -100,22 +123,21 @@ def get_hybrid_financials(ticker):
         rows.append(row)
     return pd.DataFrame(rows)
 
-# 💡 [추가] 모바일 대응 깔쌈한 카드 UI 생성 함수
+# 💡 [수정] 모바일 대응 다이어트 버전 카드 UI
 def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
-    # 한국 증시 기준: 상승은 빨간색, 하락은 파란색
     if is_zero:
         color = "#888888"
         bg_color = "#f4f4f4"
     else:
         color = "#ff4b4b" if is_up else "#0068c9"
-        bg_color = f"{color}15" # 투명도 15% 배경
+        bg_color = f"{color}15" 
 
     return f"""
-    <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e0e0e0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px;">
-        <div style="font-size: 14px; color: #777; font-weight: 600; margin-bottom: 6px;">{title}</div>
-        <div style="font-size: 24px; font-weight: 900; color: #222; margin-bottom: 4px;">{price_str}</div>
-        <div style="font-size: 13px; color: #888; margin-bottom: 12px;">시총: {marcap_str}</div>
-        <div style="display: inline-block; font-size: 15px; font-weight: 800; color: {color}; background-color: {bg_color}; padding: 4px 12px; border-radius: 8px;">
+    <div style="background-color: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #e0e0e0; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 10px;">
+        <div style="font-size: 13px; color: #777; font-weight: 600; margin-bottom: 4px;">{title}</div>
+        <div style="font-size: 22px; font-weight: 900; color: #222; margin-bottom: 2px;">{price_str}</div>
+        <div style="font-size: 12px; color: #888; margin-bottom: 10px;">시총: {marcap_str}</div>
+        <div style="display: inline-block; font-size: 14px; font-weight: 800; color: {color}; background-color: {bg_color}; padding: 4px 10px; border-radius: 6px;">
             {rate_str}
         </div>
     </div>
@@ -150,15 +172,12 @@ def render_valuation_menu():
                 
                 if not temp_price.empty:
                     col_p = '영업이익' if "POR" in val_type else '당기순이익'
-                    sc = ticker_row['Stocks'].values[0] if 'Stocks' in ticker_row.columns and ticker_row['Stocks'].values[0] > 0 else 0
-                    if sc <= 0:
-                        try:
-                            res_m = requests.get(f"https://m.stock.naver.com/api/stock/{ticker}/integration", headers=HEADERS, timeout=5).json()
-                            sc = int(res_m['stockEndType']['totalInfo']['stockCount'])
-                        except: sc = 1
+                    
+                    # 💡 주식수 3중 방어막 적용
+                    stocks_count = get_stocks_count(ticker_row, ticker)
                     
                     current_year = datetime.today().year
-                    h_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / sc for idx, row in temp_fin[temp_fin['Year'] <= current_year].iterrows() if pd.notna(row[col_p])}
+                    h_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / stocks_count for idx, row in temp_fin[temp_fin['Year'] <= current_year].iterrows() if pd.notna(row[col_p])}
                     
                     temp_p = temp_price.copy()
                     metric_series = pd.Series(temp_p.index.year.map(h_dict), index=temp_p.index)
@@ -185,12 +204,8 @@ def render_valuation_menu():
             else:
                 ticker = ticker_row['Code'].values[0]
                 
-                stocks_count = ticker_row['Stocks'].values[0] if 'Stocks' in ticker_row.columns and ticker_row['Stocks'].values[0] > 0 else 0
-                if stocks_count <= 0:
-                    try:
-                        res = requests.get(f"https://m.stock.naver.com/api/stock/{ticker}/integration", headers=HEADERS, timeout=5).json()
-                        stocks_count = int(res['stockEndType']['totalInfo']['stockCount'])
-                    except: stocks_count = 1
+                # 💡 메인 로직에도 3중 방어막 주식수 적용
+                stocks_count = get_stocks_count(ticker_row, ticker)
 
                 fin_df = get_hybrid_financials(ticker)
                 df_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
@@ -229,7 +244,6 @@ def render_valuation_menu():
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
                     last_date_str = df_price.index[-1].strftime('%m.%d')
 
-                    # 💡 [핵심 반영 1] 모바일 친화적인 3분할 카드 UI 적용
                     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
                     col1, col2, col3 = st.columns(3)
                     
@@ -252,7 +266,6 @@ def render_valuation_menu():
                             st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
 
 
-                    # 💡 [핵심 반영 2] 차트 기간 설정 필터 추가
                     st.markdown("<div class='sub-header' style='margin-top:15px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     chart_period = st.radio("조회 기간", ["1년", "3년", "5년", "전체"], index=3, horizontal=True, label_visibility="collapsed")
                     
@@ -266,7 +279,6 @@ def render_valuation_menu():
                     else:
                         start_date_chart = pd.to_datetime("2021-01-01")
 
-                    # --- 차트 데이터 로직 ---
                     current_year = datetime.today().year
                     historical_metric_dict = {row['Plot_Date'].year: float(row[col_p]) * 100_000_000 / stocks_count for idx, row in fin_df[fin_df['Year'] <= current_year].iterrows() if pd.notna(row[col_p])}
                     df_hist_daily = df_price.copy()
@@ -293,7 +305,6 @@ def render_valuation_menu():
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
                     today_m = float(curr_p / ext_interp[len(df_price)-1]) if ext_interp[len(df_price)-1] > 0.1 else 0
                     
-                    # 💡 X축 범위를 필터 선택값으로 제한 (미래 예측 밴드는 유지)
                     x_range = [start_date_chart, fin_df['Plot_Date'].max() + timedelta(days=90)]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
@@ -317,10 +328,14 @@ def render_valuation_menu():
                     if tp1 > 0:
                         fig1.add_annotation(x=fin_df[fin_df['Year'] == y1]['Plot_Date'].iloc[0], y=tp1, text=f"목표: {target_mult}x", showarrow=True, arrowhead=2, ax=-40, ay=-30, font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderwidth=1, borderpad=4)
 
-                    # 💡 Y축 범위도 선택된 기간 내의 최저/최고가에 맞춰 줌인되게 수정
+                    # 💡 Y축 범위를 필터링된 데이터 기반으로 줌인 (0이나 빈값 방어)
                     df_filtered_price = df_price[df_price.index >= start_date_chart]
                     y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
-                    y_max = max([df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p, tp1, tp2]) * 1.15
+                    
+                    y_max_cands = [df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p]
+                    if tp1 > 0: y_max_cands.append(tp1)
+                    if tp2 > 0: y_max_cands.append(tp2)
+                    y_max = max(y_max_cands) * 1.15
                     
                     fig1.update_yaxes(range=[y_min, y_max]); fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
@@ -352,7 +367,10 @@ def render_valuation_menu():
                         
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name='목표Val', line=dict(color='blue', width=1.5)))
                     
-                    fig2.update_yaxes(range=[0, max(bands[-1]*1.1 if bands else 30, target_mult*1.2)])
+                    bottom_y_max_cands = [bands[-1]*1.1] if bands else [30]
+                    bottom_y_max_cands.append(target_mult*1.2)
+                    if today_m > 0: bottom_y_max_cands.append(today_m * 1.2)
+                    fig2.update_yaxes(range=[0, max(bottom_y_max_cands)])
                     
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
