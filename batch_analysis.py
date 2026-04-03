@@ -32,7 +32,7 @@ def get_high_stocks():
     # 500억 이상 종목부터 긁어오도록 필터 기준 하향
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
     
-    df = df[df['ChagesRatio'] >= 2.0] 
+    df = df[df['ChagesRatio'] > 0.0] 
     candidates = df.sort_values('ChagesRatio', ascending=False)
     results = []
     
