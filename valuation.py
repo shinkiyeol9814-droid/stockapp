@@ -179,7 +179,6 @@ def extract_number(val):
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
-    # 💡 1번 요건: POR이 초기 기본값(Default)이 되도록 변경
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
@@ -267,19 +266,19 @@ def render_valuation_menu():
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
                     with st.form(f"fin_form_{ticker}"):
-                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, [v] 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
+                        # 💡 1번 요건: 설명 문구 업데이트 (✅ 이모지 반영)
+                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, [저장] 클릭 시 추정치 저장, ✅ 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
                         display_df = fin_df[['Label', '매출액', '영업이익', '당기순이익']].copy()
                         
-                        # 💡 2번 요건: 1000단위 콤마(,) 포맷팅 적용
                         for col in ['매출액', '영업이익', '당기순이익']:
                             display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
                         
-                        # 💡 3번 요건: 🟦 대신 [v] 로 변경
+                        # 💡 2번 요건: [v] 대신 초록색 체크 이모지(✅) 사용
                         for r, c in manual_indices:
                             val = fin_df.at[r, c]
                             if pd.notna(val) and val != 0:
-                                display_df.at[r, c] = f"{int(val):,} [v]"
+                                display_df.at[r, c] = f"{int(val):,} ✅"
                         
                         edited_df = st.data_editor(
                             display_df, 
@@ -295,7 +294,6 @@ def render_valuation_menu():
                         with btn_col2:
                             fin_save_clicked = st.form_submit_button("저장", type="secondary", use_container_width=True)
                     
-                    # 💡 4번 요건: 저장 로직 및 즉시 업데이트 (st.rerun)
                     if fin_save_clicked:
                         with st.spinner("GitHub에 저장 중..."):
                             new_estimates = load_user_estimates() 
@@ -317,7 +315,6 @@ def render_valuation_menu():
                                                 if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
                                                 if not new_estimates[ticker]: del new_estimates[ticker]
                                     else:
-                                        # 원본 실제 크롤링 데이터가 존재하는 경우 -> 유저가 수정하더라도 완벽하게 무시(보호)
                                         if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
                                             del new_estimates[ticker][yr][col]
                                             if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
@@ -326,8 +323,8 @@ def render_valuation_menu():
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
                             if success: 
                                 st.success("✅ 추정치가 성공적으로 저장되었습니다! 화면을 즉시 갱신합니다.")
-                                time.sleep(0.7) # 성공 메시지를 잠시 보여주기 위한 대기
-                                st.rerun() # 화면 새로고침 (즉시 업데이트 반영 및 잘못된 수정사항 원상복구)
+                                time.sleep(0.7) 
+                                st.rerun() 
                             else: 
                                 st.error(f"❌ 저장 실패: {msg}")
 
