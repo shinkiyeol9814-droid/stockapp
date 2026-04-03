@@ -25,7 +25,6 @@ API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 # --- 💡 헬퍼 함수: GitHub 데이터 입출력 ---
 def load_user_estimates():
-    """GitHub에서 사용자 추정치 JSON 로드"""
     try:
         github_token = st.secrets.get("GH_PAT")
         if not github_token: return {}
@@ -172,7 +171,6 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
 
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
-    # 💡 [핵심 수정] 세션 초기화 로직을 함수 내부로 이동하여 에러 원천 차단
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "PER(순이익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
@@ -203,7 +201,7 @@ def render_valuation_menu():
     val_type = st.session_state.val_type
     target_mult = st.session_state.target_mult
     
-    # 💡 종목이 변경되었을 때 1회 자동으로 평균 밴드 계산 후 재렌더링
+    # 💡 1번 요건: 갱신 시 평균 배수 자동 업데이트 로직 제거 (단순 Ticker 상태 업데이트만 수행)
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
@@ -211,33 +209,8 @@ def render_valuation_menu():
         if not ticker_row.empty:
             ticker = ticker_row['Code'].values[0]
             if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
-                temp_fin = get_hybrid_financials(ticker)
-                temp_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
-                
-                if not temp_price.empty:
-                    col_p = '영업이익' if "POR" in val_type else '당기순이익'
-                    stocks_count = get_stocks_count(ticker_row, ticker)
-                    raw_m = pd.to_numeric(temp_fin[col_p], errors='coerce').values
-                    cur_m = pd.Series(raw_m).ffill().bfill().values * 100_000_000 / stocks_count
-                    band_dates_ts = temp_fin['Plot_Date'].map(datetime.timestamp).values
-                    ext_interp = np.interp(temp_price.index.map(datetime.timestamp).values, band_dates_ts, cur_m)
-                    
-                    valid_idx = ext_interp > 0
-                    daily_val = np.full(len(temp_price), np.nan)
-                    daily_val[valid_idx] = temp_price['Close'].values[valid_idx] / ext_interp[valid_idx]
-                    valid_hist_mult = daily_val[~np.isnan(daily_val)]
-                    
-                    if len(valid_hist_mult) > 0:
-                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < 300)]
-                        if len(realistic_mults) > 0:
-                            q_min, q_max = np.percentile(realistic_mults, 5), np.percentile(realistic_mults, 95)
-                            filtered_mult = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
-                            if len(filtered_mult) > 0:
-                                st.session_state.target_mult = max(1, int(round(np.mean(filtered_mult))))
-                                
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
-                st.rerun() 
 
         with st.spinner("데이터 분석 중..."):
             if ticker_row.empty:
@@ -273,20 +246,16 @@ def render_valuation_menu():
                     
                     # --- 재무 상세 폼 ---
                     with st.form(f"fin_form_{ticker}"):
-                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 파란셀은 추정치)</span></div>", unsafe_allow_html=True)
+                        # 💡 4번 요건: 셀 색상 대신 명확한 텍스트/아이콘 라벨로 수동 입력 여부 식별
+                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 🟦 표시된 연도는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
-                        def highlight_manual(data):
-                            df_style = pd.DataFrame('', index=data.index, columns=data.columns)
-                            attr = 'background-color: #e6f2ff; color: #0068c9; font-weight: bold;'
-                            for r, c in manual_indices:
-                                if c in df_style.columns and r in df_style.index:
-                                    df_style.at[r, c] = attr
-                            return df_style
-
-                        styled_fin = fin_df[['Label', '매출액', '영업이익', '당기순이익']].style.apply(highlight_manual, axis=None)
+                        # 수동 입력된 행의 Label 문구 강제 수정 (Streamlit 제약 우회)
+                        manual_rows = set([r for r, c in manual_indices])
+                        for r in manual_rows:
+                            fin_df.at[r, 'Label'] = f"🟦 {fin_df.at[r, 'Year']}년(추정)"
                         
                         edited_df = st.data_editor(
-                            styled_fin, 
+                            fin_df[['Label', '매출액', '영업이익', '당기순이익']], 
                             hide_index=True, 
                             use_container_width=True, 
                             key=f"editor_{ticker}"
@@ -325,7 +294,7 @@ def render_valuation_menu():
                                             if not new_estimates[ticker]: del new_estimates[ticker]
 
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
-                            if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다!")
+                            if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다! 차트에 반영하려면 갱신 버튼을 눌러주세요.")
                             else: st.error(f"❌ 저장 실패: {msg}")
 
                     fin_df['매출액'] = edited_df['매출액'].values
@@ -406,9 +375,13 @@ def render_valuation_menu():
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
-                    x_range = [start_date_chart, end_date_dt + timedelta(days=120)]
+                    # 💡 2번 요건: 차트 X축 끝점을 무조건 현재 연도의 연말로 고정 (예: 2026-12-31)
+                    target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
+                    x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
+                    # 💡 3번 요건: margin을 완벽히 일치시켜 상하단 차트 가로 크기 동일화 (l=10, r=80)
+                    
                     # --- fig1: 상단 밴드 차트 ---
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
@@ -437,7 +410,9 @@ def render_valuation_menu():
                     
                     fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
-                    fig1.update_layout(height=400, margin=dict(l=0, r=40, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    
+                    # Margin 강제 일치 (l=10, r=80)
+                    fig1.update_layout(height=400, margin=dict(l=10, r=80, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
                     # --- fig2: 하단 멀티플 차트 ---
@@ -471,7 +446,9 @@ def render_valuation_menu():
                     fig2.update_yaxes(range=[0, y2_max])
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
-                    fig2.update_layout(height=300, margin=dict(l=0, r=80, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    
+                    # Margin 강제 일치 (l=10, r=80)
+                    fig2.update_layout(height=300, margin=dict(l=10, r=80, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
 
                 else:
