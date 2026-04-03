@@ -23,8 +23,9 @@ HEADERS = {
 }
 API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# --- 헬퍼 함수: GitHub 데이터 입출력 ---
+# --- 💡 헬퍼 함수: GitHub 데이터 입출력 ---
 def load_user_estimates():
+    """GitHub에서 사용자 추정치 JSON 로드"""
     try:
         github_token = st.secrets.get("GH_PAT")
         if not github_token: return {}
@@ -42,10 +43,17 @@ def save_to_github(file_path, content, message):
     if not github_token: return False, "Streamlit Secrets에 GH_PAT가 없습니다."
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
     headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
+    
     res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH})
     sha = res.json().get('sha') if res.status_code == 200 else None
-    payload = {"message": message, "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"), "branch": GITHUB_BRANCH}
+    
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+        "branch": GITHUB_BRANCH
+    }
     if sha: payload["sha"] = sha
+    
     put_res = requests.put(url, headers=headers, json=payload)
     return (True, "성공") if put_res.status_code in [200, 201] else (False, put_res.text)
 
@@ -162,18 +170,18 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
-# 세션 상태 초기화
-if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
-if 'val_type' not in st.session_state: st.session_state.val_type = "PER(순이익)"
-if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
-if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
-if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
-
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
+    # 💡 [핵심 수정] 세션 초기화 로직을 함수 내부로 이동하여 에러 원천 차단
+    if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
+    if 'val_type' not in st.session_state: st.session_state.val_type = "PER(순이익)"
+    if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
+    if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
+    if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
+
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # --- 💡 1. 상단 폼: 입력 후 [갱신] 버튼 클릭 시에만 상태 업데이트 ---
+    # --- 상단 검색 폼 ---
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
@@ -229,7 +237,7 @@ def render_valuation_menu():
                                 
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
-                st.rerun() # 계산된 목표배수를 폼 UI에 반영하기 위해 새로고침
+                st.rerun() 
 
         with st.spinner("데이터 분석 중..."):
             if ticker_row.empty:
@@ -263,7 +271,7 @@ def render_valuation_menu():
                     
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # --- 💡 2. 재무 상세 데이터 에디터를 폼(Form)으로 감싸기 ---
+                    # --- 재무 상세 폼 ---
                     with st.form(f"fin_form_{ticker}"):
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 파란셀은 추정치)</span></div>", unsafe_allow_html=True)
                         
@@ -284,14 +292,12 @@ def render_valuation_menu():
                             key=f"editor_{ticker}"
                         )
                         
-                        # 폼 내부에 갱신과 저장 버튼 분리
                         btn_col1, btn_col2 = st.columns(2)
                         with btn_col1:
                             fin_update_clicked = st.form_submit_button("갱신", type="primary", use_container_width=True)
                         with btn_col2:
                             fin_save_clicked = st.form_submit_button("저장", type="secondary", use_container_width=True)
                     
-                    # 저장 로직 처리 (저장 버튼 클릭 시 실행)
                     if fin_save_clicked:
                         with st.spinner("GitHub에 저장 중..."):
                             new_estimates = load_user_estimates() 
@@ -322,8 +328,6 @@ def render_valuation_menu():
                             if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다!")
                             else: st.error(f"❌ 저장 실패: {msg}")
 
-                    # 에디터 폼의 갱신/저장 버튼이 눌리지 않았다면 아래 로직도 이전 상태를 유지함.
-                    # 눌렸다면 edited_df가 최신 상태이므로 아래 로직이 최신 계산을 수행함.
                     fin_df['매출액'] = edited_df['매출액'].values
                     fin_df['영업이익'] = edited_df['영업이익'].values
                     fin_df['당기순이익'] = edited_df['당기순이익'].values
@@ -357,7 +361,6 @@ def render_valuation_menu():
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     
-                    # --- 💡 3. 차트 조회 기간 기본값 '전체' (index=4)로 변경 ---
                     chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=4, horizontal=True, label_visibility="collapsed")
                     
                     end_date_dt = df_price.index[-1]
