@@ -9,6 +9,7 @@ import requests
 import json
 import os
 import base64
+import time
 import plotly.graph_objects as go
 
 # --- GitHub 연동 설정 ---
@@ -169,7 +170,6 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
-# 💡 2번 해결: 숫자 추출 헬퍼 함수 강화
 def extract_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).replace(',', '')
@@ -179,12 +179,12 @@ def extract_number(val):
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
-    if 'val_type' not in st.session_state: st.session_state.val_type = "PER(순이익)"
+    # 💡 1번 요건: POR이 초기 기본값(Default)이 되도록 변경
+    if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
-    # 💡 1번 해결: 폼 버튼 식별자를 이용해 핑크색 테마 강제 주입
     st.markdown("""
         <style>
         [data-testid="stFormSubmitButton"] button {
@@ -266,24 +266,24 @@ def render_valuation_menu():
                     
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # --- 재무 상세 폼 ---
                     with st.form(f"fin_form_{ticker}"):
-                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 🟦 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
+                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, [v] 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
-                        # 💡 2번 해결: 타입 충돌 방지를 위해 전부 문자열로 변환하여 에디터에 전달
                         display_df = fin_df[['Label', '매출액', '영업이익', '당기순이익']].copy()
-                        for col in ['매출액', '영업이익', '당기순이익']:
-                            display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else str(int(x)))
                         
-                        # 수동 입력된 셀에만 🟦 기호 추가
+                        # 💡 2번 요건: 1000단위 콤마(,) 포맷팅 적용
+                        for col in ['매출액', '영업이익', '당기순이익']:
+                            display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
+                        
+                        # 💡 3번 요건: 🟦 대신 [v] 로 변경
                         for r, c in manual_indices:
                             val = fin_df.at[r, c]
                             if pd.notna(val) and val != 0:
-                                display_df.at[r, c] = f"{int(val)} 🟦"
+                                display_df.at[r, c] = f"{int(val):,} [v]"
                         
                         edited_df = st.data_editor(
                             display_df, 
-                            disabled=["Label"], # Label 컬럼은 수정 방지
+                            disabled=["Label"],
                             hide_index=True, 
                             use_container_width=True, 
                             key=f"editor_{ticker}"
@@ -295,6 +295,7 @@ def render_valuation_menu():
                         with btn_col2:
                             fin_save_clicked = st.form_submit_button("저장", type="secondary", use_container_width=True)
                     
+                    # 💡 4번 요건: 저장 로직 및 즉시 업데이트 (st.rerun)
                     if fin_save_clicked:
                         with st.spinner("GitHub에 저장 중..."):
                             new_estimates = load_user_estimates() 
@@ -306,7 +307,6 @@ def render_valuation_menu():
                                     orig_val = orig_fin_df.at[idx, col]
                                     edited_val = extract_number(row[col]) 
                                     
-                                    # 💡 2번(백엔드 방어막): 원본(크롤링)이 비어있을 때만 수동 저장 허용!
                                     if pd.isna(orig_val) or orig_val == 0:
                                         if edited_val != 0:
                                             if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
@@ -317,17 +317,20 @@ def render_valuation_menu():
                                                 if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
                                                 if not new_estimates[ticker]: del new_estimates[ticker]
                                     else:
-                                        # 원본 데이터가 있다면 사용자가 뭘 썼든 무시하고 기존 추정치는 삭제
+                                        # 원본 실제 크롤링 데이터가 존재하는 경우 -> 유저가 수정하더라도 완벽하게 무시(보호)
                                         if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
                                             del new_estimates[ticker][yr][col]
                                             if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
                                             if not new_estimates[ticker]: del new_estimates[ticker]
 
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
-                            if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다! 차트에 반영하려면 갱신 버튼을 눌러주세요.")
-                            else: st.error(f"❌ 저장 실패: {msg}")
+                            if success: 
+                                st.success("✅ 추정치가 성공적으로 저장되었습니다! 화면을 즉시 갱신합니다.")
+                                time.sleep(0.7) # 성공 메시지를 잠시 보여주기 위한 대기
+                                st.rerun() # 화면 새로고침 (즉시 업데이트 반영 및 잘못된 수정사항 원상복구)
+                            else: 
+                                st.error(f"❌ 저장 실패: {msg}")
 
-                    # 에디터에서 꺼낸 값을 계산용 데이터프레임에 적용 (숫자 추출)
                     fin_df['매출액'] = edited_df['매출액'].apply(extract_number).values
                     fin_df['영업이익'] = edited_df['영업이익'].apply(extract_number).values
                     fin_df['당기순이익'] = edited_df['당기순이익'].apply(extract_number).values
@@ -410,7 +413,6 @@ def render_valuation_menu():
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 3번 해결: 상단 차트 r=20 강제 확장 및 뱃지(Annotation) 위치 재조정
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -442,7 +444,6 @@ def render_valuation_menu():
                     fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 💡 3번 해결: 하단 차트 r=20 강제 확장 및 뱃지(Annotation) 위치 재조정
                     st.write("")
                     fig2 = go.Figure()
                     daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
