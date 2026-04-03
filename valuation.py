@@ -169,6 +169,13 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
+# 숫자에서 문자열 찌꺼기 떼어내는 헬퍼 함수
+def extract_number(val):
+    if pd.isna(val) or str(val).strip() == "": return 0.0
+    s = str(val).replace(',', '')
+    m = re.search(r'-?\d+\.?\d*', s)
+    return float(m.group()) if m else 0.0
+
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
@@ -176,6 +183,21 @@ def render_valuation_menu():
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
+
+    # 💡 1번 요건: 갱신 버튼(Primary) 색상을 연한 핑크/빨강 계열로 덮어쓰기
+    st.markdown("""
+        <style>
+        button[kind="primary"] {
+            background-color: #ffe6e6 !important; 
+            color: #d63031 !important; 
+            border: 1px solid #ffcccc !important;
+        }
+        button[kind="primary"]:hover {
+            background-color: #ffcccc !important;
+            color: #b22222 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
@@ -201,7 +223,6 @@ def render_valuation_menu():
     val_type = st.session_state.val_type
     target_mult = st.session_state.target_mult
     
-    # 💡 1번 요건: 갱신 시 평균 배수 자동 업데이트 로직 제거 (단순 Ticker 상태 업데이트만 수행)
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
@@ -246,16 +267,20 @@ def render_valuation_menu():
                     
                     # --- 재무 상세 폼 ---
                     with st.form(f"fin_form_{ticker}"):
-                        # 💡 4번 요건: 셀 색상 대신 명확한 텍스트/아이콘 라벨로 수동 입력 여부 식별
-                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 🟦 표시된 연도는 내 추정치)</span></div>", unsafe_allow_html=True)
+                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 🟦 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
-                        # 수동 입력된 행의 Label 문구 강제 수정 (Streamlit 제약 우회)
-                        manual_rows = set([r for r, c in manual_indices])
-                        for r in manual_rows:
-                            fin_df.at[r, 'Label'] = f"🟦 {fin_df.at[r, 'Year']}년(추정)"
+                        # 💡 2번 요건: Label이 아닌, 입력된 수치 자체에 바로 🟦 마크를 찍어주기
+                        display_df = fin_df[['Label', '매출액', '영업이익', '당기순이익']].copy()
+                        for col in ['매출액', '영업이익', '당기순이익']:
+                            display_df[col] = display_df[col].astype(object)
+                        
+                        for r, c in manual_indices:
+                            val = display_df.at[r, c]
+                            if pd.notna(val):
+                                display_df.at[r, c] = f"{int(val)} 🟦"
                         
                         edited_df = st.data_editor(
-                            fin_df[['Label', '매출액', '영업이익', '당기순이익']], 
+                            display_df, 
                             hide_index=True, 
                             use_container_width=True, 
                             key=f"editor_{ticker}"
@@ -276,10 +301,10 @@ def render_valuation_menu():
                                 yr = str(orig_fin_df.at[idx, 'Year'])
                                 for col in ['매출액', '영업이익', '당기순이익']:
                                     orig_val = orig_fin_df.at[idx, col]
-                                    edited_val = row[col]
+                                    edited_val = extract_number(row[col]) # 🟦 기호 제거하고 숫자만 추출
                                     
                                     if pd.isna(orig_val) or orig_val == 0:
-                                        if pd.notna(edited_val) and str(edited_val).strip() != "" and float(edited_val) != 0:
+                                        if edited_val != 0:
                                             if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
                                             new_estimates[ticker][yr][col] = float(edited_val)
                                         else:
@@ -297,9 +322,9 @@ def render_valuation_menu():
                             if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다! 차트에 반영하려면 갱신 버튼을 눌러주세요.")
                             else: st.error(f"❌ 저장 실패: {msg}")
 
-                    fin_df['매출액'] = edited_df['매출액'].values
-                    fin_df['영업이익'] = edited_df['영업이익'].values
-                    fin_df['당기순이익'] = edited_df['당기순이익'].values
+                    fin_df['매출액'] = edited_df['매출액'].apply(extract_number).values
+                    fin_df['영업이익'] = edited_df['영업이익'].apply(extract_number).values
+                    fin_df['당기순이익'] = edited_df['당기순이익'].apply(extract_number).values
                     
                     y1, y2 = datetime.today().year, datetime.today().year + 1
                     col_p = '영업이익' if "POR" in val_type else '당기순이익'
@@ -375,14 +400,11 @@ def render_valuation_menu():
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
-                    # 💡 2번 요건: 차트 X축 끝점을 무조건 현재 연도의 연말로 고정 (예: 2026-12-31)
                     target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 3번 요건: margin을 완벽히 일치시켜 상하단 차트 가로 크기 동일화 (l=10, r=80)
-                    
-                    # --- fig1: 상단 밴드 차트 ---
+                    # 💡 3번 요건: 상단 차트 가로폭 최대 확장 (l=0, r=60)
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -411,11 +433,10 @@ def render_valuation_menu():
                     fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
-                    # Margin 강제 일치 (l=10, r=80)
-                    fig1.update_layout(height=400, margin=dict(l=10, r=80, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    fig1.update_layout(height=400, margin=dict(l=0, r=60, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # --- fig2: 하단 멀티플 차트 ---
+                    # 💡 3번 요건: 하단 차트 가로폭 최대 확장 및 상단 일치 (l=0, r=60)
                     st.write("")
                     fig2 = go.Figure()
                     daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
@@ -447,8 +468,7 @@ def render_valuation_menu():
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
-                    # Margin 강제 일치 (l=10, r=80)
-                    fig2.update_layout(height=300, margin=dict(l=10, r=80, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    fig2.update_layout(height=300, margin=dict(l=0, r=60, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
 
                 else:
