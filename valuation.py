@@ -359,7 +359,7 @@ def render_valuation_menu():
                     )
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # --- 💡 2. 하단 차트 (우측 뱃지 스타일 복구) ---
+                    # --- 💡 2. 하단 차트 ---
                     st.write("")
                     fig2 = go.Figure()
                     
@@ -374,6 +374,7 @@ def render_valuation_menu():
                             fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
+                    
                     # 하단 차트 우측 뱃지 (목표Val)
                     fig2.add_annotation(
                         x=extended_dates[-1] + timedelta(days=15), y=target_mult, text=f"목표: {target_mult}x", 
@@ -386,12 +387,22 @@ def render_valuation_menu():
 
                     if avg_m_val > 0:
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=2)))
-                        # 하단 차트 우측 뱃지 (AvgVal) - 기존처럼 초록색 배경
+                        
+                        # (1) 하단 차트 우측 뱃지 (AvgVal)
                         fig2.add_annotation(
                             x=extended_dates[-1] + timedelta(days=15), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", 
                             showarrow=False, xanchor="left", yanchor="middle", 
                             font=dict(size=11, color="white", weight="bold"),
                             bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderpad=3, borderwidth=1
+                        )
+                        
+                        # (2) 💡 차트 중앙 선 위에 숫자만 표시 (배경 없음, 그래프 가림 방지)
+                        # 시작일과 종료일의 60% 지점 (우측에 약간 치우친 중앙)
+                        mid_date = x_start + (x_end - x_start) * 0.6  
+                        fig2.add_annotation(
+                            x=mid_date, y=avg_m_val, text=f"{avg_m_val:.1f}x", 
+                            showarrow=False, xanchor="center", yanchor="bottom", yshift=4,
+                            font=dict(size=13, color="green", weight="bold")
                         )
                     
                     if today_m > 0 and today_m < 300: 
@@ -410,7 +421,6 @@ def render_valuation_menu():
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
-                    # 💡 라벨이 잘리지 않도록 우측 여백(r)을 80으로 늘렸습니다.
                     fig2.update_layout(
                         height=300, margin=dict(l=0, r=80, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)),
                         showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
