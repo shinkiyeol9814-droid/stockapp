@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 
 # --- GitHub 연동 설정 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
-GITHUB_BRANCH = "dev" 
+GITHUB_BRANCH = "main" 
 ESTIMATES_FILE = "data/user_estimates.json"
 
 # 공통 헤더 설정
