@@ -408,29 +408,29 @@ def render_valuation_menu():
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 상단 차트 (fig1) Y축 Auto-Zoom 로직
+                    # 💡 상단 차트 (fig1) 줌 로직 개선 (극단적 밴드 무시하고 가격/타겟 위주로 포커스)
                     fig1 = go.Figure()
+                    
                     mask_future = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
                     visible_ext_interp = ext_interp[mask_future]
                     
-                    y_values = []
                     df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
-                    if not df_filtered_price.empty:
-                        y_values.extend(df_filtered_price['Close'].dropna().tolist())
+                    price_max = df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p
+                    price_min = df_filtered_price['Close'].min() if not df_filtered_price.empty else curr_p
                     
+                    important_vals_fig1 = []
                     if len(visible_ext_interp) > 0:
-                        for b in bands:
-                            if pd.notna(b): y_values.extend((visible_ext_interp * float(b)).tolist())
-                        y_values.extend((visible_ext_interp * target_mult).tolist())
-                        if avg_m_val > 0: y_values.extend((visible_ext_interp * avg_m_val).tolist())
-                        if today_m > 0 and today_m < 300: y_values.extend((visible_ext_interp * today_m).tolist())
+                        important_vals_fig1.extend((visible_ext_interp * target_mult).tolist())
+                        if avg_m_val > 0: important_vals_fig1.extend((visible_ext_interp * avg_m_val).tolist())
+                        if today_m > 0 and today_m < 300: important_vals_fig1.extend((visible_ext_interp * today_m).tolist())
                     
-                    y_values = [y for y in y_values if pd.notna(y) and y > 0]
-                    if y_values:
-                        y_max = max(y_values)
-                        y_min = min(y_values)
-                        padding = (y_max - y_min) * 0.1 if y_max != y_min else y_max * 0.1
-                        fig1.update_yaxes(range=[max(0, y_min - padding), y_max + padding])
+                    core_max = max([price_max] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
+                    core_min = min([price_min] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
+                    
+                    # 가격과 타겟 기준에서 최대 20~30% 여유만 주고, 엄청 높은 밴드선은 알아서 화면 위로 짤리게 냅둠
+                    y_max = max(core_max * 1.2, price_max * 1.5)
+                    y_min = core_min * 0.8
+                    fig1.update_yaxes(range=[max(0, y_min), y_max])
 
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -453,28 +453,23 @@ def render_valuation_menu():
                     fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 💡 하단 차트 (fig2) Y축 Auto-Zoom 로직
+                    # 💡 하단 차트 (fig2) 줌 로직 개선 (과거의 미친 스파이크 무시)
                     st.write("")
                     fig2 = go.Figure()
                     daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
                     
-                    y2_values = []
-                    mask_past = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
-                    if len(daily_val_y[mask_past]) > 0:
-                        y2_values.extend(daily_val_y[mask_past][~np.isnan(daily_val_y[mask_past])].tolist())
+                    important_mults = [target_mult]
+                    if avg_m_val > 0: important_mults.append(avg_m_val)
+                    if today_m > 0 and today_m < 300: important_mults.append(today_m)
                     
+                    # 비정상적으로 높지 않은 밴드만 고려
                     for b in bands:
-                        if pd.notna(b): y2_values.append(float(b))
-                    y2_values.append(target_mult)
-                    if avg_m_val > 0: y2_values.append(avg_m_val)
-                    if today_m > 0 and today_m < 300: y2_values.append(today_m)
-                    
-                    y2_values = [y for y in y2_values if pd.notna(y) and y > 0 and y < 300]
-                    if y2_values:
-                        y2_max = max(y2_values)
-                        y2_min = min(y2_values)
-                        padding2 = (y2_max - y2_min) * 0.15 if y2_max != y2_min else y2_max * 0.1
-                        fig2.update_yaxes(range=[max(0, y2_min - padding2), y2_max + padding2])
+                        if pd.notna(b) and b <= (avg_m_val * 2 if avg_m_val > 0 else 50):
+                            important_mults.append(float(b))
+                            
+                    core_m_max = max(important_mults) if important_mults else 20
+                    y2_max = core_m_max * 1.6 # 핵심 멀티플에서 60% 여유만 줌 (과거 폭등 스파이크는 알아서 천장 뚫고 나감)
+                    fig2.update_yaxes(range=[0, y2_max])
 
                     fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val_y, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
                     
