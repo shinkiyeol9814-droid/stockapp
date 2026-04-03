@@ -268,11 +268,11 @@ def render_valuation_menu():
                     # --- 💡 3. 요청하신 수정 문구 반영 ---
                     st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 시 하단 밸류 즉시 재측정, 파란셀색상은 추정치)</span></div>", unsafe_allow_html=True)
                     
-                    # --- 💡 2. 셀 색상 스타일링 강화 (rgba 배경색 적용) ---
+                    # --- 💡 2. 셀 색상 스타일링 강화 (안전한 HEX 코드 적용, !important 제거) ---
                     def highlight_manual(data):
                         df_style = pd.DataFrame('', index=data.index, columns=data.columns)
-                        # 확실한 구분을 위해 투명도가 적용된 파란색 배경과 굵은 글씨 적용
-                        attr = 'background-color: rgba(0, 104, 201, 0.15) !important; color: #0068c9 !important; font-weight: bold !important;'
+                        # Streamlit 데이터 에디터가 정상적으로 인식할 수 있는 순수 HEX 코드로 변경
+                        attr = 'background-color: #e6f2ff; color: #0068c9; font-weight: bold;'
                         for r, c in manual_indices:
                             if c in df_style.columns and r in df_style.index:
                                 df_style.at[r, c] = attr
