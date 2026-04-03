@@ -169,7 +169,7 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
-# 숫자에서 문자열 찌꺼기 떼어내는 헬퍼 함수
+# 💡 2번 해결: 숫자 추출 헬퍼 함수 강화
 def extract_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).replace(',', '')
@@ -184,24 +184,25 @@ def render_valuation_menu():
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
-    # 💡 1번 요건: 갱신 버튼(Primary) 색상을 연한 핑크/빨강 계열로 덮어쓰기
+    # 💡 1번 해결: 폼 버튼 식별자를 이용해 핑크색 테마 강제 주입
     st.markdown("""
         <style>
-        button[kind="primary"] {
+        [data-testid="stFormSubmitButton"] button {
             background-color: #ffe6e6 !important; 
-            color: #d63031 !important; 
-            border: 1px solid #ffcccc !important;
+            border-color: #ffcccc !important;
         }
-        button[kind="primary"]:hover {
+        [data-testid="stFormSubmitButton"] button p {
+            color: #d63031 !important; 
+            font-weight: 600 !important;
+        }
+        [data-testid="stFormSubmitButton"] button:hover {
             background-color: #ffcccc !important;
-            color: #b22222 !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # --- 상단 검색 폼 ---
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
@@ -269,18 +270,20 @@ def render_valuation_menu():
                     with st.form(f"fin_form_{ticker}"):
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 🟦 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
-                        # 💡 2번 요건: Label이 아닌, 입력된 수치 자체에 바로 🟦 마크를 찍어주기
+                        # 💡 2번 해결: 타입 충돌 방지를 위해 전부 문자열로 변환하여 에디터에 전달
                         display_df = fin_df[['Label', '매출액', '영업이익', '당기순이익']].copy()
                         for col in ['매출액', '영업이익', '당기순이익']:
-                            display_df[col] = display_df[col].astype(object)
+                            display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else str(int(x)))
                         
+                        # 수동 입력된 셀에만 🟦 기호 추가
                         for r, c in manual_indices:
-                            val = display_df.at[r, c]
-                            if pd.notna(val):
+                            val = fin_df.at[r, c]
+                            if pd.notna(val) and val != 0:
                                 display_df.at[r, c] = f"{int(val)} 🟦"
                         
                         edited_df = st.data_editor(
                             display_df, 
+                            disabled=["Label"], # Label 컬럼은 수정 방지
                             hide_index=True, 
                             use_container_width=True, 
                             key=f"editor_{ticker}"
@@ -301,8 +304,9 @@ def render_valuation_menu():
                                 yr = str(orig_fin_df.at[idx, 'Year'])
                                 for col in ['매출액', '영업이익', '당기순이익']:
                                     orig_val = orig_fin_df.at[idx, col]
-                                    edited_val = extract_number(row[col]) # 🟦 기호 제거하고 숫자만 추출
+                                    edited_val = extract_number(row[col]) 
                                     
+                                    # 💡 2번(백엔드 방어막): 원본(크롤링)이 비어있을 때만 수동 저장 허용!
                                     if pd.isna(orig_val) or orig_val == 0:
                                         if edited_val != 0:
                                             if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
@@ -313,6 +317,7 @@ def render_valuation_menu():
                                                 if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
                                                 if not new_estimates[ticker]: del new_estimates[ticker]
                                     else:
+                                        # 원본 데이터가 있다면 사용자가 뭘 썼든 무시하고 기존 추정치는 삭제
                                         if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
                                             del new_estimates[ticker][yr][col]
                                             if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
@@ -322,6 +327,7 @@ def render_valuation_menu():
                             if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다! 차트에 반영하려면 갱신 버튼을 눌러주세요.")
                             else: st.error(f"❌ 저장 실패: {msg}")
 
+                    # 에디터에서 꺼낸 값을 계산용 데이터프레임에 적용 (숫자 추출)
                     fin_df['매출액'] = edited_df['매출액'].apply(extract_number).values
                     fin_df['영업이익'] = edited_df['영업이익'].apply(extract_number).values
                     fin_df['당기순이익'] = edited_df['당기순이익'].apply(extract_number).values
@@ -404,7 +410,7 @@ def render_valuation_menu():
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 3번 요건: 상단 차트 가로폭 최대 확장 (l=0, r=60)
+                    # 💡 3번 해결: 상단 차트 r=20 강제 확장 및 뱃지(Annotation) 위치 재조정
                     fig1 = go.Figure()
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
@@ -433,10 +439,10 @@ def render_valuation_menu():
                     fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     
-                    fig1.update_layout(height=400, margin=dict(l=0, r=60, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 💡 3번 요건: 하단 차트 가로폭 최대 확장 및 상단 일치 (l=0, r=60)
+                    # 💡 3번 해결: 하단 차트 r=20 강제 확장 및 뱃지(Annotation) 위치 재조정
                     st.write("")
                     fig2 = go.Figure()
                     daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
@@ -446,29 +452,29 @@ def render_valuation_menu():
                     for i, b in enumerate(bands):
                         if pd.notna(b):
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
-                            fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
+                            fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
-                    fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=target_mult, text=f"목표: {target_mult}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderpad=3, borderwidth=1)
+                    fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=target_mult, text=f"목표: {target_mult}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderpad=3, borderwidth=1)
                     
                     y2_max = max([bands[-1]*1.1 if bands else 30, target_mult*1.2])
 
                     if avg_m_val > 0:
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=2)))
-                        fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderpad=3, borderwidth=1)
+                        fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderpad=3, borderwidth=1)
                         mid_date = x_start + (x_end - x_start) * 0.6  
                         fig2.add_annotation(x=mid_date, y=avg_m_val, text=f"{avg_m_val:.1f}x", showarrow=False, xanchor="center", yanchor="bottom", yshift=4, font=dict(size=13, color="green", weight="bold"))
                     
                     if today_m > 0 and today_m < 300: 
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
-                        fig2.add_annotation(x=extended_dates[-1] + timedelta(days=15), y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderpad=3, borderwidth=1)
+                        fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderpad=3, borderwidth=1)
                         y2_max = max(y2_max, today_m * 1.2)
                     
                     fig2.update_yaxes(range=[0, y2_max])
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
-                    fig2.update_layout(height=300, margin=dict(l=0, r=60, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    fig2.update_layout(height=300, margin=dict(l=0, r=20, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
 
                 else:
