@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 
 # --- GitHub 연동 설정 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
-GITHUB_BRANCH = "dev" 
+GITHUB_BRANCH = "main" 
 ESTIMATES_FILE = "data/user_estimates.json"
 
 # 공통 헤더 설정
@@ -240,7 +240,6 @@ def render_valuation_menu():
                 ticker = ticker_row['Code'].values[0]
                 stocks_count = get_stocks_count(ticker_row, ticker)
 
-                # --- 💡 1. 데이터 로드 및 수동 추정치 병합 ---
                 fin_df = get_hybrid_financials(ticker)
                 orig_fin_df = fin_df.copy() # 원본 상태 보존용
                 user_estimates = load_user_estimates()
@@ -266,12 +265,14 @@ def render_valuation_menu():
                     
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # --- 💡 2. UI 에디터 및 하이라이트 적용 ---
-                    st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 파란색 숫자는 내 추정치)</span></div>", unsafe_allow_html=True)
+                    # --- 💡 3. 요청하신 수정 문구 반영 ---
+                    st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 시 하단 밸류 즉시 재측정, 파란셀색상은 추정치)</span></div>", unsafe_allow_html=True)
                     
+                    # --- 💡 2. 셀 색상 스타일링 강화 (rgba 배경색 적용) ---
                     def highlight_manual(data):
                         df_style = pd.DataFrame('', index=data.index, columns=data.columns)
-                        attr = 'color: #0068c9; font-weight: bold; background-color: #f0f7ff;'
+                        # 확실한 구분을 위해 투명도가 적용된 파란색 배경과 굵은 글씨 적용
+                        attr = 'background-color: rgba(0, 104, 201, 0.15) !important; color: #0068c9 !important; font-weight: bold !important;'
                         for r, c in manual_indices:
                             if c in df_style.columns and r in df_style.index:
                                 df_style.at[r, c] = attr
@@ -286,7 +287,7 @@ def render_valuation_menu():
                         key=f"editor_{ticker}"
                     )
                     
-                    # --- 💡 3. 수동 추정치 저장 버튼 로직 ---
+                    # --- 💡 1. 0원(또는 공란) 입력 시 JSON에서 완전 삭제되는 로직 추가 ---
                     if st.button("저장", type="secondary"):
                         with st.spinner("GitHub에 저장 중..."):
                             new_estimates = load_user_estimates() # 최신화
@@ -298,23 +299,29 @@ def render_valuation_menu():
                                     orig_val = orig_fin_df.at[idx, col]
                                     edited_val = row[col]
                                     
-                                    # 원본이 비어있으면 저장
+                                    # 원본 데이터가 비어있을 때 (사용자가 편집 가능한 셀)
                                     if pd.isna(orig_val) or orig_val == 0:
-                                        if pd.notna(edited_val) and float(edited_val) != 0:
+                                        # 사용자가 0원이 아닌 유효한 값을 입력한 경우
+                                        if pd.notna(edited_val) and str(edited_val).strip() != "" and float(edited_val) != 0:
                                             if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
                                             new_estimates[ticker][yr][col] = float(edited_val)
+                                        else:
+                                            # 사용자가 0을 입력했거나 셀을 비워버린 경우 -> JSON에서 삭제
+                                            if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
+                                                del new_estimates[ticker][yr][col]
+                                                if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
+                                                if not new_estimates[ticker]: del new_estimates[ticker]
                                     else:
-                                        # 원본이 생기면 자가 청소
+                                        # 원본 실제 데이터가 이미 들어와 있다면 수동 데이터는 무조건 청소
                                         if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
                                             del new_estimates[ticker][yr][col]
                                             if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
                                             if not new_estimates[ticker]: del new_estimates[ticker]
 
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
-                            if success: st.success("✅ 추정치가 안전하게 저장되었습니다!")
+                            if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다!")
                             else: st.error(f"❌ 저장 실패: {msg}")
 
-                    # --- 💡 4. 하단 차트 로직 (기존 v3.1.0 완벽 복구) ---
                     fin_df['매출액'] = edited_df['매출액'].values
                     fin_df['영업이익'] = edited_df['영업이익'].values
                     fin_df['당기순이익'] = edited_df['당기순이익'].values
