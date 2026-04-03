@@ -23,9 +23,8 @@ HEADERS = {
 }
 API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# --- 💡 헬퍼 함수: GitHub 데이터 입출력 ---
+# --- 헬퍼 함수: GitHub 데이터 입출력 ---
 def load_user_estimates():
-    """GitHub에서 사용자 추정치 JSON 로드"""
     try:
         github_token = st.secrets.get("GH_PAT")
         if not github_token: return {}
@@ -43,17 +42,10 @@ def save_to_github(file_path, content, message):
     if not github_token: return False, "Streamlit Secrets에 GH_PAT가 없습니다."
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
     headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
-    
     res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH})
     sha = res.json().get('sha') if res.status_code == 200 else None
-    
-    payload = {
-        "message": message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
-        "branch": GITHUB_BRANCH
-    }
+    payload = {"message": message, "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"), "branch": GITHUB_BRANCH}
     if sha: payload["sha"] = sha
-    
     put_res = requests.put(url, headers=headers, json=payload)
     return (True, "성공") if put_res.status_code in [200, 201] else (False, put_res.text)
 
@@ -170,28 +162,47 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
+# 세션 상태 초기화
+if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
+if 'val_type' not in st.session_state: st.session_state.val_type = "PER(순이익)"
+if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
+if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
 if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    st.markdown("<div class='search-container'><div class='search-label'>종목명:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-    corp_name = st.text_input("종목명", value=st.session_state.get('search_corp_name', ""), placeholder="예: 삼성전자", label_visibility="collapsed").strip()
-    st.session_state.search_corp_name = corp_name
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    # --- 💡 1. 상단 폼: 입력 후 [갱신] 버튼 클릭 시에만 상태 업데이트 ---
+    with st.form("top_search_form"):
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            corp_name_input = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자")
+        with col2:
+            val_idx = 0 if st.session_state.val_type == "PER(순이익)" else 1
+            val_type_input = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], index=val_idx)
+        with col3:
+            target_mult_input = st.number_input("목표배수", value=st.session_state.target_mult, step=1, format="%d")
+        
+        submit_top = st.form_submit_button("갱신", type="primary", use_container_width=True)
 
-    st.markdown("<div class='search-container'><div class='search-label'>평가방식:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-    val_type = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], label_visibility="collapsed")
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    if submit_top:
+        st.session_state.search_corp_name = corp_name_input.strip()
+        st.session_state.val_type = val_type_input
+        st.session_state.target_mult = target_mult_input
+
+    corp_name = st.session_state.search_corp_name
+    val_type = st.session_state.val_type
+    target_mult = st.session_state.target_mult
     
+    # 💡 종목이 변경되었을 때 1회 자동으로 평균 밴드 계산 후 재렌더링
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
         
         if not ticker_row.empty:
             ticker = ticker_row['Code'].values[0]
-            if st.session_state.get('last_ticker') != ticker or st.session_state.get('last_val_type') != val_type:
+            if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
                 temp_fin = get_hybrid_financials(ticker)
                 temp_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
                 
@@ -200,40 +211,27 @@ def render_valuation_menu():
                     stocks_count = get_stocks_count(ticker_row, ticker)
                     raw_m = pd.to_numeric(temp_fin[col_p], errors='coerce').values
                     cur_m = pd.Series(raw_m).ffill().bfill().values * 100_000_000 / stocks_count
-                    
                     band_dates_ts = temp_fin['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(temp_price.index.map(datetime.timestamp).values, band_dates_ts, cur_m)
                     
                     valid_idx = ext_interp > 0
                     daily_val = np.full(len(temp_price), np.nan)
                     daily_val[valid_idx] = temp_price['Close'].values[valid_idx] / ext_interp[valid_idx]
-                    
                     valid_hist_mult = daily_val[~np.isnan(daily_val)]
+                    
                     if len(valid_hist_mult) > 0:
                         realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < 300)]
                         if len(realistic_mults) > 0:
-                            q_min = np.percentile(realistic_mults, 5)
-                            q_max = np.percentile(realistic_mults, 95)
+                            q_min, q_max = np.percentile(realistic_mults, 5), np.percentile(realistic_mults, 95)
                             filtered_mult = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
                             if len(filtered_mult) > 0:
                                 st.session_state.target_mult = max(1, int(round(np.mean(filtered_mult))))
                                 
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
+                st.rerun() # 계산된 목표배수를 폼 UI에 반영하기 위해 새로고침
 
-    st.markdown("<div class='search-container'><div class='search-label'>목표배수:</div><div class='search-input-wrap'>", unsafe_allow_html=True)
-    target_mult = st.number_input("목표배수", value=st.session_state.get('target_mult', 10), step=1, format="%d", label_visibility="collapsed")
-    st.session_state.target_mult = target_mult 
-    st.markdown("</div></div>", unsafe_allow_html=True)
-    
-    st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
-    st.button("갱신", use_container_width=True)
-
-    if corp_name:
         with st.spinner("데이터 분석 중..."):
-            listing = get_ticker_listing()
-            ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
-            
             if ticker_row.empty:
                 st.error("❌ 종목을 찾을 수 없습니다. 종목명을 정확히 입력해주세요.")
             else:
@@ -241,7 +239,7 @@ def render_valuation_menu():
                 stocks_count = get_stocks_count(ticker_row, ticker)
 
                 fin_df = get_hybrid_financials(ticker)
-                orig_fin_df = fin_df.copy() # 원본 상태 보존용
+                orig_fin_df = fin_df.copy() 
                 user_estimates = load_user_estimates()
                 ticker_estimates = user_estimates.get(ticker, {})
 
@@ -265,32 +263,38 @@ def render_valuation_menu():
                     
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
-                    # --- 💡 3. 요청하신 수정 문구 반영 ---
-                    st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 시 하단 밸류 즉시 재측정, 파란셀색상은 추정치)</span></div>", unsafe_allow_html=True)
-                    
-                    # --- 💡 2. 셀 색상 스타일링 강화 (안전한 HEX 코드 적용, !important 제거) ---
-                    def highlight_manual(data):
-                        df_style = pd.DataFrame('', index=data.index, columns=data.columns)
-                        # Streamlit 데이터 에디터가 정상적으로 인식할 수 있는 순수 HEX 코드로 변경
-                        attr = 'background-color: #e6f2ff; color: #0068c9; font-weight: bold;'
-                        for r, c in manual_indices:
-                            if c in df_style.columns and r in df_style.index:
-                                df_style.at[r, c] = attr
-                        return df_style
+                    # --- 💡 2. 재무 상세 데이터 에디터를 폼(Form)으로 감싸기 ---
+                    with st.form(f"fin_form_{ticker}"):
+                        st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, 파란셀은 추정치)</span></div>", unsafe_allow_html=True)
+                        
+                        def highlight_manual(data):
+                            df_style = pd.DataFrame('', index=data.index, columns=data.columns)
+                            attr = 'background-color: #e6f2ff; color: #0068c9; font-weight: bold;'
+                            for r, c in manual_indices:
+                                if c in df_style.columns and r in df_style.index:
+                                    df_style.at[r, c] = attr
+                            return df_style
 
-                    styled_fin = fin_df[['Label', '매출액', '영업이익', '당기순이익']].style.apply(highlight_manual, axis=None)
+                        styled_fin = fin_df[['Label', '매출액', '영업이익', '당기순이익']].style.apply(highlight_manual, axis=None)
+                        
+                        edited_df = st.data_editor(
+                            styled_fin, 
+                            hide_index=True, 
+                            use_container_width=True, 
+                            key=f"editor_{ticker}"
+                        )
+                        
+                        # 폼 내부에 갱신과 저장 버튼 분리
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            fin_update_clicked = st.form_submit_button("갱신", type="primary", use_container_width=True)
+                        with btn_col2:
+                            fin_save_clicked = st.form_submit_button("저장", type="secondary", use_container_width=True)
                     
-                    edited_df = st.data_editor(
-                        styled_fin, 
-                        hide_index=True, 
-                        use_container_width=True, 
-                        key=f"editor_{ticker}"
-                    )
-                    
-                    # --- 💡 1. 0원(또는 공란) 입력 시 JSON에서 완전 삭제되는 로직 추가 ---
-                    if st.button("저장", type="secondary"):
+                    # 저장 로직 처리 (저장 버튼 클릭 시 실행)
+                    if fin_save_clicked:
                         with st.spinner("GitHub에 저장 중..."):
-                            new_estimates = load_user_estimates() # 최신화
+                            new_estimates = load_user_estimates() 
                             if ticker not in new_estimates: new_estimates[ticker] = {}
                             
                             for idx, row in edited_df.iterrows():
@@ -299,20 +303,16 @@ def render_valuation_menu():
                                     orig_val = orig_fin_df.at[idx, col]
                                     edited_val = row[col]
                                     
-                                    # 원본 데이터가 비어있을 때 (사용자가 편집 가능한 셀)
                                     if pd.isna(orig_val) or orig_val == 0:
-                                        # 사용자가 0원이 아닌 유효한 값을 입력한 경우
                                         if pd.notna(edited_val) and str(edited_val).strip() != "" and float(edited_val) != 0:
                                             if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
                                             new_estimates[ticker][yr][col] = float(edited_val)
                                         else:
-                                            # 사용자가 0을 입력했거나 셀을 비워버린 경우 -> JSON에서 삭제
                                             if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
                                                 del new_estimates[ticker][yr][col]
                                                 if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
                                                 if not new_estimates[ticker]: del new_estimates[ticker]
                                     else:
-                                        # 원본 실제 데이터가 이미 들어와 있다면 수동 데이터는 무조건 청소
                                         if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
                                             del new_estimates[ticker][yr][col]
                                             if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
@@ -322,6 +322,8 @@ def render_valuation_menu():
                             if success: st.success("✅ 추정치가 성공적으로 갱신(삭제/저장)되었습니다!")
                             else: st.error(f"❌ 저장 실패: {msg}")
 
+                    # 에디터 폼의 갱신/저장 버튼이 눌리지 않았다면 아래 로직도 이전 상태를 유지함.
+                    # 눌렸다면 edited_df가 최신 상태이므로 아래 로직이 최신 계산을 수행함.
                     fin_df['매출액'] = edited_df['매출액'].values
                     fin_df['영업이익'] = edited_df['영업이익'].values
                     fin_df['당기순이익'] = edited_df['당기순이익'].values
@@ -354,7 +356,9 @@ def render_valuation_menu():
                         else: st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
-                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=0, horizontal=True, label_visibility="collapsed")
+                    
+                    # --- 💡 3. 차트 조회 기간 기본값 '전체' (index=4)로 변경 ---
+                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=4, horizontal=True, label_visibility="collapsed")
                     
                     end_date_dt = df_price.index[-1]
                     if chart_period == "1년": start_date_chart = end_date_dt - pd.DateOffset(years=1)
