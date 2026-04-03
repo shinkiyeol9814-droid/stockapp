@@ -266,7 +266,6 @@ def render_valuation_menu():
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
                     
                     with st.form(f"fin_form_{ticker}"):
-                        # 💡 1번 요건: 설명 문구 업데이트 (✅ 이모지 반영)
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, [저장] 클릭 시 추정치 저장, ✅ 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
                         display_df = fin_df[['Label', '매출액', '영업이익', '당기순이익']].copy()
@@ -274,7 +273,6 @@ def render_valuation_menu():
                         for col in ['매출액', '영업이익', '당기순이익']:
                             display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
                         
-                        # 💡 2번 요건: [v] 대신 초록색 체크 이모지(✅) 사용
                         for r, c in manual_indices:
                             val = fin_df.at[r, c]
                             if pd.notna(val) and val != 0:
@@ -410,7 +408,30 @@ def render_valuation_menu():
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
+                    # 💡 상단 차트 (fig1) Y축 Auto-Zoom 로직
                     fig1 = go.Figure()
+                    mask_future = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
+                    visible_ext_interp = ext_interp[mask_future]
+                    
+                    y_values = []
+                    df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
+                    if not df_filtered_price.empty:
+                        y_values.extend(df_filtered_price['Close'].dropna().tolist())
+                    
+                    if len(visible_ext_interp) > 0:
+                        for b in bands:
+                            if pd.notna(b): y_values.extend((visible_ext_interp * float(b)).tolist())
+                        y_values.extend((visible_ext_interp * target_mult).tolist())
+                        if avg_m_val > 0: y_values.extend((visible_ext_interp * avg_m_val).tolist())
+                        if today_m > 0 and today_m < 300: y_values.extend((visible_ext_interp * today_m).tolist())
+                    
+                    y_values = [y for y in y_values if pd.notna(y) and y > 0]
+                    if y_values:
+                        y_max = max(y_values)
+                        y_min = min(y_values)
+                        padding = (y_max - y_min) * 0.1 if y_max != y_min else y_max * 0.1
+                        fig1.update_yaxes(range=[max(0, y_min - padding), y_max + padding])
+
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     
                     for i, b in enumerate(bands):
@@ -428,22 +449,33 @@ def render_valuation_menu():
                         today_line_y = np.where(ext_interp > 0, ext_interp * today_m, np.nan)
                         fig1.add_trace(go.Scatter(x=extended_dates, y=today_line_y, mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
 
-                    df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
-                    y_min = df_filtered_price['Close'].min() * 0.85 if not df_filtered_price.empty else df_price['Close'].min() * 0.85
-                    y_max_cands = [df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p]
-                    if tp1 > 0: y_max_cands.append(tp1)
-                    if tp2 > 0: y_max_cands.append(tp2)
-                    y_max = max(y_max_cands) * 1.15
-                    
-                    fig1.update_yaxes(range=[y_min * 0.8, y_max])
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
-                    
                     fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
+                    # 💡 하단 차트 (fig2) Y축 Auto-Zoom 로직
                     st.write("")
                     fig2 = go.Figure()
                     daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
+                    
+                    y2_values = []
+                    mask_past = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
+                    if len(daily_val_y[mask_past]) > 0:
+                        y2_values.extend(daily_val_y[mask_past][~np.isnan(daily_val_y[mask_past])].tolist())
+                    
+                    for b in bands:
+                        if pd.notna(b): y2_values.append(float(b))
+                    y2_values.append(target_mult)
+                    if avg_m_val > 0: y2_values.append(avg_m_val)
+                    if today_m > 0 and today_m < 300: y2_values.append(today_m)
+                    
+                    y2_values = [y for y in y2_values if pd.notna(y) and y > 0 and y < 300]
+                    if y2_values:
+                        y2_max = max(y2_values)
+                        y2_min = min(y2_values)
+                        padding2 = (y2_max - y2_min) * 0.15 if y2_max != y2_min else y2_max * 0.1
+                        fig2.update_yaxes(range=[max(0, y2_min - padding2), y2_max + padding2])
+
                     fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val_y, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
@@ -455,8 +487,6 @@ def render_valuation_menu():
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
                     fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=target_mult, text=f"목표: {target_mult}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderpad=3, borderwidth=1)
                     
-                    y2_max = max([bands[-1]*1.1 if bands else 30, target_mult*1.2])
-
                     if avg_m_val > 0:
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=2)))
                         fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=avg_m_val, text=f"Avg: {avg_m_val:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,128,0,0.8)", bordercolor="green", borderpad=3, borderwidth=1)
@@ -466,9 +496,7 @@ def render_valuation_menu():
                     if today_m > 0 and today_m < 300: 
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
                         fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderpad=3, borderwidth=1)
-                        y2_max = max(y2_max, today_m * 1.2)
                     
-                    fig2.update_yaxes(range=[0, y2_max])
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{row.get(col_p, 0):,.0f}억" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     
