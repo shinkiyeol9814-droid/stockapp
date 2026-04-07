@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 
 # --- GitHub 연동 설정 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
-GITHUB_BRANCH = "dev" 
+GITHUB_BRANCH = "main" 
 ESTIMATES_FILE = "data/user_estimates.json"
 
 # 공통 헤더 설정
@@ -178,9 +178,16 @@ def extract_number(val):
 
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
+    # 💡 [핵심 수정] 검색용 상태 변수들
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
+    
+    # 💡 폼 내장 위젯 전용 상태 변수 초기화 (이것이 Sleep/Wake 버그를 해결합니다)
+    if 'widget_corp_name' not in st.session_state: st.session_state.widget_corp_name = ""
+    if 'widget_val_type' not in st.session_state: st.session_state.widget_val_type = "POR(영업익)"
+    if 'widget_target_mult' not in st.session_state: st.session_state.widget_target_mult = 10
+
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
@@ -202,22 +209,27 @@ def render_valuation_menu():
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
+    # 💡 [핵심 수정] 폼 안에 value= 속성을 과감히 제거하고 key= 로만 렌더링
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            corp_name_input = st.text_input("종목명", value=st.session_state.search_corp_name, placeholder="예: 삼성전자")
+            st.text_input("종목명", key="widget_corp_name", placeholder="예: 삼성전자")
         with col2:
-            val_idx = 0 if st.session_state.val_type == "PER(순이익)" else 1
-            val_type_input = st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], index=val_idx)
+            st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], key="widget_val_type")
         with col3:
-            target_mult_input = st.number_input("목표배수", value=st.session_state.target_mult, step=1, format="%d")
+            st.number_input("목표배수", step=1, format="%d", key="widget_target_mult")
         
         submit_top = st.form_submit_button("갱신", type="primary", use_container_width=True)
 
+    # 갱신 버튼이 눌렸을 때만, 내부 위젯의 상태를 실행용 상태로 확정
     if submit_top:
-        st.session_state.search_corp_name = corp_name_input.strip()
-        st.session_state.val_type = val_type_input
-        st.session_state.target_mult = target_mult_input
+        if st.session_state.widget_corp_name.strip() == "":
+            st.toast("⚠️ 종목명을 입력해주세요! (기존 화면이 유지됩니다)", icon="👀")
+        else:
+            st.session_state.search_corp_name = st.session_state.widget_corp_name.strip()
+            
+        st.session_state.val_type = st.session_state.widget_val_type
+        st.session_state.target_mult = st.session_state.widget_target_mult
 
     corp_name = st.session_state.search_corp_name
     val_type = st.session_state.val_type
@@ -408,7 +420,6 @@ def render_valuation_menu():
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
-                    # 💡 상단 차트 (fig1) 줌 로직 개선 (극단적 밴드 무시하고 가격/타겟 위주로 포커스)
                     fig1 = go.Figure()
                     
                     mask_future = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
@@ -427,7 +438,6 @@ def render_valuation_menu():
                     core_max = max([price_max] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
                     core_min = min([price_min] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
                     
-                    # 가격과 타겟 기준에서 최대 20~30% 여유만 주고, 엄청 높은 밴드선은 알아서 화면 위로 짤리게 냅둠
                     y_max = max(core_max * 1.2, price_max * 1.5)
                     y_min = core_min * 0.8
                     fig1.update_yaxes(range=[max(0, y_min), y_max])
@@ -453,7 +463,6 @@ def render_valuation_menu():
                     fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
-                    # 💡 하단 차트 (fig2) 줌 로직 개선 (과거의 미친 스파이크 무시)
                     st.write("")
                     fig2 = go.Figure()
                     daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
@@ -462,13 +471,12 @@ def render_valuation_menu():
                     if avg_m_val > 0: important_mults.append(avg_m_val)
                     if today_m > 0 and today_m < 300: important_mults.append(today_m)
                     
-                    # 비정상적으로 높지 않은 밴드만 고려
                     for b in bands:
                         if pd.notna(b) and b <= (avg_m_val * 2 if avg_m_val > 0 else 50):
                             important_mults.append(float(b))
                             
                     core_m_max = max(important_mults) if important_mults else 20
-                    y2_max = core_m_max * 1.6 # 핵심 멀티플에서 60% 여유만 줌 (과거 폭등 스파이크는 알아서 천장 뚫고 나감)
+                    y2_max = core_m_max * 1.6 
                     fig2.update_yaxes(range=[0, y2_max])
 
                     fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val_y, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
