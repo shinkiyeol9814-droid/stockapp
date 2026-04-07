@@ -29,8 +29,8 @@ def get_high_stocks():
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    # 500억 이상 종목부터 긁어오도록 필터 기준 하향
-    df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000) & (df['Volume'] >= 100000)].copy()
+    # 💡 1차 필터링: 500억 이상 종목, 주가 1000원 이상 (거래량 필터 제거됨)
+    df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
     
     df = df[df['ChagesRatio'] > 0.0] 
     candidates = df.sort_values('ChagesRatio', ascending=False)
@@ -44,17 +44,22 @@ def get_high_stocks():
             hist = fdr.DataReader(row.Code, start_date)
             if hist.empty or len(hist) < 20: continue
             
-            high_1y = hist['High'].max()
-            high_6m = hist['High'].tail(120).max()
-            high_3m = hist['High'].tail(60).max()
+            # 💡 [핵심 수정] 오늘(마지막 날)을 제외한 과거 데이터만 분리하여 매물대 저항선 계산
+            past_hist = hist.iloc[:-1]
+            if past_hist.empty: continue
             
-            today_high = hist['High'].iloc[-1]
+            # 과거 1년, 6개월, 3개월의 최고 '종가(Close)' 계산
+            past_max_1y = past_hist['Close'].max()
+            past_max_6m = past_hist['Close'].tail(120).max()
+            past_max_3m = past_hist['Close'].tail(60).max()
+            
             today_close = int(hist['Close'].iloc[-1])
             
             period_flag = ""
-            if today_high >= high_1y * 0.995: period_flag = "1년(52주) 신고가"
-            elif today_high >= high_6m * 0.995: period_flag = "6개월 신고가"
-            elif today_high >= high_3m * 0.995: period_flag = "3개월 신고가"
+            # 💡 윗꼬리 방지: 오늘 종가가 과거 최고 종가의 98% 이상에 안착했는지 확인
+            if today_close >= past_max_1y * 0.98: period_flag = "1년(52주) 신고가"
+            elif today_close >= past_max_6m * 0.98: period_flag = "6개월 신고가"
+            elif today_close >= past_max_3m * 0.98: period_flag = "3개월 신고가"
             
             if period_flag:
                 results.append({
@@ -152,7 +157,7 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기 후 재시도... 사유: {error_message}")
             time.sleep(wait_time) 
             
-    return {} # 끝까지 실패하면 빈 딕셔너리 반환
+    return {} # 끝까지 실패하면 빈 딕셔너 반환
 
 async def main():
     start_time = time.time()
