@@ -24,14 +24,14 @@ HEADERS = {
 }
 API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# --- 💡 헬퍼 함수: GitHub 데이터 입출력 ---
+# --- 💡 헬퍼 함수: GitHub 데이터 입출력 (Timeout 안전장치 추가) ---
 def load_user_estimates():
     try:
         github_token = st.secrets.get("GH_PAT")
         if not github_token: return {}
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{ESTIMATES_FILE}?ref={GITHUB_BRANCH}"
         headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
-        res = requests.get(url, headers=headers)
+        res = requests.get(url, headers=headers, timeout=7) # 무한 대기 방지
         if res.status_code == 200:
             content = base64.b64decode(res.json()['content']).decode('utf-8')
             return json.loads(content)
@@ -39,25 +39,29 @@ def load_user_estimates():
     except: return {}
 
 def save_to_github(file_path, content, message):
-    github_token = st.secrets.get("GH_PAT")
-    if not github_token: return False, "Streamlit Secrets에 GH_PAT가 없습니다."
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
-    headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
-    
-    res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH})
-    sha = res.json().get('sha') if res.status_code == 200 else None
-    
-    payload = {
-        "message": message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
-        "branch": GITHUB_BRANCH
-    }
-    if sha: payload["sha"] = sha
-    
-    put_res = requests.put(url, headers=headers, json=payload)
-    return (True, "성공") if put_res.status_code in [200, 201] else (False, put_res.text)
+    try:
+        github_token = st.secrets.get("GH_PAT")
+        if not github_token: return False, "Streamlit Secrets에 GH_PAT가 없습니다."
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+        headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
+        
+        res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=7)
+        sha = res.json().get('sha') if res.status_code == 200 else None
+        
+        payload = {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+            "branch": GITHUB_BRANCH
+        }
+        if sha: payload["sha"] = sha
+        
+        put_res = requests.put(url, headers=headers, json=payload, timeout=7)
+        if put_res.status_code in [200, 201]: return True, "성공"
+        return False, put_res.text
+    except Exception as e:
+        return False, f"통신 에러: {str(e)}"
 
-# --- 기본 데이터 수집 함수 ---
+# --- 기본 데이터 수집 함수 (Timeout 안전장치 추가) ---
 def get_stocks_count(ticker_row, ticker):
     try:
         if 'Stocks' in ticker_row.columns:
@@ -122,7 +126,7 @@ def get_hybrid_financials(ticker):
     master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan} for y in target_years}
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
-        main_res = requests.get(main_url, headers=HEADERS, timeout=10)
+        main_res = requests.get(main_url, headers=HEADERS, timeout=7)
         encparam = ""
         match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
         if match: encparam = match.group(1)
@@ -132,7 +136,7 @@ def get_hybrid_financials(ticker):
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ]
         for url in urls:
-            res = requests.get(url, headers=ajax_headers, timeout=10)
+            res = requests.get(url, headers=ajax_headers, timeout=7)
             df_parsed = parse_and_filter_html(res.text)
             if df_parsed is not None:
                 for c in df_parsed.columns:
@@ -178,18 +182,18 @@ def extract_number(val):
 
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
-    # 💡 [핵심 수정] 검색용 상태 변수들
+    # 💡 [핵심 해결] Sleep/Wake 버그 완전 차단 로직
+    # 위젯(UI) 전용 상태 변수를 분리하여, 사용자가 입력한 값을 절대 놓치지 않게 만듭니다.
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
-    
-    # 💡 폼 내장 위젯 전용 상태 변수 초기화 (이것이 Sleep/Wake 버그를 해결합니다)
-    if 'widget_corp_name' not in st.session_state: st.session_state.widget_corp_name = ""
-    if 'widget_val_type' not in st.session_state: st.session_state.widget_val_type = "POR(영업익)"
-    if 'widget_target_mult' not in st.session_state: st.session_state.widget_target_mult = 10
-
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
+
+    # UI 위젯 초기값 동기화 (최초 1회만)
+    if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.search_corp_name
+    if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.val_type
+    if 'ui_target_mult' not in st.session_state: st.session_state.ui_target_mult = st.session_state.target_mult
 
     st.markdown("""
         <style>
@@ -209,27 +213,25 @@ def render_valuation_menu():
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 [핵심 수정] 폼 안에 value= 속성을 과감히 제거하고 key= 로만 렌더링
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            st.text_input("종목명", key="widget_corp_name", placeholder="예: 삼성전자")
+            # value= 속성 제거하고 key=로만 관리하여 엇박자 완벽 방어
+            st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
         with col2:
-            st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], key="widget_val_type")
+            st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], key="ui_val_type")
         with col3:
-            st.number_input("목표배수", step=1, format="%d", key="widget_target_mult")
+            st.number_input("목표배수", step=1, format="%d", key="ui_target_mult")
         
         submit_top = st.form_submit_button("갱신", type="primary", use_container_width=True)
 
-    # 갱신 버튼이 눌렸을 때만, 내부 위젯의 상태를 실행용 상태로 확정
     if submit_top:
-        if st.session_state.widget_corp_name.strip() == "":
+        if st.session_state.ui_corp_name.strip() == "":
             st.toast("⚠️ 종목명을 입력해주세요! (기존 화면이 유지됩니다)", icon="👀")
         else:
-            st.session_state.search_corp_name = st.session_state.widget_corp_name.strip()
-            
-        st.session_state.val_type = st.session_state.widget_val_type
-        st.session_state.target_mult = st.session_state.widget_target_mult
+            st.session_state.search_corp_name = st.session_state.ui_corp_name.strip()
+            st.session_state.val_type = st.session_state.ui_val_type
+            st.session_state.target_mult = st.session_state.ui_target_mult
 
     corp_name = st.session_state.search_corp_name
     val_type = st.session_state.val_type
@@ -245,7 +247,7 @@ def render_valuation_menu():
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
 
-        with st.spinner("데이터 분석 중..."):
+        with st.spinner("네이버 금융에서 데이터를 불러오는 중입니다... (네트워크 상황에 따라 2~5초 소요)"):
             if ticker_row.empty:
                 st.error("❌ 종목을 찾을 수 없습니다. 종목명을 정확히 입력해주세요.")
             else:
