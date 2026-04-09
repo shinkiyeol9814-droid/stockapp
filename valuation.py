@@ -31,7 +31,7 @@ def load_user_estimates():
         if not github_token: return {}
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{ESTIMATES_FILE}?ref={GITHUB_BRANCH}"
         headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
-        res = requests.get(url, headers=headers, timeout=7) # 무한 대기 방지
+        res = requests.get(url, headers=headers, timeout=7)
         if res.status_code == 200:
             content = base64.b64decode(res.json()['content']).decode('utf-8')
             return json.loads(content)
@@ -61,7 +61,7 @@ def save_to_github(file_path, content, message):
     except Exception as e:
         return False, f"통신 에러: {str(e)}"
 
-# --- 기본 데이터 수집 함수 (Timeout 안전장치 추가) ---
+# --- 기본 데이터 수집 함수 ---
 def get_stocks_count(ticker_row, ticker):
     try:
         if 'Stocks' in ticker_row.columns:
@@ -102,7 +102,7 @@ def get_ticker_listing():
         return df
     except: return pd.DataFrame(columns=['Code', 'Name'])
 
-@st.cache_data 
+# 💡 [해결 1] 캐시 제거: 에러난 빈 깡통 데이터가 영구적으로 캐싱되는 고질적 버그 원천 차단
 def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
@@ -120,7 +120,7 @@ def parse_and_filter_html(html):
         return target_df
     except: return None
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
     master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan} for y in target_years}
@@ -182,15 +182,12 @@ def extract_number(val):
 
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
-    # 💡 [핵심 해결] Sleep/Wake 버그 완전 차단 로직
-    # 위젯(UI) 전용 상태 변수를 분리하여, 사용자가 입력한 값을 절대 놓치지 않게 만듭니다.
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
-    # UI 위젯 초기값 동기화 (최초 1회만)
     if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.search_corp_name
     if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.val_type
     if 'ui_target_mult' not in st.session_state: st.session_state.ui_target_mult = st.session_state.target_mult
@@ -216,7 +213,6 @@ def render_valuation_menu():
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            # value= 속성 제거하고 key=로만 관리하여 엇박자 완벽 방어
             st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
         with col2:
             st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], key="ui_val_type")
@@ -242,7 +238,9 @@ def render_valuation_menu():
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
         
         if not ticker_row.empty:
-            ticker = ticker_row['Code'].values[0]
+            # 💡 [해결 2] 종목코드 포맷팅 강제 고정: 아이앤씨(052860) 앞자리 0 증발 현상 방어
+            ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
+            
             if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
@@ -251,7 +249,7 @@ def render_valuation_menu():
             if ticker_row.empty:
                 st.error("❌ 종목을 찾을 수 없습니다. 종목명을 정확히 입력해주세요.")
             else:
-                ticker = ticker_row['Code'].values[0]
+                ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
                 stocks_count = get_stocks_count(ticker_row, ticker)
 
                 fin_df = get_hybrid_financials(ticker)
