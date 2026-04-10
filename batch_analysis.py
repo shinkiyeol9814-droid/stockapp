@@ -31,7 +31,7 @@ def get_high_stocks():
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    # 💡 1차 필터링: 시총 500억 이상, 주가 1000원 이상 (거래량 조건 제거)
+    # 💡 1. 요청사항 반영: 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
     
     # 당일 상승 마감(양봉) 종목만 선정
@@ -47,7 +47,7 @@ def get_high_stocks():
             hist = fdr.DataReader(row.Code, start_date)
             if hist.empty or len(hist) < 20: continue
             
-            # 💡 [핵심] 오늘을 제외한 '과거' 데이터만 분리하여 매물대 계산
+            # 오늘을 제외한 '과거' 데이터만 분리하여 매물대 계산 (윗꼬리 왜곡 방지)
             past_hist = hist.iloc[:-1]
             if past_hist.empty: continue
             
@@ -59,7 +59,7 @@ def get_high_stocks():
             today_close = int(hist['Close'].iloc[-1])
             
             period_flag = ""
-            # 💡 돌파 판정: 오늘 종가가 과거 고점의 98% 이상이면 안착으로 간주
+            # 오늘 종가가 과거 고점의 98% 이상이면 안착으로 간주
             if today_close >= past_max_1y * 0.98: period_flag = "1년(52주) 신고가"
             elif today_close >= past_max_6m * 0.98: period_flag = "6개월 신고가"
             elif today_close >= past_max_3m * 0.98: period_flag = "3개월 신고가"
@@ -82,7 +82,8 @@ async def get_telegram_news(client, stock_name):
     messages_text = []
     today = datetime.now().date()
     try:
-        async for message in client.iter_messages(None, search=stock_name, limit=10):
+        # 💡 2. 요청사항 반영: 찌라시 수집 개수 5개로 변경
+        async for message in client.iter_messages(None, search=stock_name, limit=5):
             if message.date.date() == today and message.text:
                 messages_text.append(message.text)
     except Exception as e:
@@ -102,7 +103,8 @@ def get_google_news(stock_name):
         news_markdown = []
         first_link = "" 
         
-        for i, item in enumerate(root.findall('.//item')[:3]):
+        # 구글 뉴스는 핵심 2개만 유지하여 토큰 절약
+        for i, item in enumerate(root.findall('.//item')[:2]):
             title = item.find('title').text
             link = item.find('link').text
             news_titles.append(title)
@@ -117,7 +119,7 @@ def get_google_news(stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
-def summarize_batch_with_gemini(batch_data, max_retries=3):
+def summarize_batch_with_gemini(batch_data, max_retries=2):
     if not batch_data: return {}
 
     prompt = f"""너는 냉철한 주식 분석가야. 아래 전달하는 {len(batch_data)}개 종목의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
@@ -131,7 +133,10 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
 [분석할 데이터]
 """
     for data in batch_data:
-        prompt += f"■ {data['name']}\n- 뉴스: {data['news']}\n- 찌라시: {data['tg']}\n\n"
+        # 텍스트 슬라이싱으로 토큰 한도 초과 방어
+        safe_news = data['news'][:300] + "..." if len(data['news']) > 300 else data['news']
+        safe_tg = data['tg'][:300] + "..." if len(data['tg']) > 300 else data['tg']
+        prompt += f"■ {data['name']}\n- 뉴스: {safe_news}\n- 찌라시: {safe_tg}\n\n"
 
     for attempt in range(max_retries):
         try:
@@ -144,14 +149,13 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             for line in res_text.split('\n'):
                 if '|' in line:
                     parts = line.split('|', 1)
-                    # 💡 [해결 2] 무적의 정규식 파싱: AI가 맘대로 붙인 숫자(1. ), 특수기호(-, *) 모두 깔끔하게 제거
+                    # 무적의 정규식 파싱: AI가 붙인 기호 제거
                     raw_name = parts[0].strip()
                     stock_name = re.sub(r'^[\d\.\-\*\s]+', '', raw_name).replace("[", "").replace("]", "")
                     summary = parts[1].strip().replace("[", "").replace("]", "")
                     reasons_dict[stock_name] = summary
             return reasons_dict
         except Exception as e:
-            # 💡 [해결 3] 429 에러 쿨타임 최적화
             wait_time = 65 if "429" in str(e) else 10
             print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기...")
             time.sleep(wait_time) 
@@ -180,7 +184,7 @@ async def main():
             s['PER'] = "조회필요"
             
             if not tg_text.strip() and ai_news_text == "관련 뉴스 없음":
-                s['추정 사유'] = "시장 수급 유입 (구체적인 뉴스 미발견)"
+                s['추정 사유'] = "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
             else:
                 s['추정 사유'] = "분석 대기"
                 analysis_queue.append({'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s})
@@ -188,10 +192,8 @@ async def main():
             
         await client_tg.disconnect()
 
-        # ---------------------------------------------------
-        # 💡 [해결 1] 청크 사이즈 10개로 축소하여 토큰 과부하 방지
-        # ---------------------------------------------------
-        chunk_size = 10 
+        # 💡 3. 요청사항 반영: 청크 사이즈 5개로 유지 (정확도 극대화)
+        chunk_size = 5 
         retry_queue = []
         
         # 1차 분석
@@ -208,7 +210,7 @@ async def main():
                     print(f"   🚨 AI 요약 누락: [{stock_name}] -> 재시도 대기열 추가")
                     retry_queue.append(item)
             
-            # API 제한을 피하기 위해 청크마다 짧은 휴식 부여
+            # API 제한 방어 휴식
             time.sleep(10)
 
         # 누락분 재시도
