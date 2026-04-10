@@ -122,8 +122,8 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    # 💡 1. PBR, EV/EBITDA 전용 데이터 컬럼(자본총계, EBITDA, 순차입금) 추가
-    master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, 'EBITDA': np.nan, '당기순이익': np.nan, '자본총계': np.nan, '순차입금': np.nan} for y in target_years}
+    # 💡 EBITDA, 순차입금 제거 및 핵심 4개 항목 유지
+    master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan, '자본총계': np.nan} for y in target_years}
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
         main_res = requests.get(main_url, headers=HEADERS, timeout=7)
@@ -152,20 +152,15 @@ def get_hybrid_financials(ticker):
                                     except: pass
                                 return np.nan
                             
-                            # 💡 2. 데이터 크롤링 정규식 매칭
                             r = get_v(r'^(매출액|영업수익)')
                             o = get_v(r'^영업이익')
-                            eb = get_v(r'^EBITDA')
                             n = get_v(r'^(당기순이익|지배주주순이익)')
                             cap = get_v(r'^(자본총계|지배주주지분)')
-                            nd = get_v(r'^순차입금')
                             
                             if pd.isna(master_dict[y]['매출액']) and pd.notna(r): master_dict[y]['매출액'] = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o): master_dict[y]['영업이익'] = o
-                            if pd.isna(master_dict[y]['EBITDA']) and pd.notna(eb): master_dict[y]['EBITDA'] = eb
                             if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n): master_dict[y]['당기순이익'] = n
                             if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap): master_dict[y]['자본총계'] = cap
-                            if pd.isna(master_dict[y]['순차입금']) and pd.notna(nd): master_dict[y]['순차입금'] = nd
     except: pass
     rows = []
     for y in target_years:
@@ -195,7 +190,7 @@ def extract_number(val):
 def render_valuation_menu():
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
-    if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
+    if 'target_mult' not in st.session_state: st.session_state.target_mult = 10.0
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
@@ -221,8 +216,8 @@ def render_valuation_menu():
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 3. 4대 평가방식 셀렉트 박스 완벽 호환
-    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)", "EV/EBITDA"]
+    # 💡 3대 평가방식만 깔끔하게 유지
+    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)"]
     
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
@@ -231,7 +226,7 @@ def render_valuation_menu():
         with col2:
             st.selectbox("평가방식", val_options, key="ui_val_type")
         with col3:
-            st.number_input("목표배수", step=1, format="%d", key="ui_target_mult")
+            st.number_input("목표배수", step=0.1, format="%.2f", key="ui_target_mult")
         
         submit_top = st.form_submit_button("갱신", type="primary", use_container_width=True)
 
@@ -241,14 +236,14 @@ def render_valuation_menu():
         else:
             st.session_state.search_corp_name = st.session_state.ui_corp_name.strip()
             st.session_state.val_type = st.session_state.ui_val_type
-            st.session_state.target_mult = st.session_state.ui_target_mult
+            st.session_state.target_mult = float(st.session_state.ui_target_mult)
 
     corp_name = st.session_state.search_corp_name
     val_type = st.session_state.val_type
-    target_mult = st.session_state.target_mult
+    target_mult = float(st.session_state.target_mult)
     
-    # 💡 에디터에서 관리할 6대 핵심 데이터셋 정의
-    cols_to_edit = ['매출액', '영업이익', 'EBITDA', '당기순이익', '자본총계', '순차입금']
+    # 💡 4대 핵심 컬럼만 편집창에 노출
+    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계']
 
     if corp_name:
         listing = get_ticker_listing()
@@ -261,7 +256,7 @@ def render_valuation_menu():
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
 
-        with st.spinner("네이버 금융에서 데이터를 불러오는 중입니다... (네트워크 상황에 따라 2~5초 소요)"):
+        with st.spinner("데이터 분석 중..."):
             if ticker_row.empty:
                 st.error("❌ 종목을 찾을 수 없습니다. 종목명을 정확히 입력해주세요.")
             else:
@@ -295,7 +290,7 @@ def render_valuation_menu():
                     
                     with st.form(f"fin_form_{ticker}"):
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, [저장] 클릭 시 추정치 저장, ✅ 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
-                        
+
                         display_df = fin_df[['Label'] + cols_to_edit].copy()
                         
                         for col in cols_to_edit:
@@ -357,7 +352,7 @@ def render_valuation_menu():
                     for col in cols_to_edit:
                         fin_df[col] = edited_df[col].apply(extract_number).values
                     
-                    # 💡 4. 평가 방식에 따른 엔진 변수 맵핑
+                    # 💡 평가 방식 변수 맵핑 (EV/EBITDA 제거)
                     col_p = '당기순이익'
                     band_name = "PER"
                     if "POR" in val_type: 
@@ -366,23 +361,12 @@ def render_valuation_menu():
                     elif "PBR" in val_type: 
                         col_p = '자본총계'
                         band_name = "PBR"
-                    elif "EV/EBITDA" in val_type: 
-                        col_p = 'EBITDA'
-                        band_name = "EV/EBITDA"
                     
-                    # 💡 5. 목표가 계산 핵심 알고리즘 (순차입금 역산 반영)
                     def get_t(y):
                         row = fin_df[fin_df['Year'] == y]
                         if len(row) > 0 and pd.notna(row[col_p].values[0]) and row[col_p].values[0] > 0:
-                            val = float(row[col_p].values[0]) * 100_000_000 # 팩터 절대금액(원)
-                            
-                            if "EV" in val_type:
-                                # EV/EBITDA 로직: EV = EBITDA * Mult -> 시총 = EV - 순차입금
-                                nd = float(row['순차입금'].values[0]) * 100_000_000 if pd.notna(row['순차입금'].values[0]) else 0
-                                target_ev = val * target_mult
-                                target_marcap = target_ev - nd
-                            else:
-                                target_marcap = val * target_mult
+                            val = float(row[col_p].values[0]) * 100_000_000 
+                            target_marcap = val * target_mult
 
                             if target_marcap > 0:
                                 tp = float(target_marcap / stocks_count)
@@ -420,41 +404,24 @@ def render_valuation_menu():
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     
-                    # 💡 6. 차트 스케일링을 위한 절대 팩터 보간(Interpolation) 세팅
                     raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics = pd.Series(raw_metrics).ffill().bfill().values * 100_000_000
-                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics) # 0분모 방지
+                    cur_metrics = np.nan_to_num(cur_metrics, nan=0.1)
+                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics)
+                    
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
                     
-                    # EV/EBITDA 전용 순차입금 보간 세팅
-                    raw_nd = pd.to_numeric(fin_df['순차입금'], errors='coerce').values
-                    cur_nd = pd.Series(raw_nd).ffill().bfill().values * 100_000_000
-                    nd_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_nd)
-                    
-                    # 현재 기준 Multiple 산출
                     today_marcap = curr_p * stocks_count
                     today_metric_val = ext_interp[len(df_price)-1]
-                    today_nd_val = nd_interp[len(df_price)-1]
                     
-                    if "EV" in val_type:
-                        today_ev = today_marcap + today_nd_val
-                        today_m = float(today_ev / today_metric_val) if today_metric_val > 0 else 0
-                    else:
-                        today_m = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
+                    today_m = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
                     
-                    # 과거 밴드 추출 (과거 주가 시계열 기반)
                     date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
                     interp_history = ext_interp[:len(df_price)]
-                    hist_nd = nd_interp[:len(df_price)]
-                    
                     hist_marcap = df_price['Close'].values * stocks_count
                     
-                    if "EV" in val_type:
-                        hist_ev = hist_marcap + hist_nd
-                        all_daily_val = np.where(interp_history > 0, hist_ev / interp_history, np.nan)
-                    else:
-                        all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
+                    all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
                     
                     valid_mask = date_mask & (interp_history > 0)
                     valid_hist_mult = all_daily_val[valid_mask]
@@ -475,14 +442,8 @@ def render_valuation_menu():
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
-                    # 💡 7. 밴드 라인 변환 헬퍼 함수 (평가 방식별 역산)
                     def get_band_y(m_val):
-                        if "EV" in val_type:
-                            b_ev = ext_interp * float(m_val)
-                            b_marcap = b_ev - nd_interp
-                            return np.where(ext_interp > 0, b_marcap / stocks_count, np.nan)
-                        else:
-                            return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
+                        return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
 
                     target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
                     x_range = [start_date_chart, target_year_end]
