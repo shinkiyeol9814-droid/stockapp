@@ -153,9 +153,9 @@ def get_hybrid_financials(ticker):
                             
                             r = get_v(r'^(매출액|영업수익)')
                             
-                            # 1순위: 순수 영업이익, 없으면 2순위: 영업이익(발표기준)
                             o = get_v(r'^영업이익$')
-                            if pd.isna(o): o = get_v(r'^영업이익\(발표기준\)')
+                            if pd.isna(o):
+                                o = get_v(r'^영업이익\(발표기준\)')
                                 
                             n = get_v(r'^(당기순이익|지배주주순이익)')
                             cap = get_v(r'^(자본총계|지배주주지분)')
@@ -189,29 +189,33 @@ def extract_number(val):
     m = re.search(r'-?\d+\.?\d*', s)
     return float(m.group()) if m else 0.0
 
-# --- 💡 동적 입력을 처리하기 위한 실행 콜백 함수 ---
+# --- 💡 [핵심 버그 수정] 안전한 콜백 함수 (.get 활용) ---
 def execute_search():
-    if st.session_state.ui_corp_name.strip() != "":
-        st.session_state.search_corp_name = st.session_state.ui_corp_name.strip()
-        st.session_state.val_type = st.session_state.ui_val_type
+    # 위젯이 메모리에서 날아갔을 경우를 대비해 .get()으로 기본값을 주어 에러를 차단합니다.
+    ui_corp = st.session_state.get('ui_corp_name', '').strip()
+    if ui_corp != "":
+        st.session_state.search_corp_name = ui_corp
         
-        if "PBR" in st.session_state.ui_val_type:
-            st.session_state.target_mult = float(st.session_state.ui_target_mult_float)
+        ui_val = st.session_state.get('ui_val_type', 'POR(영업익)')
+        st.session_state.val_type = ui_val
+        
+        if "PBR" in ui_val:
+            st.session_state.target_mult = float(st.session_state.get('ui_target_mult_float', 1.0))
         else:
-            st.session_state.target_mult = float(st.session_state.ui_target_mult_int)
+            st.session_state.target_mult = float(st.session_state.get('ui_target_mult_int', 10))
 
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
-    # 내부 로직용 상태 변수
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
     if 'target_mult' not in st.session_state: st.session_state.target_mult = 10.0
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
-    # UI 위젯 바인딩용 상태 변수
     if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.search_corp_name
     if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.val_type
+    
+    # 💡 포맷 변경용 초기값
     if 'ui_target_mult_float' not in st.session_state: st.session_state.ui_target_mult_float = 1.0
     if 'ui_target_mult_int' not in st.session_state: st.session_state.ui_target_mult_int = 10
 
@@ -233,30 +237,25 @@ def render_valuation_menu():
     
     val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)"]
     
-    # 💡 폼(st.form) 구조를 해체하고 동적 컬럼 배치 적용
     col1, col2, col3, col4 = st.columns([2, 1.5, 1.2, 1])
     with col1:
         st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자", on_change=execute_search)
     with col2:
-        st.selectbox("평가방식", val_options, key="ui_val_type")
+        st.selectbox("평가방식", val_options, key="ui_val_type", on_change=execute_search)
     with col3:
-        # 선택된 평가방식에 따라 입력창의 타입(정수 vs 소수점)을 즉시 교체
-        if "PBR" in st.session_state.ui_val_type:
-            st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float", on_change=execute_search)
+        if "PBR" in st.session_state.get('ui_val_type', st.session_state.val_type):
+            st.number_input("목표배수", step=0.1, format="%.2f", value=float(st.session_state.target_mult), key="ui_target_mult_float", on_change=execute_search)
         else:
-            st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int", on_change=execute_search)
+            st.number_input("목표배수", step=1, format="%d", value=int(st.session_state.target_mult), key="ui_target_mult_int", on_change=execute_search)
     with col4:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
         st.button("갱신", type="primary", use_container_width=True, on_click=execute_search)
 
-    # 실행 변수 맵핑
     corp_name = st.session_state.search_corp_name
     val_type = st.session_state.val_type
     target_mult = float(st.session_state.target_mult)
     
-    # 💡 차트 및 UI에 노출될 포맷 문자열 처리 (PBR=소수점 1자리, POR/PER=정수)
-    display_mult_str = f"{target_mult:.1f}" if "PBR" in val_type else f"{int(target_mult)}"
-    
+    display_mult_str = f"{target_mult:.2f}" if "PBR" in val_type else f"{int(target_mult)}"
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계']
 
     if corp_name:
@@ -452,7 +451,6 @@ def render_valuation_menu():
                                 avg_m_val = np.mean(filtered_hist)
                                 mn, mx = np.min(filtered_hist), np.max(filtered_hist)
                                 
-                                # PBR은 밴드 간격(Step)을 더 조밀하게 설정
                                 fallback_step = 1.0 if "PBR" in val_type else 5.0
                                 if mx <= mn: mx = mn + fallback_step
                                 stp = (mx - mn) / 3
@@ -493,7 +491,6 @@ def render_valuation_menu():
                         if pd.notna(b):
                             fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
                     
-                    # 💡 라벨 문자열에 정수/소수점 포맷 반영
                     fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
 
                     if avg_m_val > 0:
@@ -529,7 +526,6 @@ def render_valuation_menu():
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
                             fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
-                    # 💡 라벨 문자열에 정수/소수점 포맷 반영
                     fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
                     fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=target_mult, text=f"목표: {display_mult_str}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderpad=3, borderwidth=1)
                     
