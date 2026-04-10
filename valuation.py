@@ -122,7 +122,6 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    # 💡 EBITDA, 순차입금 제거 및 핵심 4개 항목 유지
     master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan, '자본총계': np.nan} for y in target_years}
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
@@ -153,7 +152,12 @@ def get_hybrid_financials(ticker):
                                 return np.nan
                             
                             r = get_v(r'^(매출액|영업수익)')
-                            o = get_v(r'^영업이익')
+                            
+                            # 💡 [요청 사항 반영] 1순위: 순수 '영업이익', 없으면 2순위: '영업이익(발표기준)' 검색
+                            o = get_v(r'^영업이익$')
+                            if pd.isna(o):
+                                o = get_v(r'^영업이익\(발표기준\)')
+                                
                             n = get_v(r'^(당기순이익|지배주주순이익)')
                             cap = get_v(r'^(자본총계|지배주주지분)')
                             
@@ -216,7 +220,6 @@ def render_valuation_menu():
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 3대 평가방식만 깔끔하게 유지
     val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)"]
     
     with st.form("top_search_form"):
@@ -242,7 +245,6 @@ def render_valuation_menu():
     val_type = st.session_state.val_type
     target_mult = float(st.session_state.target_mult)
     
-    # 💡 4대 핵심 컬럼만 편집창에 노출
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계']
 
     if corp_name:
@@ -352,7 +354,6 @@ def render_valuation_menu():
                     for col in cols_to_edit:
                         fin_df[col] = edited_df[col].apply(extract_number).values
                     
-                    # 💡 평가 방식 변수 맵핑 (EV/EBITDA 제거)
                     col_p = '당기순이익'
                     band_name = "PER"
                     if "POR" in val_type: 
