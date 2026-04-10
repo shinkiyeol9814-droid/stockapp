@@ -24,7 +24,7 @@ HEADERS = {
 }
 API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# --- 💡 헬퍼 함수: GitHub 데이터 입출력 (Timeout 안전장치 추가) ---
+# --- 💡 헬퍼 함수: GitHub 데이터 입출력 ---
 def load_user_estimates():
     try:
         github_token = st.secrets.get("GH_PAT")
@@ -102,7 +102,6 @@ def get_ticker_listing():
         return df
     except: return pd.DataFrame(columns=['Code', 'Name'])
 
-# 💡 [해결 1] 캐시 제거: 에러난 빈 깡통 데이터가 영구적으로 캐싱되는 고질적 버그 원천 차단
 def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
@@ -123,7 +122,8 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan} for y in target_years}
+    # 💡 1. PBR, EV/EBITDA 전용 데이터 컬럼(자본총계, EBITDA, 순차입금) 추가
+    master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, 'EBITDA': np.nan, '당기순이익': np.nan, '자본총계': np.nan, '순차입금': np.nan} for y in target_years}
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
         main_res = requests.get(main_url, headers=HEADERS, timeout=7)
@@ -151,10 +151,21 @@ def get_hybrid_financials(ticker):
                                     try: return float(re.sub(r'[^\d\.-]', '', str(val)))
                                     except: pass
                                 return np.nan
-                            r = get_v(r'^(매출액|영업수익)'); o = get_v(r'^영업이익\(발표기준\)') or get_v(r'^영업이익$'); n = get_v(r'^당기순이익')
+                            
+                            # 💡 2. 데이터 크롤링 정규식 매칭
+                            r = get_v(r'^(매출액|영업수익)')
+                            o = get_v(r'^영업이익')
+                            eb = get_v(r'^EBITDA')
+                            n = get_v(r'^(당기순이익|지배주주순이익)')
+                            cap = get_v(r'^(자본총계|지배주주지분)')
+                            nd = get_v(r'^순차입금')
+                            
                             if pd.isna(master_dict[y]['매출액']) and pd.notna(r): master_dict[y]['매출액'] = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o): master_dict[y]['영업이익'] = o
+                            if pd.isna(master_dict[y]['EBITDA']) and pd.notna(eb): master_dict[y]['EBITDA'] = eb
                             if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n): master_dict[y]['당기순이익'] = n
+                            if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap): master_dict[y]['자본총계'] = cap
+                            if pd.isna(master_dict[y]['순차입금']) and pd.notna(nd): master_dict[y]['순차입금'] = nd
     except: pass
     rows = []
     for y in target_years:
@@ -210,12 +221,15 @@ def render_valuation_menu():
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
+    # 💡 3. 4대 평가방식 셀렉트 박스 완벽 호환
+    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)", "EV/EBITDA"]
+    
     with st.form("top_search_form"):
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
         with col2:
-            st.selectbox("평가방식", ["PER(순이익)", "POR(영업익)"], key="ui_val_type")
+            st.selectbox("평가방식", val_options, key="ui_val_type")
         with col3:
             st.number_input("목표배수", step=1, format="%d", key="ui_target_mult")
         
@@ -233,12 +247,14 @@ def render_valuation_menu():
     val_type = st.session_state.val_type
     target_mult = st.session_state.target_mult
     
+    # 💡 에디터에서 관리할 6대 핵심 데이터셋 정의
+    cols_to_edit = ['매출액', '영업이익', 'EBITDA', '당기순이익', '자본총계', '순차입금']
+
     if corp_name:
         listing = get_ticker_listing()
         ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
         
         if not ticker_row.empty:
-            # 💡 [해결 2] 종목코드 포맷팅 강제 고정: 아이앤씨(052860) 앞자리 0 증발 현상 방어
             ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
             
             if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
@@ -261,7 +277,7 @@ def render_valuation_menu():
                 for idx, row in fin_df.iterrows():
                     yr = str(row['Year'])
                     if yr in ticker_estimates:
-                        for col in ['매출액', '영업이익', '당기순이익']:
+                        for col in cols_to_edit:
                             if pd.isna(row[col]) or row[col] == 0:
                                 if col in ticker_estimates[yr]:
                                     fin_df.at[idx, col] = float(ticker_estimates[yr][col])
@@ -280,9 +296,9 @@ def render_valuation_menu():
                     with st.form(f"fin_form_{ticker}"):
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정, [저장] 클릭 시 추정치 저장, ✅ 기호는 내 추정치)</span></div>", unsafe_allow_html=True)
                         
-                        display_df = fin_df[['Label', '매출액', '영업이익', '당기순이익']].copy()
+                        display_df = fin_df[['Label'] + cols_to_edit].copy()
                         
-                        for col in ['매출액', '영업이익', '당기순이익']:
+                        for col in cols_to_edit:
                             display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
                         
                         for r, c in manual_indices:
@@ -311,7 +327,7 @@ def render_valuation_menu():
                             
                             for idx, row in edited_df.iterrows():
                                 yr = str(orig_fin_df.at[idx, 'Year'])
-                                for col in ['매출액', '영업이익', '당기순이익']:
+                                for col in cols_to_edit:
                                     orig_val = orig_fin_df.at[idx, col]
                                     edited_val = extract_number(row[col]) 
                                     
@@ -338,21 +354,42 @@ def render_valuation_menu():
                             else: 
                                 st.error(f"❌ 저장 실패: {msg}")
 
-                    fin_df['매출액'] = edited_df['매출액'].apply(extract_number).values
-                    fin_df['영업이익'] = edited_df['영업이익'].apply(extract_number).values
-                    fin_df['당기순이익'] = edited_df['당기순이익'].apply(extract_number).values
+                    for col in cols_to_edit:
+                        fin_df[col] = edited_df[col].apply(extract_number).values
                     
-                    y1, y2 = datetime.today().year, datetime.today().year + 1
-                    col_p = '영업이익' if "POR" in val_type else '당기순이익'
-                    band_name = "POR" if "POR" in val_type else "PER"
+                    # 💡 4. 평가 방식에 따른 엔진 변수 맵핑
+                    col_p = '당기순이익'
+                    band_name = "PER"
+                    if "POR" in val_type: 
+                        col_p = '영업이익'
+                        band_name = "POR"
+                    elif "PBR" in val_type: 
+                        col_p = '자본총계'
+                        band_name = "PBR"
+                    elif "EV/EBITDA" in val_type: 
+                        col_p = 'EBITDA'
+                        band_name = "EV/EBITDA"
                     
+                    # 💡 5. 목표가 계산 핵심 알고리즘 (순차입금 역산 반영)
                     def get_t(y):
-                        v = fin_df[fin_df['Year'] == y][col_p].values
-                        if len(v) > 0 and pd.notna(v[0]) and v[0] > 0:
-                            tp = float((v[0] * 100_000_000 / stocks_count) * target_mult)
-                            return tp, float(((tp/curr_p)-1)*100), float((tp*stocks_count)/100_000_000)
+                        row = fin_df[fin_df['Year'] == y]
+                        if len(row) > 0 and pd.notna(row[col_p].values[0]) and row[col_p].values[0] > 0:
+                            val = float(row[col_p].values[0]) * 100_000_000 # 팩터 절대금액(원)
+                            
+                            if "EV" in val_type:
+                                # EV/EBITDA 로직: EV = EBITDA * Mult -> 시총 = EV - 순차입금
+                                nd = float(row['순차입금'].values[0]) * 100_000_000 if pd.notna(row['순차입금'].values[0]) else 0
+                                target_ev = val * target_mult
+                                target_marcap = target_ev - nd
+                            else:
+                                target_marcap = val * target_mult
+
+                            if target_marcap > 0:
+                                tp = float(target_marcap / stocks_count)
+                                return tp, float(((tp/curr_p)-1)*100), float(target_marcap/100_000_000)
                         return 0, 0, 0
                     
+                    y1, y2 = datetime.today().year, datetime.today().year + 1
                     tp1, up1, tm1 = get_t(y1); tp2, up2, tm2 = get_t(y2)
                     last_date_str = df_price.index[-1].strftime('%m.%d')
 
@@ -383,23 +420,45 @@ def render_valuation_menu():
                     future_dates = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
                     
+                    # 💡 6. 차트 스케일링을 위한 절대 팩터 보간(Interpolation) 세팅
                     raw_metrics = pd.to_numeric(fin_df[col_p], errors='coerce').values
-                    cur_metrics = pd.Series(raw_metrics).ffill().bfill().values * 100_000_000 / stocks_count
-                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics)
-                    
+                    cur_metrics = pd.Series(raw_metrics).ffill().bfill().values * 100_000_000
+                    cur_metrics = np.where(cur_metrics <= 0, 0.1, cur_metrics) # 0분모 방지
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     ext_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
                     
-                    today_metric = ext_interp[len(df_price)-1]
-                    today_m = float(curr_p / today_metric) if today_metric > 0 else 0
+                    # EV/EBITDA 전용 순차입금 보간 세팅
+                    raw_nd = pd.to_numeric(fin_df['순차입금'], errors='coerce').values
+                    cur_nd = pd.Series(raw_nd).ffill().bfill().values * 100_000_000
+                    nd_interp = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_nd)
                     
+                    # 현재 기준 Multiple 산출
+                    today_marcap = curr_p * stocks_count
+                    today_metric_val = ext_interp[len(df_price)-1]
+                    today_nd_val = nd_interp[len(df_price)-1]
+                    
+                    if "EV" in val_type:
+                        today_ev = today_marcap + today_nd_val
+                        today_m = float(today_ev / today_metric_val) if today_metric_val > 0 else 0
+                    else:
+                        today_m = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
+                    
+                    # 과거 밴드 추출 (과거 주가 시계열 기반)
                     date_mask = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
                     interp_history = ext_interp[:len(df_price)]
-                    metric_mask = interp_history > 0
-                    valid_mask = date_mask & metric_mask
+                    hist_nd = nd_interp[:len(df_price)]
                     
-                    period_daily_val = df_price['Close'].values[valid_mask] / interp_history[valid_mask]
-                    valid_hist_mult = period_daily_val[~np.isnan(period_daily_val)]
+                    hist_marcap = df_price['Close'].values * stocks_count
+                    
+                    if "EV" in val_type:
+                        hist_ev = hist_marcap + hist_nd
+                        all_daily_val = np.where(interp_history > 0, hist_ev / interp_history, np.nan)
+                    else:
+                        all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
+                    
+                    valid_mask = date_mask & (interp_history > 0)
+                    valid_hist_mult = all_daily_val[valid_mask]
+                    valid_hist_mult = valid_hist_mult[~np.isnan(valid_hist_mult)]
                     
                     bands = []
                     avg_m_val = 0
@@ -416,6 +475,15 @@ def render_valuation_menu():
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
+                    # 💡 7. 밴드 라인 변환 헬퍼 함수 (평가 방식별 역산)
+                    def get_band_y(m_val):
+                        if "EV" in val_type:
+                            b_ev = ext_interp * float(m_val)
+                            b_marcap = b_ev - nd_interp
+                            return np.where(ext_interp > 0, b_marcap / stocks_count, np.nan)
+                        else:
+                            return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
+
                     target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
                     x_range = [start_date_chart, target_year_end]
                     cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
@@ -431,9 +499,9 @@ def render_valuation_menu():
                     
                     important_vals_fig1 = []
                     if len(visible_ext_interp) > 0:
-                        important_vals_fig1.extend((visible_ext_interp * target_mult).tolist())
-                        if avg_m_val > 0: important_vals_fig1.extend((visible_ext_interp * avg_m_val).tolist())
-                        if today_m > 0 and today_m < 300: important_vals_fig1.extend((visible_ext_interp * today_m).tolist())
+                        important_vals_fig1.extend(pd.Series(get_band_y(target_mult)[mask_future]).dropna().tolist())
+                        if avg_m_val > 0: important_vals_fig1.extend(pd.Series(get_band_y(avg_m_val)[mask_future]).dropna().tolist())
+                        if today_m > 0 and today_m < 300: important_vals_fig1.extend(pd.Series(get_band_y(today_m)[mask_future]).dropna().tolist())
                     
                     core_max = max([price_max] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
                     core_min = min([price_min] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
@@ -446,18 +514,15 @@ def render_valuation_menu():
                     
                     for i, b in enumerate(bands):
                         if pd.notna(b):
-                            band_y = np.where(ext_interp > 0, ext_interp * float(b), np.nan)
-                            fig1.add_trace(go.Scatter(x=extended_dates, y=band_y, mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
+                            fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
                     
-                    target_line_y = np.where(ext_interp > 0, ext_interp * target_mult, np.nan)
-                    fig1.add_trace(go.Scatter(x=extended_dates, y=target_line_y, mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
+                    fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
 
                     if avg_m_val > 0:
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=np.where(ext_interp > 0, ext_interp * avg_m_val, np.nan), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
+                        fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
 
                     if today_m > 0 and today_m < 300:
-                        today_line_y = np.where(ext_interp > 0, ext_interp * today_m, np.nan)
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=today_line_y, mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
+                        fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
 
                     fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
@@ -465,7 +530,6 @@ def render_valuation_menu():
 
                     st.write("")
                     fig2 = go.Figure()
-                    daily_val_y = np.where(interp_history > 0, df_price['Close'].values / interp_history, np.nan)
                     
                     important_mults = [target_mult]
                     if avg_m_val > 0: important_mults.append(avg_m_val)
@@ -479,7 +543,7 @@ def render_valuation_menu():
                     y2_max = core_m_max * 1.6 
                     fig2.update_yaxes(range=[0, y2_max])
 
-                    fig2.add_trace(go.Scatter(x=df_price.index, y=daily_val_y, mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
+                    fig2.add_trace(go.Scatter(x=df_price.index, y=all_daily_val[:len(df_price)], mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
                     
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     for i, b in enumerate(bands):
