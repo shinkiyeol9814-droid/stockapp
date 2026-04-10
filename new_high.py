@@ -6,7 +6,7 @@ import requests
 import base64
 
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
-GITHUB_BRANCH = "dev" 
+GITHUB_BRANCH = "main" 
 
 def get_all_reports():
     data_path = "data/"
