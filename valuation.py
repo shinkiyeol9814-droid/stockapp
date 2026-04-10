@@ -189,9 +189,8 @@ def extract_number(val):
     m = re.search(r'-?\d+\.?\d*', s)
     return float(m.group()) if m else 0.0
 
-# --- 💡 [핵심 버그 수정] 안전한 콜백 함수 (.get 활용) ---
+# --- 안전한 콜백 함수 (.get 활용) ---
 def execute_search():
-    # 위젯이 메모리에서 날아갔을 경우를 대비해 .get()으로 기본값을 주어 에러를 차단합니다.
     ui_corp = st.session_state.get('ui_corp_name', '').strip()
     if ui_corp != "":
         st.session_state.search_corp_name = ui_corp
@@ -215,19 +214,21 @@ def render_valuation_menu():
     if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.search_corp_name
     if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.val_type
     
-    # 💡 포맷 변경용 초기값
     if 'ui_target_mult_float' not in st.session_state: st.session_state.ui_target_mult_float = 1.0
     if 'ui_target_mult_int' not in st.session_state: st.session_state.ui_target_mult_int = 10
 
+    # 💡 [핵심 버그 수정] 일반 버튼(.stButton)과 폼 버튼([data-testid="stFormSubmitButton"]) 모두 타겟팅
     st.markdown("""
         <style>
-        .stButton>button {
+        .stButton > button, [data-testid="stFormSubmitButton"] > button {
             background-color: #ffe6e6 !important; 
             border-color: #ffcccc !important;
+        }
+        .stButton > button p, [data-testid="stFormSubmitButton"] > button p {
             color: #d63031 !important; 
             font-weight: 600 !important;
         }
-        .stButton>button:hover {
+        .stButton > button:hover, [data-testid="stFormSubmitButton"] > button:hover {
             background-color: #ffcccc !important;
         }
         </style>
