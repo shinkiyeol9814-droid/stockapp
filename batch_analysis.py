@@ -98,7 +98,7 @@ async def get_google_news(session, stock_name):
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
     
     try:
-        async with session.get(url, timeout=5) as res:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as res:
             text = await res.text()
             root = ET.fromstring(text)
             
@@ -203,10 +203,12 @@ async def main():
         
         async with aiohttp.ClientSession() as session:
             tasks = [fetch_stock_data(s, client_tg, session, sem) for s in stocks]
-            results = await asyncio.gather(*tasks)
-            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 예외 필터링
             for res in results:
-                if res is not None:
+                if isinstance(res, Exception):
+                    print(f"⚠️ 수집 실패: {res}")
+                elif res is not None:
                     analysis_queue.append(res)
             
         await client_tg.disconnect()
