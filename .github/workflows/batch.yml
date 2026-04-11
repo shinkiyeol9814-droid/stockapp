@@ -1,33 +1,33 @@
 name: Stock High Price Batch (Telegram + Gemini)
 
 on:
-  # dev에서 변경한 외부 API 호출 방식(repository_dispatch)과 기존 스케줄(schedule) 중 
-  # 필요에 따라 선택하시면 됩니다. 일단 dev의 방식을 살리되, 스케줄을 주석 처리해 두겠습니다.
   repository_dispatch:
-    types: [trigger_batch]  # 'trigger_batch'라는 이름의 신호를 받으면 실행함
+    types: [trigger_batch]  
   # schedule:
-  #   - cron: '40 6 * * 1-5'  # 월~금 한국시간 15:40 (정규장 종료 후)
-  #   - cron: '20 11 * * 1-5' # 월~금 한국시간 20:20 (시간외 종료 후)
-  workflow_dispatch: # 수동 실행 버튼 유지
+  #   - cron: '40 6 * * 1-5'  
+  #   - cron: '20 11 * * 1-5' 
+  workflow_dispatch: 
 
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4 # 💡 v4로 업데이트 유지
+        uses: actions/checkout@v4 
         with:
-          ref: dev # 💡 이제 dev 브랜치를 기준으로 실행하도록 변경
+          # 💡 [해결 1] 'main'이나 'dev' 글자 대신 동적 변수 사용
+          # 이제 어느 브랜치에서 실행하든 알아서 자기 브랜치를 물고 옵니다.
+          ref: ${{ github.ref_name }}
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v5 # 💡 v5로 업데이트 유지
+        uses: actions/setup-python@v5 
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt # 💡 dev 브랜치 방식 유지
+          pip install -r requirements.txt 
 
       - name: Run Batch Analysis Script
         env:
@@ -44,7 +44,7 @@ jobs:
           git add data/
           git commit -m "Auto-update: Daily stock high price report & AI analysis" || echo "No changes to commit"
           
-          # 💡 [핵심] UI에서 수정한 최신 내역을 봇이 먼저 다운받아 병합하도록 설정 (dev 브랜치 기준)
-          git pull --rebase origin dev
-          
-          git push origin dev
+          # 💡 [해결 2] push와 pull에도 동적 변수 적용
+          # main으로 머지되면 알아서 origin main으로 당기고 밉니다.
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }}
