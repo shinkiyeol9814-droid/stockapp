@@ -17,7 +17,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4 # 💡 v4로 업데이트 유지
         with:
-          ref: dev # 💡 이제 dev 브랜치를 기준으로 실행하도록 변경
+          ref: main # 💡 이제 dev 브랜치를 기준으로 실행하도록 변경
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5 # 💡 v5로 업데이트 유지
@@ -45,6 +45,6 @@ jobs:
           git commit -m "Auto-update: Daily stock high price report & AI analysis" || echo "No changes to commit"
           
           # 💡 [핵심] UI에서 수정한 최신 내역을 봇이 먼저 다운받아 병합하도록 설정 (dev 브랜치 기준)
-          git pull --rebase origin dev
+          git pull --rebase origin main
           
-          git push origin dev
+          git push origin main
