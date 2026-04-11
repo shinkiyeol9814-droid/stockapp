@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import aiohttp
 import time
 import requests
 import urllib.parse
@@ -31,7 +32,7 @@ def get_high_stocks():
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    # 💡 1. 요청사항 반영: 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
+    # 💡 요청사항: 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
     
     # 당일 상승 마감(양봉) 종목만 선정
@@ -82,42 +83,63 @@ async def get_telegram_news(client, stock_name):
     messages_text = []
     today = datetime.now().date()
     try:
-        # 💡 2. 요청사항 반영: 찌라시 수집 개수 5개로 변경
+        # 💡 요청사항: 찌라시 수집 개수 5개로 통제
         async for message in client.iter_messages(None, search=stock_name, limit=5):
             if message.date.date() == today and message.text:
                 messages_text.append(message.text)
     except Exception as e:
-        print(f"텔레그램 에러: {e}")
+        print(f"텔레그램 에러 ({stock_name}): {e}")
     return " \n".join(messages_text)
 
-def get_google_news(stock_name):
+# 💡 구글 뉴스 크롤링 완전 비동기화 (aiohttp 적용)
+async def get_google_news(session, stock_name):
+    query = f'"{stock_name}" 특징주 OR 주가'
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+    
     try:
-        query = f'"{stock_name}" 특징주 OR 주가'
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
-        
-        res = requests.get(url, timeout=5)
-        root = ET.fromstring(res.text)
-        
-        news_titles = []
-        news_markdown = []
-        first_link = "" 
-        
-        # 구글 뉴스는 핵심 2개만 유지하여 토큰 절약
-        for i, item in enumerate(root.findall('.//item')[:2]):
-            title = item.find('title').text
-            link = item.find('link').text
-            news_titles.append(title)
-            news_markdown.append(f"- [{title}]({link})")
-            if i == 0:
-                first_link = link
-                
-        ai_text = " \n".join(news_titles) if news_titles else "관련 뉴스 없음"
-        ui_markdown = " \n".join(news_markdown) if news_markdown else "관련 뉴스 없음"
-        
-        return ai_text, ui_markdown, first_link
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as res:
+            text = await res.text()
+            root = ET.fromstring(text)
+            
+            news_titles = []
+            news_markdown = []
+            first_link = "" 
+            
+            # 구글 뉴스는 핵심 2개만 유지하여 토큰 절약
+            for i, item in enumerate(root.findall('.//item')[:2]):
+                title = item.find('title').text
+                link = item.find('link').text
+                news_titles.append(title)
+                news_markdown.append(f"- [{title}]({link})")
+                if i == 0: first_link = link
+                    
+            ai_text = " \n".join(news_titles) if news_titles else "관련 뉴스 없음"
+            ui_markdown = " \n".join(news_markdown) if news_markdown else "관련 뉴스 없음"
+            return ai_text, ui_markdown, first_link
+            
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
+
+# 💡 텔레그램과 구글 뉴스를 동시에 비동기로 긁어오는 워커 함수
+async def fetch_stock_data(s, client_tg, session, sem):
+    async with sem: # 과부하 차단(동시접속 제한)
+        tg_task = get_telegram_news(client_tg, s['종목명'])
+        news_task = get_google_news(session, s['종목명'])
+        
+        tg_text, (ai_news_text, ui_news_markdown, first_link) = await asyncio.gather(tg_task, news_task)
+        
+        s['최신뉴스'] = ai_news_text.split('\n')[0] if ai_news_text != "관련 뉴스 없음" else "관련 뉴스 없음"
+        s['최신뉴스_링크'] = first_link 
+        s['뉴스목록'] = ui_news_markdown
+        s['PER'] = "조회필요"
+        
+        if not tg_text.strip() and ai_news_text == "관련 뉴스 없음":
+            s['추정 사유'] = "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
+            return None # AI 분석 큐에서 제외
+        else:
+            s['추정 사유'] = "분석 대기"
+            return {'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s}
 
 def summarize_batch_with_gemini(batch_data, max_retries=2):
     if not batch_data: return {}
@@ -140,8 +162,9 @@ def summarize_batch_with_gemini(batch_data, max_retries=2):
 
     for attempt in range(max_retries):
         try:
+            # 💡 [요청사항] 최신 모델 Gemini 2.5 Flash 적용 확정
             response = client_ai.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-2.5-flash', 
                 contents=prompt,
             )
             res_text = response.text.strip()
@@ -163,7 +186,7 @@ def summarize_batch_with_gemini(batch_data, max_retries=2):
 
 async def main():
     start_time = time.time()
-    print("=== 주도주 트래킹 배치 시작 ===")
+    print("=== 주도주 트래킹 배치 시작 (초고속 병렬 모드) ===")
     stocks = get_high_stocks()
     
     if not stocks:
@@ -172,28 +195,27 @@ async def main():
         client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
         await client_tg.start()
         
+        print(f"\n⚡ {len(stocks)}개 종목 뉴스/찌라시 병렬 크롤링 시작...")
+        
+        # 💡 수백 개의 종목을 비동기(병렬)로 동시에 크롤링 처리
         analysis_queue = []
-        for s in stocks:
-            print(f" -> [{s['종목명']}] 데이터 수집 중...")
-            tg_text = await get_telegram_news(client_tg, s['종목명'])
-            ai_news_text, ui_news_markdown, first_link = get_google_news(s['종목명'])
-            
-            s['최신뉴스'] = ai_news_text.split('\n')[0] if ai_news_text != "관련 뉴스 없음" else "관련 뉴스 없음"
-            s['최신뉴스_링크'] = first_link 
-            s['뉴스목록'] = ui_news_markdown
-            s['PER'] = "조회필요"
-            
-            if not tg_text.strip() and ai_news_text == "관련 뉴스 없음":
-                s['추정 사유'] = "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
-            else:
-                s['추정 사유'] = "분석 대기"
-                analysis_queue.append({'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s})
-            await asyncio.sleep(1) 
+        sem = asyncio.Semaphore(15) # 동시 접속 15개 제한
+        
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_stock_data(s, client_tg, session, sem) for s in stocks]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 예외 필터링
+            for res in results:
+                if isinstance(res, Exception):
+                    print(f"⚠️ 수집 실패: {res}")
+                elif res is not None:
+                    analysis_queue.append(res)
             
         await client_tg.disconnect()
+        print(f"✅ 크롤링 완료. AI 분석 대상: {len(analysis_queue)}건")
 
-        # 💡 3. 요청사항 반영: 청크 사이즈 5개로 유지 (정확도 극대화)
-        chunk_size = 5 
+        # 💡 [요청사항] 15개 청크 사이즈 적용 (API 호출 횟수 최적화)
+        chunk_size = 15 
         retry_queue = []
         
         # 1차 분석
@@ -210,8 +232,8 @@ async def main():
                     print(f"   🚨 AI 요약 누락: [{stock_name}] -> 재시도 대기열 추가")
                     retry_queue.append(item)
             
-            # API 제한 방어 휴식
-            time.sleep(10)
+            # 청크 단위 처리 후 API 제한 회피를 위한 짧은 휴식
+            time.sleep(5)
 
         # 누락분 재시도
         if retry_queue:
@@ -230,7 +252,7 @@ async def main():
                         print(f"   ❌ 최종 누락: [{item['name']}] -> 수동 확인 필요")
                         item['ref']['추정 사유'] = "추출 누락 (수동 확인 필요)"
                 
-                time.sleep(10)
+                time.sleep(5)
 
     end_time = time.time()
     m, sec = divmod(end_time - start_time, 60)

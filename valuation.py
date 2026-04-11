@@ -122,7 +122,6 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    # 💡 EBITDA, 순차입금 제거 및 핵심 4개 항목 유지
     master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan, '자본총계': np.nan} for y in target_years}
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
@@ -153,7 +152,11 @@ def get_hybrid_financials(ticker):
                                 return np.nan
                             
                             r = get_v(r'^(매출액|영업수익)')
-                            o = get_v(r'^영업이익')
+                            
+                            o = get_v(r'^영업이익$')
+                            if pd.isna(o):
+                                o = get_v(r'^영업이익\(발표기준\)')
+                                
                             n = get_v(r'^(당기순이익|지배주주순이익)')
                             cap = get_v(r'^(자본총계|지배주주지분)')
                             
@@ -186,6 +189,20 @@ def extract_number(val):
     m = re.search(r'-?\d+\.?\d*', s)
     return float(m.group()) if m else 0.0
 
+# --- 안전한 콜백 함수 (.get 활용) ---
+def execute_search():
+    ui_corp = st.session_state.get('ui_corp_name', '').strip()
+    if ui_corp != "":
+        st.session_state.search_corp_name = ui_corp
+        
+        ui_val = st.session_state.get('ui_val_type', 'POR(영업익)')
+        st.session_state.val_type = ui_val
+        
+        if "PBR" in ui_val:
+            st.session_state.target_mult = float(st.session_state.get('ui_target_mult_float', 1.0))
+        else:
+            st.session_state.target_mult = float(st.session_state.get('ui_target_mult_int', 10))
+
 # --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
@@ -196,19 +213,22 @@ def render_valuation_menu():
 
     if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.search_corp_name
     if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.val_type
-    if 'ui_target_mult' not in st.session_state: st.session_state.ui_target_mult = st.session_state.target_mult
+    
+    if 'ui_target_mult_float' not in st.session_state: st.session_state.ui_target_mult_float = 1.0
+    if 'ui_target_mult_int' not in st.session_state: st.session_state.ui_target_mult_int = 10
 
+    # 💡 [핵심 버그 수정] 일반 버튼(.stButton)과 폼 버튼([data-testid="stFormSubmitButton"]) 모두 타겟팅
     st.markdown("""
         <style>
-        [data-testid="stFormSubmitButton"] button {
+        .stButton > button, [data-testid="stFormSubmitButton"] > button {
             background-color: #ffe6e6 !important; 
             border-color: #ffcccc !important;
         }
-        [data-testid="stFormSubmitButton"] button p {
+        .stButton > button p, [data-testid="stFormSubmitButton"] > button p {
             color: #d63031 !important; 
             font-weight: 600 !important;
         }
-        [data-testid="stFormSubmitButton"] button:hover {
+        .stButton > button:hover, [data-testid="stFormSubmitButton"] > button:hover {
             background-color: #ffcccc !important;
         }
         </style>
@@ -216,33 +236,27 @@ def render_valuation_menu():
 
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
     
-    # 💡 3대 평가방식만 깔끔하게 유지
     val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)"]
     
-    with st.form("top_search_form"):
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
-        with col2:
-            st.selectbox("평가방식", val_options, key="ui_val_type")
-        with col3:
-            st.number_input("목표배수", step=0.1, format="%.2f", key="ui_target_mult")
-        
-        submit_top = st.form_submit_button("갱신", type="primary", use_container_width=True)
-
-    if submit_top:
-        if st.session_state.ui_corp_name.strip() == "":
-            st.toast("⚠️ 종목명을 입력해주세요! (기존 화면이 유지됩니다)", icon="👀")
+    col1, col2, col3, col4 = st.columns([2, 1.5, 1.2, 1])
+    with col1:
+        st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자", on_change=execute_search)
+    with col2:
+        st.selectbox("평가방식", val_options, key="ui_val_type", on_change=execute_search)
+    with col3:
+        if "PBR" in st.session_state.get('ui_val_type', st.session_state.val_type):
+            st.number_input("목표배수", step=0.1, format="%.2f", value=float(st.session_state.target_mult), key="ui_target_mult_float", on_change=execute_search)
         else:
-            st.session_state.search_corp_name = st.session_state.ui_corp_name.strip()
-            st.session_state.val_type = st.session_state.ui_val_type
-            st.session_state.target_mult = float(st.session_state.ui_target_mult)
+            st.number_input("목표배수", step=1, format="%d", value=int(st.session_state.target_mult), key="ui_target_mult_int", on_change=execute_search)
+    with col4:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        st.button("갱신", type="primary", use_container_width=True, on_click=execute_search)
 
     corp_name = st.session_state.search_corp_name
     val_type = st.session_state.val_type
     target_mult = float(st.session_state.target_mult)
     
-    # 💡 4대 핵심 컬럼만 편집창에 노출
+    display_mult_str = f"{target_mult:.2f}" if "PBR" in val_type else f"{int(target_mult)}"
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계']
 
     if corp_name:
@@ -352,7 +366,6 @@ def render_valuation_menu():
                     for col in cols_to_edit:
                         fin_df[col] = edited_df[col].apply(extract_number).values
                     
-                    # 💡 평가 방식 변수 맵핑 (EV/EBITDA 제거)
                     col_p = '당기순이익'
                     band_name = "PER"
                     if "POR" in val_type: 
@@ -438,7 +451,9 @@ def render_valuation_menu():
                             if len(filtered_hist) > 0:
                                 avg_m_val = np.mean(filtered_hist)
                                 mn, mx = np.min(filtered_hist), np.max(filtered_hist)
-                                if mx <= mn: mx = mn + 5
+                                
+                                fallback_step = 1.0 if "PBR" in val_type else 5.0
+                                if mx <= mn: mx = mn + fallback_step
                                 stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn+(stp*i) > 0])))
 
@@ -477,7 +492,7 @@ def render_valuation_menu():
                         if pd.notna(b):
                             fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dot')))
                     
-                    fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
+                    fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
 
                     if avg_m_val > 0:
                         fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
@@ -512,8 +527,8 @@ def render_valuation_menu():
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i%4], width=1, dash='dash')))
                             fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=float(b), text=f"{b}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color=cols[i%4], weight="bold"))
                     
-                    fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name=f'<b>목표Val ({target_mult}x)</b>', line=dict(color='blue', width=1.5)))
-                    fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=target_mult, text=f"목표: {target_mult}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderpad=3, borderwidth=1)
+                    fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[target_mult, target_mult], mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
+                    fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=target_mult, text=f"목표: {display_mult_str}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(0,0,255,0.8)", bordercolor="blue", borderpad=3, borderwidth=1)
                     
                     if avg_m_val > 0:
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[avg_m_val, avg_m_val], mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=2)))
