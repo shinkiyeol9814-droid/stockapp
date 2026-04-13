@@ -261,11 +261,16 @@ def render_valuation_menu():
 
     if corp_name:
         listing = get_ticker_listing()
+        clean_target = corp_name.replace(" ", "").upper()
         
-        # 💡 [핵심 개선] 검색어와 DB 종목명 양쪽에서 모든 띄어쓰기(공백)를 제거하고 대문자로 멱살잡고 비교
-        clean_target_name = corp_name.replace(" ", "").upper()
-        ticker_row = listing[listing['Name'].astype(str).str.replace(" ", "").str.upper() == clean_target_name]
+        # 1. 종목명으로 검색 (검색어와 DB 양쪽의 공백을 모두 제거하고 대문자로 비교)
+        ticker_row = listing[listing['Name'].astype(str).str.replace(" ", "").str.upper() == clean_target]
         
+        # 2. 이름으로 못 찾았는데 입력값이 숫자(종목코드)라면 코드로 검색
+        if ticker_row.empty and corp_name.isdigit():
+            ticker_row = listing[listing['Code'].astype(str).str.endswith(corp_name)]
+            
+        # ▼ 여기서부터는 기열님이 올려주신 기존 코드 그대로 유지! (이게 날아가면 안 됨) ▼
         if not ticker_row.empty:
             ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
             
