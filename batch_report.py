@@ -1,4 +1,5 @@
 import os
+import time  # 💡 추가!
 import json
 import asyncio
 from datetime import datetime, timedelta
@@ -49,7 +50,7 @@ async def get_reports_from_telegram(client, hours=12):
             
     return "\n\n---\n\n".join(all_messages)
 
-def analyze_reports_with_gemini(raw_text):
+def analyze_reports_with_gemini(raw_text, max_retries=3):
     if not raw_text.strip():
         return []
         
@@ -71,15 +72,25 @@ def analyze_reports_with_gemini(raw_text):
     ]
     
     [텍스트 데이터]
-    {raw_text[:20000]}
+    {raw_text[:8000]}
     """
-    try:
-        response = client_ai.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        res_text = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(res_text)
-    except Exception as e:
-        print(f"⚠️ AI 분석 에러: {e}")
-        return []
+    
+    # 💡 [핵심] 실패해도 포기하지 않고 3번까지 재시도하는 로직
+    for attempt in range(max_retries):
+        try:
+            response = client_ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            res_text = response.text.strip().replace("```json", "").replace("```", "")
+            return json.loads(res_text)
+            
+        except Exception as e:
+            print(f"⚠️ AI 분석 에러 (시도 {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                wait_time = 15 # 15초 대기
+                print(f"⏳ 구글 서버 과부하. {wait_time}초 후 다시 시도합니다...")
+                time.sleep(wait_time)
+            else:
+                print("❌ 최대 재시도 횟수를 초과하여 분석을 포기합니다.")
+                return []
 
 async def main():
     print("=== 장전/장후 증권사 레포트 배치 시작 ===")
