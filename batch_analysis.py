@@ -1,6 +1,12 @@
 import os
 import json
 import asyncio
+import aiohttp
+import time
+import requests
+import urllib.parse
+import xml.etree.ElementTree as ET
+import re 
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
@@ -16,129 +22,255 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-TARGET_CHANNELS = [
-    "소중한 추억", "리포트 갤러리", "[주식] 증권사 리포트", 
-    "선진짱 주식공부방", "영리한타이거의 주식공부방", "언젠간 현인"
-]
-
-async def get_reports_from_telegram(client, hours=12):
-    all_messages = []
-    limit_time = datetime.now() - timedelta(hours=hours)
+def get_high_stocks():
+    print("데이터 수집 및 필터링 시작...")
+    df = fdr.StockListing('KRX')
     
-    for channel in TARGET_CHANNELS:
-        try:
-            async for message in client.iter_messages(channel, limit=50):
-                if message.date.replace(tzinfo=None) < limit_time:
-                    break
-                # 리포트나 목표주가 관련 키워드가 있는 메시지만 수집
-                if message.text and any(k in message.text for k in ["리포트", "기업분석", "목표주가", "TP"]):
-                    all_messages.append(message.text)
-        except Exception as e:
-            print(f"⚠️ 채널 '{channel}' 수집 에러: {e}")
-            
-    return "\n\n---\n\n".join(all_messages)
-
-def analyze_reports_with_gemini(raw_text):
-    if not raw_text.strip():
-        return []
-        
-    prompt = f"""너는 증권사 레포트 핵심 데이터 추출기야. 아래 텍스트에서 레포트 정보를 찾아 JSON 배열로 응답해.
-    1. 동일 종목이라도 증권사가 다르면 별도 객체로 생성해.
-    2. 중복된 레포트(종목+증권사 동일)는 가장 내용이 알찬 하나만 남겨.
-    3. '투자포인트'는 반드시 배열 형태로 2~3개 핵심 요약해.
-    4. 목표주가가 없으면 "N/A"로 표기해.
+    # 데이터 숫자형 변환
+    df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
+    df['Close'] = pd.to_numeric(df['Close'], errors='coerce').fillna(0)
+    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
+    df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    [응답 포맷]
-    [
-        {{
-            "종목명": "종목이름",
-            "증권사": "증권사명",
-            "목표주가": "숫자만(예: 250000)",
-            "평가방식": "구두 표기(예: 25년 PER 12배 적용)",
-            "투자포인트": ["포인트1", "포인트2"]
-        }}
-    ]
+    # 💡 요청사항: 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
+    df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
     
-    [텍스트 데이터]
-    {raw_text[:20000]}
-    """
-    try:
-        response = client_ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-        res_text = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(res_text)
-    except Exception as e:
-        print(f"⚠️ AI 분석 에러: {e}")
-        return []
-
-async def main():
-    print("=== 장전/장후 증권사 레포트 배치 시작 ===")
-    
-    # 1. 텔레그램 연결 (아까 빠졌던 부분!)
-    client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
-    await client_tg.start()
-    
-    print("1. 텔레그램 6개 채널 수집 중...")
-    raw_text = await get_reports_from_telegram(client_tg)
-    
-    await client_tg.disconnect() # 안전하게 연결 종료
-    
-    if not raw_text:
-        print("조건에 맞는 새로운 레포트 메시지가 없습니다.")
-        return
-
-    print("2. Gemini AI 데이터 정제 중...")
-    analyzed_data = analyze_reports_with_gemini(raw_text)
-    
-    if not analyzed_data:
-        print("AI가 추출한 데이터가 없습니다.")
-        return
-
-    print("3. FDR 실시간 시총 및 Upside 매칭 중...")
-    df_listing = fdr.StockListing('KRX')
+    # 당일 상승 마감(양봉) 종목만 선정
+    df = df[df['ChagesRatio'] > 0.0] 
+    candidates = df.sort_values('ChagesRatio', ascending=False)
     results = []
     
-    for item in analyzed_data:
-        # 목표주가에 쉼표(,)나 '원' 글자가 섞여있어도 숫자만 빼내기
-        target_price_str = item.get("목표주가", "N/A")
-        target_price = 0
-        if target_price_str != "N/A":
-            try:
-                target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
-            except:
-                target_price = "N/A"
-
-        matched = df_listing[df_listing['Name'] == item['종목명']]
-        if not matched.empty:
-            curr_price = matched.iloc[0]['Close']
-            curr_marcap = matched.iloc[0]['Marcap']
-            item['현재시총'] = int(curr_marcap)
+    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
+    
+    print(f"필터 통과 {len(candidates)}개 종목 신고가 정밀 연산 중...")
+    for row in candidates.itertuples():
+        try:
+            hist = fdr.DataReader(row.Code, start_date)
+            if hist.empty or len(hist) < 20: continue
             
-            if target_price != "N/A" and curr_price > 0 and target_price > 0:
-                upside = (target_price / curr_price - 1) * 100
-                item['Upside'] = round(upside, 1)
-                item['목표시총'] = int(curr_marcap * (1 + upside/100))
-                item['목표주가'] = f"{target_price:,}원" # 보기 좋게 다시 포맷팅
-            else:
-                item['Upside'] = "N/A"
-                item['목표시총'] = "N/A"
-                if target_price != "N/A": item['목표주가'] = f"{target_price:,}원"
-                
-            results.append(item)
+            # 오늘을 제외한 '과거' 데이터만 분리하여 매물대 계산 (윗꼬리 왜곡 방지)
+            past_hist = hist.iloc[:-1]
+            if past_hist.empty: continue
+            
+            # 과거 기간별 최고 '종가' (매물대 저항선)
+            past_max_1y = past_hist['Close'].max()
+            past_max_6m = past_hist['Close'].tail(120).max()
+            past_max_3m = past_hist['Close'].tail(60).max()
+            
+            today_close = int(hist['Close'].iloc[-1])
+            
+            period_flag = ""
+            # 오늘 종가가 과거 고점의 98% 이상이면 안착으로 간주
+            if today_close >= past_max_1y * 0.98: period_flag = "1년(52주) 신고가"
+            elif today_close >= past_max_6m * 0.98: period_flag = "6개월 신고가"
+            elif today_close >= past_max_3m * 0.98: period_flag = "3개월 신고가"
+            
+            if period_flag:
+                results.append({
+                    "종목명": row.Name,
+                    "코드": row.Code,
+                    "현재가": today_close,
+                    "시가총액": int(row.Marcap),
+                    "등락률": row.ChagesRatio,
+                    "돌파기간": period_flag
+                })
+        except Exception:
+            pass
+            
+    return results
 
-    # 4. JSON 파일로 이쁘게 굽기
-    print(f"4. 최종 데이터 {len(results)}건 저장 중...")
+async def get_telegram_news(client, stock_name):
+    messages_text = []
+    today = datetime.now().date()
+    try:
+        # 💡 요청사항: 찌라시 수집 개수 5개로 통제
+        async for message in client.iter_messages(None, search=stock_name, limit=5):
+            if message.date.date() == today and message.text:
+                messages_text.append(message.text)
+    except Exception as e:
+        print(f"텔레그램 에러 ({stock_name}): {e}")
+    return " \n".join(messages_text)
+
+# 💡 구글 뉴스 크롤링 완전 비동기화 (aiohttp 적용)
+async def get_google_news(session, stock_name):
+    query = f'"{stock_name}" 특징주 OR 주가'
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+    
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as res:
+            text = await res.text()
+            root = ET.fromstring(text)
+            
+            news_titles = []
+            news_markdown = []
+            first_link = "" 
+            
+            # 구글 뉴스는 핵심 2개만 유지하여 토큰 절약
+            for i, item in enumerate(root.findall('.//item')[:2]):
+                title = item.find('title').text
+                link = item.find('link').text
+                news_titles.append(title)
+                news_markdown.append(f"- [{title}]({link})")
+                if i == 0: first_link = link
+                    
+            ai_text = " \n".join(news_titles) if news_titles else "관련 뉴스 없음"
+            ui_markdown = " \n".join(news_markdown) if news_markdown else "관련 뉴스 없음"
+            return ai_text, ui_markdown, first_link
+            
+    except Exception as e:
+        return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
+
+# 💡 텔레그램과 구글 뉴스를 동시에 비동기로 긁어오는 워커 함수
+async def fetch_stock_data(s, client_tg, session, sem):
+    async with sem: # 과부하 차단(동시접속 제한)
+        tg_task = get_telegram_news(client_tg, s['종목명'])
+        news_task = get_google_news(session, s['종목명'])
+        
+        tg_text, (ai_news_text, ui_news_markdown, first_link) = await asyncio.gather(tg_task, news_task)
+        
+        s['최신뉴스'] = ai_news_text.split('\n')[0] if ai_news_text != "관련 뉴스 없음" else "관련 뉴스 없음"
+        s['최신뉴스_링크'] = first_link 
+        s['뉴스목록'] = ui_news_markdown
+        s['PER'] = "조회필요"
+        
+        if not tg_text.strip() and ai_news_text == "관련 뉴스 없음":
+            s['추정 사유'] = "시장 수급 유입 (구체적인 뉴스/찌라시 미발견)"
+            return None # AI 분석 큐에서 제외
+        else:
+            s['추정 사유'] = "분석 대기"
+            return {'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s}
+
+def summarize_batch_with_gemini(batch_data, max_retries=2):
+    if not batch_data: return {}
+
+    prompt = f"""너는 냉철한 주식 분석가야. 아래 전달하는 {len(batch_data)}개 종목의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
+반드시 아래와 같이 [종목명|요약내용] 규칙의 텍스트로만 대답하고, 전달된 {len(batch_data)}개 종목을 단 하나도 빠짐없이 전부 출력해.
+주의: 앞에 '1.', '-', '*' 같은 기호나 번호를 절대 붙이지 말고 오직 '종목명|요약내용' 형태로만 출력해.
+
+[출력 예시]
+삼성전자|반도체 업황 회복 및 HBM 수혜 기대
+카카오|비용 절감 및 실적 개선
+
+[분석할 데이터]
+"""
+    for data in batch_data:
+        # 텍스트 슬라이싱으로 토큰 한도 초과 방어
+        safe_news = data['news'][:300] + "..." if len(data['news']) > 300 else data['news']
+        safe_tg = data['tg'][:300] + "..." if len(data['tg']) > 300 else data['tg']
+        prompt += f"■ {data['name']}\n- 뉴스: {safe_news}\n- 찌라시: {safe_tg}\n\n"
+
+    for attempt in range(max_retries):
+        try:
+            # 💡 [요청사항] 최신 모델 Gemini 2.5 Flash 적용 확정
+            response = client_ai.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+            )
+            res_text = response.text.strip()
+            reasons_dict = {}
+            for line in res_text.split('\n'):
+                if '|' in line:
+                    parts = line.split('|', 1)
+                    # 무적의 정규식 파싱: AI가 붙인 기호 제거
+                    raw_name = parts[0].strip()
+                    stock_name = re.sub(r'^[\d\.\-\*\s]+', '', raw_name).replace("[", "").replace("]", "")
+                    summary = parts[1].strip().replace("[", "").replace("]", "")
+                    reasons_dict[stock_name] = summary
+            return reasons_dict
+        except Exception as e:
+            wait_time = 65 if "429" in str(e) else 10
+            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기...")
+            time.sleep(wait_time) 
+    return {}
+
+async def main():
+    start_time = time.time()
+    print("=== 주도주 트래킹 배치 시작 (초고속 병렬 모드) ===")
+    stocks = get_high_stocks()
+    
+    if not stocks:
+        print("조건을 만족하는 신고가 종목이 없습니다.")
+    else:
+        client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
+        await client_tg.start()
+        
+        print(f"\n⚡ {len(stocks)}개 종목 뉴스/찌라시 병렬 크롤링 시작...")
+        
+        # 💡 수백 개의 종목을 비동기(병렬)로 동시에 크롤링 처리
+        analysis_queue = []
+        sem = asyncio.Semaphore(15) # 동시 접속 15개 제한
+        
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_stock_data(s, client_tg, session, sem) for s in stocks]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 예외 필터링
+            for res in results:
+                if isinstance(res, Exception):
+                    print(f"⚠️ 수집 실패: {res}")
+                elif res is not None:
+                    analysis_queue.append(res)
+            
+        await client_tg.disconnect()
+        print(f"✅ 크롤링 완료. AI 분석 대상: {len(analysis_queue)}건")
+
+        # 💡 [요청사항] 15개 청크 사이즈 적용 (API 호출 횟수 최적화)
+        chunk_size = 15 
+        retry_queue = []
+        
+        # 1차 분석
+        for i in range(0, len(analysis_queue), chunk_size):
+            chunk = analysis_queue[i:i+chunk_size]
+            print(f"\n🚀 1차 AI 일괄 분석 중 ({i+1}~{min(i+chunk_size, len(analysis_queue))}) / {len(analysis_queue)}개...")
+            result_dict = summarize_batch_with_gemini(chunk)
+            
+            for item in chunk:
+                stock_name = item['name']
+                if stock_name in result_dict:
+                    item['ref']['추정 사유'] = result_dict[stock_name]
+                else:
+                    print(f"   🚨 AI 요약 누락: [{stock_name}] -> 재시도 대기열 추가")
+                    retry_queue.append(item)
+            
+            # 청크 단위 처리 후 API 제한 회피를 위한 짧은 휴식
+            time.sleep(5)
+
+        # 누락분 재시도
+        if retry_queue:
+            print(f"\n♻️ 누락된 {len(retry_queue)}개 종목에 대해 2차 재시도 분석을 시작합니다...")
+            for i in range(0, len(retry_queue), chunk_size):
+                chunk = retry_queue[i:i+chunk_size]
+                print(f"   -> 재시도 분석 중 ({i+1}~{min(i+chunk_size, len(retry_queue))}) / {len(retry_queue)}개...")
+                
+                result_dict = summarize_batch_with_gemini(chunk)
+                
+                for item in chunk:
+                    if item['name'] in result_dict:
+                        item['ref']['추정 사유'] = result_dict[item['name']]
+                        print(f"   ✅ 복구 완료: [{item['name']}]")
+                    else:
+                        print(f"   ❌ 최종 누락: [{item['name']}] -> 수동 확인 필요")
+                        item['ref']['추정 사유'] = "추출 누락 (수동 확인 필요)"
+                
+                time.sleep(5)
+
+    end_time = time.time()
+    m, sec = divmod(end_time - start_time, 60)
+    execution_time_str = f"{int(m)}분 {int(sec)}초"
+
     os.makedirs('data', exist_ok=True)
     now = datetime.utcnow() + timedelta(hours=9)
     report = {
         "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
-        "results": results
+        "execution_time": execution_time_str,
+        "results": stocks
     }
     
-    file_name = f"data/report_summary_{now.strftime('%Y%m%d_%H%M')}.json"
+    file_name = f"data/report_{now.strftime('%Y%m%d_%H%M')}.json"
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"✅ 배치 완료! 저장된 파일: {file_name}")
+    print(f"\n=== 모든 분석 완료. 소요시간: {execution_time_str} ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
