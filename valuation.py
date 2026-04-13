@@ -261,7 +261,10 @@ def render_valuation_menu():
 
     if corp_name:
         listing = get_ticker_listing()
-        ticker_row = listing[listing['Name'].str.upper() == corp_name.upper()]
+        
+        # 💡 [핵심 개선] 검색어와 DB 종목명 양쪽에서 모든 띄어쓰기(공백)를 제거하고 대문자로 멱살잡고 비교
+        clean_target_name = corp_name.replace(" ", "").upper()
+        ticker_row = listing[listing['Name'].astype(str).str.replace(" ", "").str.upper() == clean_target_name]
         
         if not ticker_row.empty:
             ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
