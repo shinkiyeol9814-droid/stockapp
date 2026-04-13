@@ -44,10 +44,9 @@ if menu == "📈 가치평가 시뮬레이터":
 elif menu == "🚀 신고가 트래킹":
     render_new_high_menu()
 
-elif menu == "📰 관심종목 - 뉴스":
-    st.markdown("<div class='main-title'>📰 관심종목 - 뉴스</div>", unsafe_allow_html=True)
-    st.info("기능 준비 중입니다. 🚧")
-
+elif menu == "📰 레포트 요약":
+    render_ui_report()
+    
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
     df_history = pd.DataFrame({
