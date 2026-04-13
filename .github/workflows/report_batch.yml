@@ -11,12 +11,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
+        with: 
+          python-version: '3.10'
+          
+      # 💡 [여기가 추가된 부분입니다!] 라이브러리 설치 과정
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Run Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          # ...기타 시크릿 설정
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
         run: python batch_report.py
+        
+      # 💡 [추가] 분석 결과를 깃허브에 저장하는 로직도 잊지 마세요!
+      - name: Commit and Push
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add data/
+          git commit -m "Auto-update: Broker report & AI analysis" || echo "No changes to commit"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }}
