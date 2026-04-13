@@ -74,7 +74,7 @@ def analyze_reports_with_gemini(raw_text):
     {raw_text[:20000]}
     """
     try:
-        response = client_ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+        response = client_ai.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         res_text = response.text.strip().replace("```json", "").replace("```", "")
         return json.loads(res_text)
     except Exception as e:
