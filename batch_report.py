@@ -1,4 +1,5 @@
 import os
+import fitz  # 💡 PDF 읽기용 라이브러리 (PyMuPDF) 추가!
 import time  # 💡 추가!
 import json
 import asyncio
@@ -33,37 +34,63 @@ TARGET_CHANNELS = [
     -1001710268401
 ]
 
-async def get_reports_from_telegram(client, hours=12):
-    all_messages = []
+async def get_pdf_reports_from_telegram(client, hours=12):
+    print("📥 텔레그램에서 PDF 레포트 수집 및 1페이지 텍스트 추출 중...")
+    extracted_texts = []
     limit_time = datetime.now() - timedelta(hours=hours)
+    
+    # 임시로 PDF를 저장할 폴더 생성
+    os.makedirs('temp_pdfs', exist_ok=True)
     
     for channel in TARGET_CHANNELS:
         try:
-            async for message in client.iter_messages(channel, limit=50):
+            # limit을 10개로 좁혀서 최근 레포트만 빠르게 탐색
+            async for message in client.iter_messages(channel, limit=10):
                 if message.date.replace(tzinfo=None) < limit_time:
                     break
-                # 리포트나 목표주가 관련 키워드가 있는 메시지만 수집
-                if message.text and any(k in message.text for k in ["리포트", "기업분석", "목표주가", "TP"]):
-                    all_messages.append(message.text)
+                    
+                # 💡 메시지에 '문서(PDF)'가 첨부되어 있는지 확인
+                if message.document and message.document.mime_type == 'application/pdf':
+                    file_name = message.document.attributes[0].file_name
+                    
+                    # 제목에 '리포트'나 '종목명' 같은 힌트가 있을 때만 다운로드 (필요시 조건 추가)
+                    pdf_path = await client.download_media(message.document, file=f"temp_pdfs/{file_name}")
+                    
+                    # 💡 다운받은 PDF 열기
+                    try:
+                        doc = fitz.open(pdf_path)
+                        # 딱 1페이지만 (index 0) 텍스트 추출!
+                        first_page_text = doc[0].get_text()
+                        
+                        # 텍스트가 너무 짧으면 이미지형 PDF일 수 있으므로 패스
+                        if len(first_page_text) > 200:
+                            # AI가 파일 1개 단위로 인식하도록 구분자 확실히 치기
+                            extracted_texts.append(f"--- [파일명: {file_name}] ---\n{first_page_text}\n")
+                        
+                        doc.close()
+                    except Exception as pdf_e:
+                        print(f"⚠️ PDF 읽기 에러 ({file_name}): {pdf_e}")
+                    
+                    # 다 읽었으면 용량 관리를 위해 임시 PDF 파일 삭제
+                    if os.path.exists(pdf_path):
+                        os.remove(pdf_path)
+                        
         except Exception as e:
             print(f"⚠️ 채널 '{channel}' 수집 에러: {e}")
             
-    return "\n\n---\n\n".join(all_messages)
+    return "\n".join(extracted_texts)
 
 def analyze_reports_with_gemini(raw_text, max_retries=3):
     if not raw_text.strip():
-        print("⚠️ [SKIP] 수집된 텍스트가 없습니다.")
+        print("⚠️ [SKIP] 추출된 PDF 텍스트가 없습니다.")
         return []
         
-    # AI가 힘들어하지 않게 8000자로 자르기
-    text_to_send = raw_text[:8000] 
-    print(f"📊 [AI 분석 준비] 원본 텍스트: {len(raw_text)}자 ➡️ 전송 텍스트: {len(text_to_send)}자")
+    print(f"📊 [AI 분석 준비] 추출된 1페이지 텍스트 총합: {len(raw_text)}자")
         
-    prompt = f"""너는 증권사 레포트 핵심 데이터 추출기야. 아래 텍스트에서 레포트 정보를 찾아 JSON 배열로 응답해.
-    1. 동일 종목이라도 증권사가 다르면 별도 객체로 생성해.
-    2. 중복된 레포트(종목+증권사 동일)는 가장 내용이 알찬 하나만 남겨.
-    3. '투자포인트'는 반드시 배열 형태로 2~3개 핵심 요약해.
-    4. 목표주가가 없으면 "N/A"로 표기해.
+    prompt = f"""너는 증권사 레포트 전문 분석가야. 
+    아래 텍스트는 여러 증권사 레포트의 '1페이지'를 모아놓은 거야. 
+    여기서 정보를 추출해서 반드시 아래 JSON 배열 포맷으로만 응답해.
+    계산하지 말고 텍스트에 있는 팩트만 가져와.
     
     [응답 포맷]
     [
@@ -71,13 +98,13 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
             "종목명": "종목이름",
             "증권사": "증권사명",
             "목표주가": "숫자만(예: 250000)",
-            "평가방식": "구두 표기(예: 25년 PER 12배 적용)",
+            "평가방식": "텍스트에 있는 밸류에이션 근거 (예: 25년 PER 12배)",
             "투자포인트": ["포인트1", "포인트2"]
         }}
     ]
     
-    [텍스트 데이터]
-    {text_to_send}
+    [PDF 추출 데이터]
+    {raw_text[:15000]} # 15,000자면 1페이지짜리 레포트 10~15개를 거뜬히 소화합니다.
     """
     
     for attempt in range(max_retries):
