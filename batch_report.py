@@ -85,7 +85,7 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
             print(f"🚀 [AI 호출] Gemini API 요청 발송... (시도 {attempt + 1}/{max_retries})")
             start_time = time.time()
             
-            response = client_ai.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+            response = client_ai.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             
             elapsed = time.time() - start_time
             print(f"✅ [AI 응답 성공] {elapsed:.1f}초 소요! 데이터 파싱을 시작합니다.")
