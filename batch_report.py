@@ -184,13 +184,16 @@ async def main():
         if not matched.empty:
             curr_price = matched.iloc[0]['Close']
             curr_marcap = matched.iloc[0]['Marcap']
-            item['현재시총'] = int(curr_marcap)
+            item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억"
             
             if target_price != "N/A" and curr_price > 0 and target_price > 0:
                 upside = (target_price / curr_price - 1) * 100
                 item['Upside'] = round(upside, 1)
-                item['목표시총'] = int(curr_marcap * (1 + upside/100))
-                item['목표주가'] = f"{target_price:,}원" # 보기 좋게 다시 포맷팅
+                
+                # 💡 목표시총을 '억' 단위 문자열로 변환
+                target_marcap_val = int(curr_marcap * (1 + upside/100))
+                item['목표시총'] = f"{int(target_marcap_val // 100_000_000):,}억"
+                item['목표주가'] = f"{target_price:,}원"
             else:
                 item['Upside'] = "N/A"
                 item['목표시총'] = "N/A"
