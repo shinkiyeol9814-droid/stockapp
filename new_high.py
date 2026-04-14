@@ -8,11 +8,15 @@ import base64
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
 
-# ✅ 수정 후 (new_high 전용 폴더 및 newhigh_ 로 시작하는 파일명)
+# new_high.py 수정
 def get_all_reports():
-    data_path = "data/new_high/"  # 💡 폴더 변경!
+    data_path = "data/new_high/"
     if not os.path.exists(data_path): return []
-    files = [f for f in os.listdir(data_path) if f.startswith("newhigh_") and f.endswith(".json")] # 💡 파일명 조건 변경!
+    
+    # 💡 "report_" 또는 "newhigh_"로 시작하는 파일 모두 가져오기
+    files = [f for f in os.listdir(data_path) 
+             if (f.startswith("report_") or f.startswith("newhigh_")) and f.endswith(".json")]
+    
     return sorted(files, reverse=True)
 
 def save_to_github(file_path, content, message):
@@ -48,10 +52,11 @@ def render_new_high_menu():
         st.warning("분석된 데이터가 없습니다. 장 마감 후 자동 배치가 실행될 때까지 기다려주세요.")
         return
 
-    # ✅ 수정 후
+    # 💡 아래 format_filename 함수도 수정 (둘 다 잘라낼 수 있게)
     def format_filename(f):
         try:
-            date_part = f.replace("newhigh_", "").replace(".json", "") # 💡 "newhigh_" 자르기로 변경!
+            # report_ 또는 newhigh_ 문구 삭제
+            date_part = f.replace("report_", "").replace("newhigh_", "").replace(".json", "")
             return f"{date_part[:4]}년 {date_part[4:6]}월 {date_part[6:8]}일 {date_part[9:11]}:{date_part[11:13]} 분석본"
         except: return f
         
