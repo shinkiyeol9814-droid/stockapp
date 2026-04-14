@@ -8,11 +8,12 @@ import base64
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
 
+# ✅ 수정 후 (new_high 전용 폴더 및 newhigh_ 로 시작하는 파일명)
 def get_all_reports():
-    data_path = "data/"
+    data_path = "data/new_high/"  # 💡 폴더 변경!
     if not os.path.exists(data_path): return []
-    files = [f for f in os.listdir(data_path) if f.startswith("report_") and f.endswith(".json")]
-    return sorted(files, reverse=True) # 최신순 정렬
+    files = [f for f in os.listdir(data_path) if f.startswith("newhigh_") and f.endswith(".json")] # 💡 파일명 조건 변경!
+    return sorted(files, reverse=True)
 
 def save_to_github(file_path, content, message):
     github_token = st.secrets.get("GH_PAT")
@@ -47,15 +48,17 @@ def render_new_high_menu():
         st.warning("분석된 데이터가 없습니다. 장 마감 후 자동 배치가 실행될 때까지 기다려주세요.")
         return
 
+    # ✅ 수정 후
     def format_filename(f):
         try:
-            date_part = f.replace("report_", "").replace(".json", "")
+            date_part = f.replace("newhigh_", "").replace(".json", "") # 💡 "newhigh_" 자르기로 변경!
             return f"{date_part[:4]}년 {date_part[4:6]}월 {date_part[6:8]}일 {date_part[9:11]}:{date_part[11:13]} 분석본"
         except: return f
         
     selected_file = st.selectbox("📅 분석 일자 선택", report_files, format_func=format_filename)
     
-    with open(f"data/{selected_file}", "r", encoding="utf-8") as f:
+    # ✅ 수정 후
+    with open(f"data/new_high/{selected_file}", "r", encoding="utf-8") as f:
         report_data = json.load(f)
 
     analysis_time = report_data.get('analysis_time', 'N/A')
@@ -142,10 +145,10 @@ def render_new_high_menu():
             if item['코드'] in comment_map:
                 item['추정 사유'] = comment_map[item['코드']]
                 
-        json_content = json.dumps(report_data, indent=4, ensure_ascii=False)
-        
+        json_content = json.dumps(report_data, indent=4, ensure_ascii=False)        
+        # ✅ 수정 후
         with st.spinner("GitHub 서버에 덮어쓰는 중..."):
-            success, error_msg = save_to_github(f"data/{selected_file}", json_content, f"Update comments via Web UI")
+            success, error_msg = save_to_github(f"data/new_high/{selected_file}", json_content, f"Update comments via Web UI")
             if success:
                 st.success("✅ 변경사항이 안전하게 저장되었습니다!")
             else:
