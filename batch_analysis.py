@@ -258,9 +258,7 @@ async def main():
     m, sec = divmod(end_time - start_time, 60)
     execution_time_str = f"{int(m)}분 {int(sec)}초"
 
-    # ✅ 수정 후 (new_high 전용 폴더 생성)
-    save_dir = 'data/new_high'
-    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs('data', exist_ok=True)
     now = datetime.utcnow() + timedelta(hours=9)
     report = {
         "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
@@ -268,7 +266,7 @@ async def main():
         "results": stocks
     }
     
-    file_name = f"{save_dir}/newhigh_{now.strftime('%Y%m%d_%H%M')}.json"
+    file_name = f"data/report_{now.strftime('%Y%m%d_%H%M')}.json"
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         

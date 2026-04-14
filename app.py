@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
-from ui_report import render_report_summary  # 💡 ui_report 모듈 Import!
 
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 통합 보드", page_icon="📊", layout="wide")
@@ -20,9 +19,9 @@ if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
 if 'target_mult' not in st.session_state: st.session_state.target_mult = 10
 if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
 
-# --- URL 파라미터 확인 및 메뉴 자동 이동 로직 ---
+# --- 💡 URL 파라미터 확인 및 메뉴 자동 이동 로직 ---
 query_stock_code = st.query_params.get("stock_code", "")
-default_menu_idx = 0 
+default_menu_idx = 0 # 0번 인덱스: 가치평가 시뮬레이터
 
 if query_stock_code:
     listing = get_ticker_listing()
@@ -30,15 +29,15 @@ if query_stock_code:
     if not matched.empty:
         st.session_state.search_corp_name = matched['Name'].values[0]
     
+    # 꼬리표(파라미터)를 지워서 무한 검색에 빠지는 현상 방지
     st.query_params.clear()
     default_menu_idx = 0 
 
 # --- 메뉴 구성 ---
 st.sidebar.title("🧭 StkPro 메뉴")
-# 💡 세 번째 메뉴 이름 동기화 완료!
-menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 레포트 요약", "🛠️ 업데이트 이력"], index=default_menu_idx)
+menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 관심종목 - 뉴스", "🛠️ 업데이트 이력"], index=default_menu_idx)
 
-# --- 메뉴 라우팅 ---
+# 메뉴 라우팅
 if menu == "📈 가치평가 시뮬레이터":
     render_valuation_menu()
 
@@ -46,37 +45,19 @@ elif menu == "🚀 신고가 트래킹":
     render_new_high_menu()
 
 elif menu == "📰 레포트 요약":
-    render_report_summary()  # 💡 ui_report.py의 함수 호출!
+    render_ui_report()
     
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
-    
-    # 💡 3.3.0 ~ 3.4.0 최신 릴리즈 노트 반영!
     df_history = pd.DataFrame({
-        "버전": [
-            "v3.4.0 (데이터 3분할 아키텍처 & GitHub 연동)", 
-            "v3.3.0 (증권사 레포트 AI 요약 뷰어)", 
-            "v3.2.0 (시뮬레이터 커스텀 모드 및 배치 최적화)", 
-            "v3.1.0 (시뮬레이터 & 신고가 고도화)", 
-            "v3.0 (모듈화 및 연동)"
-        ], 
+        "버전": ["v3.2.0 (시뮬레이터 커스텀 모드 및 배치 최적화)", "v3.1.0 (시뮬레이터 & 신고가 고도화)", "v3.0 (모듈화 및 연동)", "v2.0 (신고가 고도화)", "v1.3.11", "v1.3.10"], 
         "내용": [
-            "(1) 데이터 격리: Valuation, New High, Report 전용 스토리지(폴더) 분리 및 UI 경로 동기화 / (2) Valuation: GitHub API 연동을 통한 '내 추정치' 클라우드 다이렉트 저장 완벽 지원 (KeyError 및 Type 충돌 철벽 방어)",
-            "(1) Report: 텔레그램 PDF/텍스트 기반 증권사 레포트 AI 핵심 요약(Gemini 2.5 Flash) 대시보드 / (2) Pre-Market(야간) 및 Regular(정규장) 데이터 자동 분류 / (3) 데이터 수동 입력 UI 추가",
-            "(1) Valuation: '내 추정치' 수동 입력 폼 추가 / (2) New High: 평일 자동화 스케줄러 연동 및 타겟 필터 조건(500억/양봉) 완화",
-            "(1) Valuation: 차트 라벨 겹침 방지 알고리즘 및 목표 배수 자동 동기화 / (2) New High: 시총 필터 추가 및 AI 배치 최적화",
-            "app.py 메인 라우터 분리(valuation.py) 및 신고가 분석 화면에서 시뮬레이터 자동 검색(URL 파라미터) 연동"
+            "(1) 가치평가: '내 추정치' 수동 입력 및 클라우드 저장(✅) 기능 추가, 차트 스마트 줌(Auto-Zoom) 및 UI 개편 / (2) 신고가: 타겟 필터 조건(500억/양봉) 완화 및 평일 자동화 스케줄러 연동",
+            "(1) 가치평가: 차트 라벨 겹침 방지 알고리즘, 기간 설정(1~5년/전체), 목표 배수 자동 동기화 / (2) 신고가: 시총 필터 추가, AI 배치 최적화 및 시뮬레이터 연동 강화",
+            "app.py 메인 라우터 분리(valuation.py), 신고가 분석 결과에서 클릭 시 시뮬레이터 자동 검색 연동",
+            "신고가 트래킹 분석 일자별 선택, 시가총액 필터 추가 및 UI 고도화",
+            "재무 데이터 에디터 상단 배치 및 상/하단 차트 과거 평균(Avg) 라인 추가", 
+            "평가방식 Select Box 내부 텍스트 잘림 현상 완벽 픽스"
         ]
     })
-    
-    # 화면을 꽉 채우고 행 높이를 조절하여 긴 텍스트도 잘리지 않게 출력
-    st.data_editor(
-        df_history, 
-        hide_index=True, 
-        use_container_width=True,
-        disabled=True,
-        column_config={
-            "버전": st.column_config.TextColumn("버전 (Release Date)", width="medium"),
-            "내용": st.column_config.TextColumn("주요 업데이트 내용", width="large")
-        }
-    )
+    st.dataframe(df_history, hide_index=True, use_container_width=True)
