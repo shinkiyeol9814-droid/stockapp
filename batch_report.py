@@ -1,11 +1,11 @@
 import os
-import fitz  # 💡 PDF 읽기용 라이브러리 (PyMuPDF) 추가!
-import time  # 💡 추가!
 import json
 import asyncio
+import time
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
+import fitz  # PyMuPDF
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from google import genai
@@ -18,20 +18,10 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-# 💡 [기획 반영] 타겟 텔레그램 채널 리스트
 TARGET_CHANNELS = [
-#1. 소중한 추억 
-    "https://t.me/DOC_POOL",
-#2. 리포트 갤러리
-    "https://t.me/report_figure_by_offset",
-#3. [주식] 증권사 리포트
-    "https://t.me/companyreport",
-#4. 선진짱 주식공부방
-    -1001378197756,
-#5. 영리한타이거의 주식공부방
-    "https://t.me/YoungTiger_stock",
-#6. 언젠간 현인
-    -1001710268401
+    "https://t.me/precious_memory_123",  # 실제 주소/ID로 변경 필수
+    "@report_gallery_xyz",               
+    -1001234567890                       
 ]
 
 async def get_pdf_reports_from_telegram(client, hours=12):
@@ -39,39 +29,30 @@ async def get_pdf_reports_from_telegram(client, hours=12):
     extracted_texts = []
     limit_time = datetime.now() - timedelta(hours=hours)
     
-    # 임시로 PDF를 저장할 폴더 생성
     os.makedirs('temp_pdfs', exist_ok=True)
     
     for channel in TARGET_CHANNELS:
         try:
-            # limit을 10개로 좁혀서 최근 레포트만 빠르게 탐색
             async for message in client.iter_messages(channel, limit=10):
                 if message.date.replace(tzinfo=None) < limit_time:
                     break
                     
-                # 💡 메시지에 '문서(PDF)'가 첨부되어 있는지 확인
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
                     
-                    # 제목에 '리포트'나 '종목명' 같은 힌트가 있을 때만 다운로드 (필요시 조건 추가)
                     pdf_path = await client.download_media(message.document, file=f"temp_pdfs/{file_name}")
                     
-                    # 💡 다운받은 PDF 열기
                     try:
                         doc = fitz.open(pdf_path)
-                        # 딱 1페이지만 (index 0) 텍스트 추출!
                         first_page_text = doc[0].get_text()
                         
-                        # 텍스트가 너무 짧으면 이미지형 PDF일 수 있으므로 패스
                         if len(first_page_text) > 200:
-                            # AI가 파일 1개 단위로 인식하도록 구분자 확실히 치기
                             extracted_texts.append(f"--- [파일명: {file_name}] ---\n{first_page_text}\n")
                         
                         doc.close()
                     except Exception as pdf_e:
                         print(f"⚠️ PDF 읽기 에러 ({file_name}): {pdf_e}")
                     
-                    # 다 읽었으면 용량 관리를 위해 임시 PDF 파일 삭제
                     if os.path.exists(pdf_path):
                         os.remove(pdf_path)
                         
@@ -104,62 +85,46 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
     ]
     
     [PDF 추출 데이터]
-    {raw_text[:15000]} # 15,000자면 1페이지짜리 레포트 10~15개를 거뜬히 소화합니다.
+    {raw_text[:15000]}
     """
     
     for attempt in range(max_retries):
         try:
-            print(f"🚀 [AI 호출] Gemini API 요청 발송... (시도 {attempt + 1}/{max_retries})")
+            current_model = 'gemini-2.5-flash'
+            print(f"🚀 [AI 호출] {current_model} 요청 발송... (시도 {attempt + 1}/{max_retries})")
             start_time = time.time()
             
-            response = client_ai.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            response = client_ai.models.generate_content(model=current_model, contents=prompt)
             
             elapsed = time.time() - start_time
-            print(f"✅ [AI 응답 성공] {elapsed:.1f}초 소요! 데이터 파싱을 시작합니다.")
+            print(f"✅ [AI 응답 성공] {elapsed:.1f}초 소요!")
             
             res_text = response.text.strip().replace("```json", "").replace("```", "")
             return json.loads(res_text)
             
         except Exception as e:
-            error_msg = str(e)
-            print(f"❌ [AI 에러 발생] (시도 {attempt + 1}/{max_retries})")
-            
-            # 에러 원인 상세 분석
-            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                print("   ↳ ⚠️ 원인: 1분당 무료 제공량(Token/Request) 초과!")
-            elif "503" in error_msg or "UNAVAILABLE" in error_msg:
-                print("   ↳ ⚠️ 원인: 구글 서버에 전 세계 사용자가 몰려 일시적 터짐!")
-            else:
-                print("   ↳ ⚠️ 원인: 알 수 없는 에러 또는 응답 데이터가 JSON 형식이 아님.")
-            
-            print(f"   ↳ 📋 상세 메시지: {error_msg[:200]}...") # 로그 너무 길어지지 않게 자름
-            
+            print(f"❌ [AI 에러 발생] (시도 {attempt + 1}/{max_retries}) | 사유: {str(e)[:150]}")
             if attempt < max_retries - 1:
-                wait_time = 65 # 1분보다 살짝 넉넉하게 65초 대기
-                now_str = datetime.now().strftime('%H:%M:%S')
-                print(f"⏳ [숨 고르기] {wait_time}초 대기 후 재시도합니다... (현재 시간: {now_str})")
+                wait_time = 30
+                print(f"⏳ {wait_time}초 대기 후 재시도합니다...")
                 time.sleep(wait_time)
             else:
-                print("💀 [최종 실패] 3번이나 시도했지만 구글 서버가 뱉어냈습니다. 분석을 종료합니다.")
+                print("💀 [최종 실패] 분석을 종료합니다.")
                 return []
 
 async def main():
-    print("=== 장전/장후 증권사 레포트 배치 시작 ===")
+    print("=== 증권사 레포트 배치 시작 ===")
     
-    # 1. 텔레그램 연결 (아까 빠졌던 부분!)
     client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client_tg.start()
     
-    print("1. 텔레그램 6개 채널 수집 중...")
-    raw_text = await get_pdf_reports_from_telegram(client_tg) # ✅ 새 이름으로 변경!
-    
-    await client_tg.disconnect() # 안전하게 연결 종료
+    raw_text = await get_pdf_reports_from_telegram(client_tg)
+    await client_tg.disconnect() 
     
     if not raw_text:
-        print("조건에 맞는 새로운 레포트 메시지가 없습니다.")
+        print("조건에 맞는 새로운 레포트가 없습니다.")
         return
 
-    print("2. Gemini AI 데이터 정제 중...")
     analyzed_data = analyze_reports_with_gemini(raw_text)
     
     if not analyzed_data:
@@ -171,7 +136,6 @@ async def main():
     results = []
     
     for item in analyzed_data:
-        # 목표주가에 쉼표(,)나 '원' 글자가 섞여있어도 숫자만 빼내기
         target_price_str = item.get("목표주가", "N/A")
         target_price = 0
         if target_price_str != "N/A":
@@ -190,7 +154,6 @@ async def main():
                 upside = (target_price / curr_price - 1) * 100
                 item['Upside'] = round(upside, 1)
                 
-                # 💡 목표시총을 '억' 단위 문자열로 변환
                 target_marcap_val = int(curr_marcap * (1 + upside/100))
                 item['목표시총'] = f"{int(target_marcap_val // 100_000_000):,}억"
                 item['목표주가'] = f"{target_price:,}원"
@@ -201,16 +164,27 @@ async def main():
                 
             results.append(item)
 
-    # 4. JSON 파일로 이쁘게 굽기
     print(f"4. 최종 데이터 {len(results)}건 저장 중...")
-    os.makedirs('data', exist_ok=True)
+    
+    # 💡 [핵심] 분리된 전용 폴더 및 시간대별 파일 네이밍
+    save_dir = 'data/broker_report'
+    os.makedirs(save_dir, exist_ok=True)
+    
     now = datetime.utcnow() + timedelta(hours=9)
+    
+    # 💡 08시 ~ 19시59분까지는 Regular, 그 외는 Premarket으로 분류
+    if 8 <= now.hour < 20:
+        market_type = "regular"
+    else:
+        market_type = "premarket"
+        
     report = {
         "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
+        "market_type": market_type,
         "results": results
     }
     
-    file_name = f"data/report_summary_{now.strftime('%Y%m%d_%H%M')}.json"
+    file_name = f"{save_dir}/{market_type}_{now.strftime('%Y%m%d_%H%M')}.json"
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
