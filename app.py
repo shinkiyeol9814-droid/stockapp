@@ -80,4 +80,3 @@ elif menu == "🛠️ 업데이트 이력":
             "내용": st.column_config.TextColumn("주요 업데이트 내용", width="large")
         }
     )
-    st.dataframe(df_history, hide_index=True, use_container_width=True)
