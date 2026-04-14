@@ -15,7 +15,8 @@ import plotly.graph_objects as go
 # --- GitHub 연동 설정 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
-ESTIMATES_FILE = "data/user_estimates.json"
+# 💡 valuation 전용 폴더로 저장 경로 분리!
+ESTIMATES_FILE = "data/valuation/user_estimates.json"
 
 # 공통 헤더 설정
 HEADERS = {
@@ -152,7 +153,6 @@ def get_hybrid_financials(ticker):
                                 return np.nan
                             
                             r = get_v(r'^(매출액|영업수익)')
-                            
                             o = get_v(r'^영업이익$')
                             if pd.isna(o):
                                 o = get_v(r'^영업이익\(발표기준\)')
@@ -189,7 +189,6 @@ def extract_number(val):
     m = re.search(r'-?\d+\.?\d*', s)
     return float(m.group()) if m else 0.0
 
-# --- 안전한 콜백 함수 (.get 활용) ---
 def execute_search():
     ui_corp = st.session_state.get('ui_corp_name', '').strip()
     if ui_corp != "":
@@ -203,7 +202,6 @@ def execute_search():
         else:
             st.session_state.target_mult = float(st.session_state.get('ui_target_mult_int', 10))
 
-# --- 메인 메뉴 렌더링 ---
 def render_valuation_menu():
     if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
     if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
@@ -217,7 +215,6 @@ def render_valuation_menu():
     if 'ui_target_mult_float' not in st.session_state: st.session_state.ui_target_mult_float = 1.0
     if 'ui_target_mult_int' not in st.session_state: st.session_state.ui_target_mult_int = 10
 
-    # 💡 [핵심 버그 수정] 일반 버튼(.stButton)과 폼 버튼([data-testid="stFormSubmitButton"]) 모두 타겟팅
     st.markdown("""
         <style>
         .stButton > button, [data-testid="stFormSubmitButton"] > button {
@@ -263,14 +260,11 @@ def render_valuation_menu():
         listing = get_ticker_listing()
         clean_target = corp_name.replace(" ", "").upper()
         
-        # 1. 종목명으로 검색 (검색어와 DB 양쪽의 공백을 모두 제거하고 대문자로 비교)
         ticker_row = listing[listing['Name'].astype(str).str.replace(" ", "").str.upper() == clean_target]
         
-        # 2. 이름으로 못 찾았는데 입력값이 숫자(종목코드)라면 코드로 검색
         if ticker_row.empty and corp_name.isdigit():
             ticker_row = listing[listing['Code'].astype(str).str.endswith(corp_name)]
             
-        # ▼ 여기서부터는 기열님이 올려주신 기존 코드 그대로 유지! (이게 날아가면 안 됨) ▼
         if not ticker_row.empty:
             ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
             
@@ -344,24 +338,27 @@ def render_valuation_menu():
                             
                             for idx, row in edited_df.iterrows():
                                 yr = str(orig_fin_df.at[idx, 'Year'])
+                                if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
+                                
                                 for col in cols_to_edit:
                                     orig_val = orig_fin_df.at[idx, col]
                                     edited_val = extract_number(row[col]) 
                                     
                                     if pd.isna(orig_val) or orig_val == 0:
                                         if edited_val != 0:
-                                            if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
                                             new_estimates[ticker][yr][col] = float(edited_val)
                                         else:
-                                            if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
-                                                del new_estimates[ticker][yr][col]
-                                                if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
-                                                if not new_estimates[ticker]: del new_estimates[ticker]
+                                            new_estimates[ticker][yr].pop(col, None)
                                     else:
-                                        if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
-                                            del new_estimates[ticker][yr][col]
-                                            if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
-                                            if not new_estimates[ticker]: del new_estimates[ticker]
+                                        new_estimates[ticker][yr].pop(col, None)
+                            
+                            # 💡 KeyError 철벽 방어 로직 (빈 껍데기 안전하게 삭제)
+                            empty_years = [y for y, data in new_estimates[ticker].items() if not data]
+                            for y in empty_years:
+                                del new_estimates[ticker][y]
+                                
+                            if not new_estimates[ticker]: 
+                                del new_estimates[ticker]
 
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
                             if success: 
