@@ -23,6 +23,9 @@ def render_report_summary():
                 # 종목명/증권사 정렬 (종목명으로 묶기, Upside 높은 순)
                 df = df.sort_values(['종목명', 'Upside'], ascending=[True, False])
 
+                # 💡 [여기에 핵심 코드 한 줄 추가!] 'N/A' 문자열 때문에 터지는 것을 방지하기 위해 강제 숫자 변환
+                df['Upside'] = pd.to_numeric(df['Upside'], errors='coerce')
+
                 # 투자포인트 리스트를 보기 좋은 문자열로 변환
                 df['투자포인트_표시'] = df['투자포인트'].apply(
                     lambda x: "\n".join([f"• {p}" for p in x]) if isinstance(x, list) else x
