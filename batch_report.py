@@ -52,7 +52,12 @@ async def get_reports_from_telegram(client, hours=12):
 
 def analyze_reports_with_gemini(raw_text, max_retries=3):
     if not raw_text.strip():
+        print("⚠️ [SKIP] 수집된 텍스트가 없습니다.")
         return []
+        
+    # AI가 힘들어하지 않게 8000자로 자르기
+    text_to_send = raw_text[:8000] 
+    print(f"📊 [AI 분석 준비] 원본 텍스트: {len(raw_text)}자 ➡️ 전송 텍스트: {len(text_to_send)}자")
         
     prompt = f"""너는 증권사 레포트 핵심 데이터 추출기야. 아래 텍스트에서 레포트 정보를 찾아 JSON 배열로 응답해.
     1. 동일 종목이라도 증권사가 다르면 별도 객체로 생성해.
@@ -72,24 +77,43 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
     ]
     
     [텍스트 데이터]
-    {raw_text[:8000]}
+    {text_to_send}
     """
     
-    # 💡 [핵심] 실패해도 포기하지 않고 3번까지 재시도하는 로직
     for attempt in range(max_retries):
         try:
+            print(f"🚀 [AI 호출] Gemini API 요청 발송... (시도 {attempt + 1}/{max_retries})")
+            start_time = time.time()
+            
             response = client_ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            
+            elapsed = time.time() - start_time
+            print(f"✅ [AI 응답 성공] {elapsed:.1f}초 소요! 데이터 파싱을 시작합니다.")
+            
             res_text = response.text.strip().replace("```json", "").replace("```", "")
             return json.loads(res_text)
             
         except Exception as e:
-            print(f"⚠️ AI 분석 에러 (시도 {attempt + 1}/{max_retries}): {e}")
+            error_msg = str(e)
+            print(f"❌ [AI 에러 발생] (시도 {attempt + 1}/{max_retries})")
+            
+            # 에러 원인 상세 분석
+            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                print("   ↳ ⚠️ 원인: 1분당 무료 제공량(Token/Request) 초과!")
+            elif "503" in error_msg or "UNAVAILABLE" in error_msg:
+                print("   ↳ ⚠️ 원인: 구글 서버에 전 세계 사용자가 몰려 일시적 터짐!")
+            else:
+                print("   ↳ ⚠️ 원인: 알 수 없는 에러 또는 응답 데이터가 JSON 형식이 아님.")
+            
+            print(f"   ↳ 📋 상세 메시지: {error_msg[:200]}...") # 로그 너무 길어지지 않게 자름
+            
             if attempt < max_retries - 1:
-                wait_time = 15 # 15초 대기
-                print(f"⏳ 구글 서버 과부하. {wait_time}초 후 다시 시도합니다...")
+                wait_time = 65 # 1분보다 살짝 넉넉하게 65초 대기
+                now_str = datetime.now().strftime('%H:%M:%S')
+                print(f"⏳ [숨 고르기] {wait_time}초 대기 후 재시도합니다... (현재 시간: {now_str})")
                 time.sleep(wait_time)
             else:
-                print("❌ 최대 재시도 횟수를 초과하여 분석을 포기합니다.")
+                print("💀 [최종 실패] 3번이나 시도했지만 구글 서버가 뱉어냈습니다. 분석을 종료합니다.")
                 return []
 
 async def main():
