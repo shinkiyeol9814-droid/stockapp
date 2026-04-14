@@ -7,7 +7,6 @@ import glob
 def render_report_summary():
     st.markdown("<div class='main-title'>📊 증권사 레포트 AI 요약 (Pre-Market)</div>", unsafe_allow_html=True)
     
-    # --- 1. 저장된 JSON 파일 불러오기 ---
     report_files = sorted(glob.glob("data/report_summary_*.json"), reverse=True)
     
     if report_files:
@@ -20,30 +19,28 @@ def render_report_summary():
             if data.get('results'):
                 df = pd.DataFrame(data['results'])
                 
-                # 💡 [핵심 수정] Streamlit 타입 에러 완벽 차단 로직
-                
-                # 1. 정렬을 위해 진짜 숫자형(float) 컬럼을 임시로 만듭니다. (N/A는 NaN 처리됨)
+                # 1. 정렬용 숫자 컬럼 생성 및 정렬
                 df['Upside_num'] = pd.to_numeric(df['Upside'], errors='coerce')
-                
-                # 2. 숫자를 기준으로 정렬 (종목명 묶기 -> Upside 높은 순)
                 df = df.sort_values(['종목명', 'Upside_num'], ascending=[True, False])
 
-                # 3. 화면에 보여줄 Upside 컬럼을 "15.2%" 형태의 '문자열'로 완전히 고정!
+                # 2. Upside 포맷팅
                 df['Upside'] = df['Upside_num'].apply(lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%")
 
-                # 4. 투자포인트 리스트를 보기 좋은 문자열로 변환
+                # 3. 투자포인트 리스트 변환
                 df['투자포인트_표시'] = df['투자포인트'].apply(
                     lambda x: "\n".join([f"• {p}" for p in x]) if isinstance(x, list) else str(x)
                 )
 
-                # 5. 컬럼 설정 및 출력 (NumberColumn 삭제하여 에러 원천 차단)
+                # 💡 [핵심 철벽 방어] 화면에 그릴 컬럼만 따로 빼서 '전부 문자열'로 강제 변환!
+                # 옛날 JSON에 숫자가 들어있든 결측치가 있든 여기서 무조건 텍스트가 됩니다.
+                display_df = df[['종목명', '증권사', '현재시총', '목표시총', 'Upside', '평가방식', '투자포인트_표시']].copy()
+                display_df = display_df.astype(str)
+
+                # 4. 출력 (TextColumn 충돌을 막기 위해 width 지정이 필요한 포인트만 세팅)
                 st.data_editor(
-                    df[['종목명', '증권사', '현재시총', '목표시총', 'Upside', '평가방식', '투자포인트_표시']],
+                    display_df,
                     column_config={
-                        # Upside는 문자열이 되었으므로 설정 제외! (알아서 예쁘게 나옴)
-                        "투자포인트_표시": st.column_config.TextColumn("투자포인트", width="large"),
-                        "현재시총": st.column_config.TextColumn("현재시총"),
-                        "목표시총": st.column_config.TextColumn("목표시총")
+                        "투자포인트_표시": st.column_config.Column("투자포인트", width="large")
                     },
                     use_container_width=True,
                     hide_index=True
@@ -55,7 +52,7 @@ def render_report_summary():
 
     st.divider()
     
-    # --- 2. 데이터 수동 입력 UI ---
+    # --- 데이터 수동 입력 UI ---
     st.subheader("✍️ 리포트 수동 추가")
     st.info("💡 텔레그램 배치가 놓친 데이터나 직접 분석하신 내용을 기록하세요.")
     
