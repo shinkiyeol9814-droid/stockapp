@@ -19,9 +19,18 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 TARGET_CHANNELS = [
-    "https://t.me/precious_memory_123",  # 실제 주소/ID로 변경 필수
-    "@report_gallery_xyz",               
-    -1001234567890                       
+#1. 소중한 추억 
+    "https://t.me/DOC_POOL",
+#2. 리포트 갤러리
+    "https://t.me/report_figure_by_offset",
+#3. [주식] 증권사 리포트
+    "https://t.me/companyreport",
+#4. 선진짱 주식공부방
+    -1001378197756,
+#5. 영리한타이거의 주식공부방
+    "https://t.me/YoungTiger_stock",
+#6. 언젠간 현인
+    -1001710268401                 
 ]
 
 async def get_pdf_reports_from_telegram(client, hours=12):
