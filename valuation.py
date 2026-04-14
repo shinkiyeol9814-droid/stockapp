@@ -15,7 +15,8 @@ import plotly.graph_objects as go
 # --- GitHub 연동 설정 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
-ESTIMATES_FILE = "data/user_estimates.json"
+# 💡 valuation 전용 폴더로 경로 지정 (깃허브가 알아서 폴더를 만듭니다)
+ESTIMATES_FILE = "data/valuation/user_estimates.json"
 
 # 공통 헤더 설정
 HEADERS = {
