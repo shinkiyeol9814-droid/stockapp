@@ -50,14 +50,34 @@ elif menu == "📰 레포트 요약":
     
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
+    
+    # 💡 3.3.0 ~ 3.4.0 최신 릴리즈 노트 반영!
     df_history = pd.DataFrame({
-        "버전": ["v3.3.0 (레포트 요약 대시보드 추가)", "v3.2.0 (시뮬레이터 커스텀 모드 및 배치 최적화)", "v3.1.0", "v3.0", "v2.0"], 
+        "버전": [
+            "v3.4.0 (데이터 3분할 아키텍처 & GitHub 연동)", 
+            "v3.3.0 (증권사 레포트 AI 요약 뷰어)", 
+            "v3.2.0 (시뮬레이터 커스텀 모드 및 배치 최적화)", 
+            "v3.1.0 (시뮬레이터 & 신고가 고도화)", 
+            "v3.0 (모듈화 및 연동)"
+        ], 
         "내용": [
-            "증권사 레포트 AI 요약 뷰 및 데이터 수동 입력 폼 연동",
-            "(1) 가치평가: '내 추정치' 수동 입력 / (2) 신고가: 평일 자동화 스케줄러",
-            "(1) 가치평가: 차트 라벨 겹침 방지 / (2) 신고가: 시총 필터 추가",
-            "app.py 메인 라우터 분리(valuation.py), 신고가 분석 자동 검색 연동",
-            "신고가 트래킹 일자별 선택 및 UI 고도화"
+            "(1) 데이터 격리: Valuation, New High, Report 전용 스토리지(폴더) 분리 및 UI 경로 동기화 / (2) Valuation: GitHub API 연동을 통한 '내 추정치' 클라우드 다이렉트 저장 완벽 지원 (KeyError 및 Type 충돌 철벽 방어)",
+            "(1) Report: 텔레그램 PDF/텍스트 기반 증권사 레포트 AI 핵심 요약(Gemini 2.5 Flash) 대시보드 / (2) Pre-Market(야간) 및 Regular(정규장) 데이터 자동 분류 / (3) 데이터 수동 입력 UI 추가",
+            "(1) Valuation: '내 추정치' 수동 입력 폼 추가 / (2) New High: 평일 자동화 스케줄러 연동 및 타겟 필터 조건(500억/양봉) 완화",
+            "(1) Valuation: 차트 라벨 겹침 방지 알고리즘 및 목표 배수 자동 동기화 / (2) New High: 시총 필터 추가 및 AI 배치 최적화",
+            "app.py 메인 라우터 분리(valuation.py) 및 신고가 분석 화면에서 시뮬레이터 자동 검색(URL 파라미터) 연동"
         ]
     })
+    
+    # 화면을 꽉 채우고 행 높이를 조절하여 긴 텍스트도 잘리지 않게 출력
+    st.data_editor(
+        df_history, 
+        hide_index=True, 
+        use_container_width=True,
+        disabled=True,
+        column_config={
+            "버전": st.column_config.TextColumn("버전 (Release Date)", width="medium"),
+            "내용": st.column_config.TextColumn("주요 업데이트 내용", width="large")
+        }
+    )
     st.dataframe(df_history, hide_index=True, use_container_width=True)
