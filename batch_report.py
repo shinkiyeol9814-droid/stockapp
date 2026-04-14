@@ -151,7 +151,7 @@ async def main():
     await client_tg.start()
     
     print("1. 텔레그램 6개 채널 수집 중...")
-    raw_text = await get_reports_from_telegram(client_tg)
+    raw_text = await get_pdf_reports_from_telegram(client_tg) # ✅ 새 이름으로 변경!
     
     await client_tg.disconnect() # 안전하게 연결 종료
     
