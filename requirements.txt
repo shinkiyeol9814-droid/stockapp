@@ -12,4 +12,3 @@ kaleido
 telethon
 google-genai
 aiohttp
-PyMuPDF
