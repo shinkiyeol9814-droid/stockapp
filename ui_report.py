@@ -3,14 +3,36 @@ import pandas as pd
 import json
 import os
 import glob
+from datetime import datetime
+
+# 💡 파일명에 따라 UI 표시 이름을 다르게 만들어주는 함수
+def format_json_name(file_path):
+    base_name = os.path.basename(file_path)
+    
+    if base_name.startswith("premarket_"):
+        clean_name = base_name.replace("premarket_", "").replace(".json", "")
+        prefix = "🌅 Pre-Market"
+    elif base_name.startswith("regular_"):
+        clean_name = base_name.replace("regular_", "").replace(".json", "")
+        prefix = "🏢 Regular-Market"
+    else:
+        return base_name
+
+    try:
+        # 시간 포맷 예쁘게 변환 (20260414_0730 -> 2026-04-14 07:30)
+        dt = datetime.strptime(clean_name, "%Y%m%d_%H%M")
+        return f"{prefix} 리포트 ({dt.strftime('%Y-%m-%d %H:%M')})"
+    except:
+        return base_name
 
 def render_report_summary():
-    st.markdown("<div class='main-title'>📊 증권사 레포트 AI 요약 (Pre-Market)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-title'>📊 증권사 레포트 AI 요약</div>", unsafe_allow_html=True)
     
-    report_files = sorted(glob.glob("data/report_summary_*.json"), reverse=True)
+    # 💡 전용 폴더(broker_report)에서 모든 json 파일 불러오기
+    report_files = sorted(glob.glob("data/broker_report/*.json"), reverse=True)
     
     if report_files:
-        selected_file = st.selectbox("분석 결과 선택", report_files, format_func=lambda x: os.path.basename(x))
+        selected_file = st.selectbox("분석 데이터 선택", report_files, format_func=format_json_name)
         
         with open(selected_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -23,7 +45,7 @@ def render_report_summary():
                 df['Upside_num'] = pd.to_numeric(df['Upside'], errors='coerce')
                 df = df.sort_values(['종목명', 'Upside_num'], ascending=[True, False])
 
-                # 2. Upside 포맷팅
+                # 2. Upside 포맷팅 (결측치는 N/A, 숫자는 %)
                 df['Upside'] = df['Upside_num'].apply(lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%")
 
                 # 3. 투자포인트 리스트 변환
@@ -31,12 +53,11 @@ def render_report_summary():
                     lambda x: "\n".join([f"• {p}" for p in x]) if isinstance(x, list) else str(x)
                 )
 
-                # 💡 [핵심 철벽 방어] 화면에 그릴 컬럼만 따로 빼서 '전부 문자열'로 강제 변환!
-                # 옛날 JSON에 숫자가 들어있든 결측치가 있든 여기서 무조건 텍스트가 됩니다.
+                # 4. Streamlit 타입 에러 방지 (표에 띄울 컬럼 전체를 문자열로 박제)
                 display_df = df[['종목명', '증권사', '현재시총', '목표시총', 'Upside', '평가방식', '투자포인트_표시']].copy()
                 display_df = display_df.astype(str)
 
-                # 4. 출력 (TextColumn 충돌을 막기 위해 width 지정이 필요한 포인트만 세팅)
+                # 5. 최종 데이터 테이블 출력
                 st.data_editor(
                     display_df,
                     column_config={
@@ -46,7 +67,7 @@ def render_report_summary():
                     hide_index=True
                 )
             else:
-                st.warning("분석된 종목 데이터가 없습니다.")
+                st.warning("해당 시간대에 분석된 종목 데이터가 없습니다.")
     else:
         st.info("실행된 배치 파일이 없습니다. batch_report.py를 먼저 실행해 주세요.")
 
