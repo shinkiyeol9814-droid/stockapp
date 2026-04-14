@@ -338,32 +338,37 @@ def render_valuation_menu():
                         with btn_col2:
                             fin_save_clicked = st.form_submit_button("저장", type="secondary", use_container_width=True)
                     
-                    if fin_save_clicked:
+                if fin_save_clicked:
                         with st.spinner("GitHub에 저장 중..."):
                             new_estimates = load_user_estimates() 
                             if ticker not in new_estimates: new_estimates[ticker] = {}
                             
                             for idx, row in edited_df.iterrows():
                                 yr = str(orig_fin_df.at[idx, 'Year'])
+                                # 일단 연도 딕셔너리 안전망 생성
+                                if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
+                                
                                 for col in cols_to_edit:
                                     orig_val = orig_fin_df.at[idx, col]
                                     edited_val = extract_number(row[col]) 
                                     
                                     if pd.isna(orig_val) or orig_val == 0:
                                         if edited_val != 0:
-                                            if yr not in new_estimates[ticker]: new_estimates[ticker][yr] = {}
                                             new_estimates[ticker][yr][col] = float(edited_val)
                                         else:
-                                            if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
-                                                del new_estimates[ticker][yr][col]
-                                                if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
-                                                if not new_estimates[ticker]: del new_estimates[ticker]
+                                            new_estimates[ticker][yr].pop(col, None) # 안전하게 제거
                                     else:
-                                        if ticker in new_estimates and yr in new_estimates[ticker] and col in new_estimates[ticker][yr]:
-                                            del new_estimates[ticker][yr][col]
-                                            if not new_estimates[ticker][yr]: del new_estimates[ticker][yr]
-                                            if not new_estimates[ticker]: del new_estimates[ticker]
+                                        new_estimates[ticker][yr].pop(col, None) # 안전하게 제거
+                            
+                            # 💡 루프가 다 끝난 후, 알맹이가 없는 빈 껍데기 연도/종목 한 번에 청소!
+                            empty_years = [y for y, data in new_estimates[ticker].items() if not data]
+                            for y in empty_years:
+                                del new_estimates[ticker][y]
+                                
+                            if not new_estimates[ticker]: 
+                                del new_estimates[ticker]
 
+                            # GitHub 저장
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
                             if success: 
                                 st.success("✅ 추정치가 성공적으로 저장되었습니다! 화면을 즉시 갱신합니다.")
