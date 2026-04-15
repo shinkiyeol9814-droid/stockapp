@@ -30,11 +30,11 @@ TARGET_CHANNELS = [
 #5. 영리한타이거의 주식공부방
     "https://t.me/YoungTiger_stock",
 #6. 언젠간 현인
-    -1001710268401                 
+    -1001710268401                  
 ]
 
 async def get_pdf_reports_from_telegram(client, hours=12):
-    print("📥 텔레그램에서 PDF 레포트 수집 및 1페이지 텍스트 추출 중...")
+    print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 PDF 레포트 수집 중...")
     extracted_texts = []
     limit_time = datetime.now() - timedelta(hours=hours)
     
@@ -42,7 +42,8 @@ async def get_pdf_reports_from_telegram(client, hours=12):
     
     for channel in TARGET_CHANNELS:
         try:
-            async for message in client.iter_messages(channel, limit=10):
+            # 💡 [수정] limit=10 -> 100으로 넉넉하게 변경하여 누락 방지!
+            async for message in client.iter_messages(channel, limit=100):
                 if message.date.replace(tzinfo=None) < limit_time:
                     break
                     
@@ -57,10 +58,12 @@ async def get_pdf_reports_from_telegram(client, hours=12):
                         
                         if len(first_page_text) > 200:
                             extracted_texts.append(f"--- [파일명: {file_name}] ---\n{first_page_text}\n")
+                            # 💡 [요청사항 추가] 추출 성공한 PDF 파일명 로그 출력!
+                            print(f"  📄 [성공] {file_name}")
                         
                         doc.close()
                     except Exception as pdf_e:
-                        print(f"⚠️ PDF 읽기 에러 ({file_name}): {pdf_e}")
+                        print(f"  ⚠️ PDF 읽기 에러 ({file_name}): {pdf_e}")
                     
                     if os.path.exists(pdf_path):
                         os.remove(pdf_path)
@@ -75,7 +78,7 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
         print("⚠️ [SKIP] 추출된 PDF 텍스트가 없습니다.")
         return []
         
-    print(f"📊 [AI 분석 준비] 추출된 1페이지 텍스트 총합: {len(raw_text)}자")
+    print(f"\n📊 [AI 분석 준비] 추출된 1페이지 텍스트 총합: {len(raw_text)}자")
         
     prompt = f"""너는 증권사 레포트 전문 분석가야. 
     아래 텍스트는 여러 증권사 레포트의 '1페이지'를 모아놓은 거야. 
@@ -94,8 +97,9 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
     ]
     
     [PDF 추출 데이터]
-    {raw_text[:15000]}
+    {raw_text} 
     """
+    # 💡 [수정] 위 {raw_text[:15000]} 에서 [:15000] 가위를 치워버렸습니다! 전체 텍스트 전송!
     
     for attempt in range(max_retries):
         try:
@@ -140,7 +144,7 @@ async def main():
         print("AI가 추출한 데이터가 없습니다.")
         return
 
-    print("3. FDR 실시간 시총 및 Upside 매칭 중...")
+    print("\n3. FDR 실시간 시총 및 Upside 매칭 중...")
     df_listing = fdr.StockListing('KRX')
     results = []
     
@@ -175,13 +179,11 @@ async def main():
 
     print(f"4. 최종 데이터 {len(results)}건 저장 중...")
     
-    # 💡 [핵심] 분리된 전용 폴더 및 시간대별 파일 네이밍
     save_dir = 'data/broker_report'
     os.makedirs(save_dir, exist_ok=True)
     
     now = datetime.utcnow() + timedelta(hours=9)
     
-    # 💡 08시 ~ 19시59분까지는 Regular, 그 외는 Premarket으로 분류
     if 8 <= now.hour < 20:
         market_type = "regular"
     else:
