@@ -154,10 +154,10 @@ async def main():
     results = []
     
     for item in all_analyzed_data:
-        # 💡 [매칭 로직] 괄호 및 공백 제거로 매칭률 극대화
-        raw_name = item.get("종목명", "")
-        clean_name = raw_name.split('(')[0].strip()
-
+        # 1. AI가 추출한 종목명에서 괄호와 그 안의 숫자(코드)를 싹 지우고 공백 제거
+        raw_name = item.get('종목명', '')
+        clean_name = raw_name.split('(')[0].strip() 
+        
         target_price_str = item.get("목표주가", "N/A")
         target_price = 0
         if target_price_str != "N/A":
@@ -172,6 +172,7 @@ async def main():
             curr_price = matched.iloc[0]['Close']
             curr_marcap = matched.iloc[0]['Marcap']
             
+            # 💡 [여기 수정됨!] 현재가를 FDR에서 가져와 콤마 찍어서 저장
             item['현재가'] = f"{int(curr_price):,}원"
             item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억"
             
@@ -189,7 +190,7 @@ async def main():
                 
             results.append(item)
         else:
-            print(f"   ⚠️ 매칭 실패: AI 추출 이름 [{raw_name}]")
+            print(f"   ⚠️ 매칭 실패: AI가 뽑은 이름 [{raw_name}] -> 필터 통과 이름 [{clean_name}]")
 
     print(f"\n4. 최종 데이터 {len(results)}건 저장 중...")
     
