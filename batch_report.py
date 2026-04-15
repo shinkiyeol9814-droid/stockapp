@@ -42,7 +42,6 @@ async def get_pdf_reports_from_telegram(client, hours=12):
     
     for channel in TARGET_CHANNELS:
         try:
-            # 💡 [수정] limit=10 -> 100으로 넉넉하게 변경하여 누락 방지!
             async for message in client.iter_messages(channel, limit=100):
                 if message.date.replace(tzinfo=None) < limit_time:
                     break
@@ -58,7 +57,6 @@ async def get_pdf_reports_from_telegram(client, hours=12):
                         
                         if len(first_page_text) > 200:
                             extracted_texts.append(f"--- [파일명: {file_name}] ---\n{first_page_text}\n")
-                            # 💡 [요청사항 추가] 추출 성공한 PDF 파일명 로그 출력!
                             print(f"  📄 [성공] {file_name}")
                         
                         doc.close()
@@ -100,7 +98,6 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
     [PDF 추출 데이터]
     {raw_text} 
     """
-    # 💡 [수정] 위 {raw_text[:15000]} 에서 [:15000] 가위를 치워버렸습니다! 전체 텍스트 전송!
     
     for attempt in range(max_retries):
         try:
@@ -145,11 +142,18 @@ async def main():
         print("AI가 추출한 데이터가 없습니다.")
         return
 
+    # 💡 [디버깅 추가] AI가 어떻게 추출했는지 첫 3개 확인
+    print(f"\n👀 [디버그] AI 추출 데이터 미리보기 (최대 3개):\n{json.dumps(analyzed_data[:3], indent=2, ensure_ascii=False)}")
+
     print("\n3. FDR 실시간 시총 및 Upside 매칭 중...")
     df_listing = fdr.StockListing('KRX')
     results = []
     
     for item in analyzed_data:
+        # 💡 [매칭 로직 수정] 괄호 및 공백 제거로 매칭률 극대화
+        raw_name = item.get("종목명", "")
+        clean_name = raw_name.split('(')[0].strip()
+
         target_price_str = item.get("목표주가", "N/A")
         target_price = 0
         if target_price_str != "N/A":
@@ -158,10 +162,14 @@ async def main():
             except:
                 target_price = "N/A"
 
-        matched = df_listing[df_listing['Name'] == item['종목명']]
+        matched = df_listing[df_listing['Name'] == clean_name]
+        
         if not matched.empty:
             curr_price = matched.iloc[0]['Close']
             curr_marcap = matched.iloc[0]['Marcap']
+            
+            # 💡 [요청사항 추가] 현재가 컬럼 생성
+            item['현재가'] = f"{int(curr_price):,}원"
             item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억"
             
             if target_price != "N/A" and curr_price > 0 and target_price > 0:
@@ -177,8 +185,10 @@ async def main():
                 if target_price != "N/A": item['목표주가'] = f"{target_price:,}원"
                 
             results.append(item)
+        else:
+            print(f"   ⚠️ 매칭 실패: AI가 뽑은 이름 [{raw_name}] -> 필터 통과 이름 [{clean_name}]")
 
-    print(f"4. 최종 데이터 {len(results)}건 저장 중...")
+    print(f"\n4. 최종 데이터 {len(results)}건 저장 중...")
     
     save_dir = 'data/broker_report'
     os.makedirs(save_dir, exist_ok=True)
