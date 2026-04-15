@@ -1,10 +1,10 @@
-name: Broker Report Morning/Evening Batch
+name: Broker Report Auto Batch
 
 on:
-  schedule:
-    - cron: '10 23 * * *' # 한국 08:10 (전일 20시 이후분)
-    - cron: '10 11 * * *' # 한국 20:10 (당일 08시 이후분)
-  workflow_dispatch:
+  # 💡 깃허브 자체 크론은 지우고, 외부 API(repository_dispatch)를 열어줍니다!
+  repository_dispatch:
+    types: [run_report_batch] # 👈 cron-job.org에서 이 암구호를 외칠 겁니다.
+  workflow_dispatch: # 수동 실행 버튼은 살려둡니다.
 
 jobs:
   run-batch:

@@ -149,11 +149,11 @@ async def main():
         print("AI가 추출한 데이터가 최종적으로 0건입니다.")
         return
 
-    print("\n3. FDR 실시간 시총 및 Upside 매칭 중...")
+    print(f"\n3. FDR 실시간 시총 및 Upside 매칭 중... (총 {len(all_analyzed_data)}건)")
     df_listing = fdr.StockListing('KRX')
     results = []
     
-    for item in analyzed_data:
+    for item in all_analyzed_data:
         # 1. AI가 추출한 종목명에서 괄호와 그 안의 숫자(코드)를 싹 지우고 공백 제거
         raw_name = item.get('종목명', '')
         clean_name = raw_name.split('(')[0].strip() 
