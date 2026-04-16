@@ -66,7 +66,6 @@ def render_report_summary():
                 st.markdown("<br>", unsafe_allow_html=True)
 
                 # 💡 데이터 에디터(표) 대신 HTML 커스텀 아코디언 카드 렌더링
-                # 💡 데이터 에디터(표) 대신 HTML 커스텀 아코디언 카드 렌더링
                 for _, row in df.iterrows():
                     title = row.get('레포트 제목', '제목 없음')
                     curr_price = row.get('현재가', 'N/A')
@@ -80,54 +79,52 @@ def render_report_summary():
                     # Upside 수치에 따른 색상 및 이모지 설정
                     if pd.isna(upside_val):
                         fire = "❄️"
-                        up_color = "#808080"
+                        up_color = "#808080" # 회색
                     elif upside_val >= 50:
                         fire = "🔥🔥🔥"
-                        up_color = "#FF0000"
+                        up_color = "#FF0000" # 강렬한 빨강
                     elif upside_val >= 30:
                         fire = "🔥🔥"
-                        up_color = "#FF4500"
+                        up_color = "#FF4500" # 다홍색
                     elif upside_val > 0:
                         fire = "🔥"
-                        up_color = "#FF8C00"
+                        up_color = "#FF8C00" # 주황색
                     else:
                         fire = "💧"
-                        up_color = "#1E90FF"
+                        up_color = "#1E90FF" # 파란색
 
-                    # 투자 포인트 HTML 리스트로 변환
+                    # 투자 포인트 HTML 리스트로 변환 (엔터 없이 한 줄로)
                     points = row.get('투자포인트', [])
                     if isinstance(points, list):
                         points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points])
                     else:
                         points_html = f"<li>{points}</li>"
 
-                    # 💡 [핵심] 들여쓰기(띄어쓰기)를 완전히 없애서 Streamlit이 코드로 오해하지 않게 만듭니다!
-                    card_html = f"""
-<details style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-<summary style="cursor: pointer; list-style: none; outline: none;">
-<div style="margin-bottom: 6px;">
-<span style="font-size: 16px; font-weight: bold; color: #222;">{row['종목명']}</span>
-<span style="font-size: 13px; color: #666;">({row['증권사']})</span>
-<span style="font-size: 14px; color: #ccc;"> &nbsp;|&nbsp; </span>
-<span style="font-size: 14px; color: #444;">{title}</span>
-</div>
-<div style="font-size: 14px; color: #555;">
-<span style="color: {up_color}; font-weight: bold;">🚀 Upside: {upside_str} {fire}</span>
-<span style="color: #ccc;"> &nbsp;|&nbsp; </span>
-📊 {curr_price} ({curr_mc}) ➡️ <b>{tgt_price} ({tgt_mc})</b>
-</div>
-</summary>
-<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 14px; color: #333;">
-<b style="color: #0056b3;">💡 핵심 투자 포인트</b>
-<ul style="margin-top: 6px; padding-left: 20px;">
-{points_html}
-</ul>
-<div style="margin-top: 10px; font-size: 12px; color: #888; background-color: #f9f9f9; padding: 8px; border-radius: 4px;">
-<b>평가 방식:</b> {row.get('평가방식', 'N/A')}
-</div>
-</div>
-</details>
-"""
+                    # 💡 [핵심] 줄바꿈 기호를 없애고 괄호로 묶어서 하나의 거대한 문자열로 만듭니다. (자동 들여쓰기 원천 차단!)
+                    card_html = (
+                        f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
+                        f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
+                        f"<div style='margin-bottom: 6px;'>"
+                        f"<span style='font-size: 16px; font-weight: bold; color: #222;'>{row['종목명']}</span> "
+                        f"<span style='font-size: 13px; color: #666;'>({row['증권사']})</span>"
+                        f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
+                        f"<span style='font-size: 14px; color: #444;'>{title}</span>"
+                        f"</div>"
+                        f"<div style='font-size: 14px; color: #555;'>"
+                        f"<span style='color: {up_color}; font-weight: bold;'>🚀 Upside: {upside_str} {fire}</span>"
+                        f"<span style='color: #ccc;'> &nbsp;|&nbsp; </span>"
+                        f"📊 {curr_price} ({curr_mc}) ➡️ <b>{tgt_price} ({tgt_mc})</b>"
+                        f"</div>"
+                        f"</summary>"
+                        f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 14px; color: #333;'>"
+                        f"<b style='color: #0056b3;'>💡 핵심 투자 포인트</b>"
+                        f"<ul style='margin-top: 6px; padding-left: 20px;'>{points_html}</ul>"
+                        f"<div style='margin-top: 10px; font-size: 12px; color: #888; background-color: #f9f9f9; padding: 8px; border-radius: 4px;'>"
+                        f"<b>평가 방식:</b> {row.get('평가방식', 'N/A')}"
+                        f"</div>"
+                        f"</div>"
+                        f"</details>"
+                    )
                     
                     st.markdown(card_html, unsafe_allow_html=True)
             else:
