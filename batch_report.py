@@ -151,8 +151,9 @@ async def main():
             print(f"      ➡️ {len(analyzed_part)}건 추출 완료")
             all_analyzed_data.extend(analyzed_part)
         
-        # API 부하 방지용 휴식
-        time.sleep(5)
+        # 💡 [수정] API 1분당 토큰 한도(Quota) 보호를 위해 충분한 휴식 부여
+        print("      ⏳ API 한도 보호를 위해 20초 대기합니다...")
+        time.sleep(20)
 
     if not all_analyzed_data:
         print("AI가 추출한 데이터가 최종적으로 0건입니다.")
