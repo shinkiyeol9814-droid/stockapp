@@ -3,8 +3,10 @@ import pandas as pd
 import json
 import os
 import glob
+import re
 from datetime import datetime
 
+# 💡 파일명 변환 함수 (UI 표시용)
 def format_json_name(file_path):
     base_name = os.path.basename(file_path)
     if base_name.startswith("premarket_"):
@@ -22,10 +24,16 @@ def format_json_name(file_path):
     except:
         return base_name
 
+# 💡 날짜 추출용 정렬 함수 (항상 최신 날짜가 위로 오게)
+def get_sort_key(file_path):
+    match = re.search(r'(\d{8}_\d{4})', file_path)
+    return match.group(1) if match else "00000000_0000"
+
 def render_report_summary():
     st.markdown("<div class='main-title'>📊 증권사 레포트 AI 요약</div>", unsafe_allow_html=True)
     
-    report_files = sorted(glob.glob("data/broker_report/*.json"), reverse=True)
+    # 💡 Pre/Regular 상관없이 무조건 날짜/시간 추출해서 내림차순 정렬
+    report_files = sorted(glob.glob("data/broker_report/*.json"), key=get_sort_key, reverse=True)
     
     if report_files:
         selected_file = st.selectbox("분석 데이터 선택", report_files, format_func=format_json_name)
@@ -35,13 +43,15 @@ def render_report_summary():
             results = data.get('results', [])
             analysis_time = data.get('analysis_time', '알 수 없음')
             
-            st.caption(f"📅 레포트 추출 및 분석 시점: {analysis_time} | 📊 총 {len(results)}개의 레포트가 추출되었습니다.")
+            st.caption(f"📅 레포트 추출 및 분석 시점: {analysis_time} | 📊 총 {len(results)}개의 레포트가 분석되었습니다.")
             
             if results:
                 df = pd.DataFrame(results)
                 
+                # 정렬을 위한 숫자 변환
                 df['Upside_num'] = pd.to_numeric(df['Upside'], errors='coerce')
                 
+                # 오늘의 최고 기대 종목 하이라이트 배지
                 if not df['Upside_num'].isna().all():
                     top_row = df.loc[df['Upside_num'].idxmax()]
                     if top_row['Upside_num'] > 0:
@@ -49,41 +59,74 @@ def render_report_summary():
                 
                 st.divider()
 
+                # Upside 내림차순 정렬
                 df = df.sort_values(by='Upside_num', ascending=False)
-                df['Upside'] = df['Upside_num'].apply(lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%")
+                df['Upside_str'] = df['Upside_num'].apply(lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%")
 
-                # 💡 [핵심] 투자포인트 컬럼에 데이터를 예쁘게 압축 조립하는 로직
-                def format_invest_points(row):
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # 💡 데이터 에디터(표) 대신 HTML 커스텀 아코디언 카드 렌더링
+                for _, row in df.iterrows():
                     title = row.get('레포트 제목', '제목 없음')
                     curr_price = row.get('현재가', 'N/A')
                     curr_mc = row.get('현재시총', 'N/A')
                     tgt_price = row.get('목표주가', 'N/A')
                     tgt_mc = row.get('목표시총', 'N/A')
                     
+                    upside_val = row.get('Upside_num', 0)
+                    upside_str = row.get('Upside_str', 'N/A')
+
+                    # Upside 수치에 따른 색상 및 이모지 설정
+                    if pd.isna(upside_val):
+                        fire = "❄️"
+                        up_color = "#808080" # 회색
+                    elif upside_val >= 50:
+                        fire = "🔥🔥🔥"
+                        up_color = "#FF0000" # 강렬한 빨강
+                    elif upside_val >= 30:
+                        fire = "🔥🔥"
+                        up_color = "#FF4500" # 다홍색
+                    elif upside_val > 0:
+                        fire = "🔥"
+                        up_color = "#FF8C00" # 주황색
+                    else:
+                        fire = "💧"
+                        up_color = "#1E90FF" # 파란색
+
+                    # 투자 포인트 HTML 리스트로 변환 (엔터 없이 한 줄로)
                     points = row.get('투자포인트', [])
-                    points_str = "\n".join([f"• {p}" for p in points]) if isinstance(points, list) else str(points)
+                    if isinstance(points, list):
+                        points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points])
+                    else:
+                        points_html = f"<li>{points}</li>"
+
+                    # 💡 [핵심] 줄바꿈 기호를 없애고 괄호로 묶어서 하나의 거대한 문자열로 만듭니다. (자동 들여쓰기 원천 차단!)
+                    card_html = (
+                        f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
+                        f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
+                        f"<div style='margin-bottom: 6px;'>"
+                        f"<span style='font-size: 16px; font-weight: bold; color: #222;'>{row['종목명']}</span> "
+                        f"<span style='font-size: 13px; color: #666;'>({row['증권사']})</span>"
+                        f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
+                        f"<span style='font-size: 14px; color: #444;'>{title}</span>"
+                        f"</div>"
+                        f"<div style='font-size: 14px; color: #555;'>"
+                        f"<span style='color: {up_color}; font-weight: bold;'>🚀 Upside: {upside_str} {fire}</span>"
+                        f"<span style='color: #ccc;'> &nbsp;|&nbsp; </span>"
+                        f"📊 {curr_price} ({curr_mc}) ➡️ <b>{tgt_price} ({tgt_mc})</b>"
+                        f"</div>"
+                        f"</summary>"
+                        f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 14px; color: #333;'>"
+                        f"<b style='color: #0056b3;'>💡 핵심 투자 포인트</b>"
+                        f"<ul style='margin-top: 6px; padding-left: 20px;'>{points_html}</ul>"
+                        f"<div style='margin-top: 10px; font-size: 12px; color: #888; background-color: #f9f9f9; padding: 8px; border-radius: 4px;'>"
+                        f"<b>평가 방식:</b> {row.get('평가방식', 'N/A')}"
+                        f"</div>"
+                        f"</div>"
+                        f"</details>"
+                    )
                     
-                    # 마크다운 포맷으로 조립
-                    formatted_str = f"📑 **{title}**\n\n"
-                    formatted_str += f"💰 {curr_price} ({curr_mc}) ➡️ **{tgt_price}** ({tgt_mc})\n\n"
-                    formatted_str += f"{points_str}"
-                    return formatted_str
-
-                # 새로운 조립된 컬럼 적용
-                df['투자포인트_표시'] = df.apply(format_invest_points, axis=1)
-
-                # 💡 [요청사항 반영] 현재시총, 목표시총 컬럼 제거하고 꼭 필요한 것만 남김
-                display_df = df[['종목명', '증권사', 'Upside', '평가방식', '투자포인트_표시']].copy()
-                display_df = display_df.astype(str)
-
-                st.data_editor(
-                    display_df,
-                    column_config={
-                        "투자포인트_표시": st.column_config.TextColumn("레포트 요약 및 투자포인트", width="large")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
+                    st.markdown(card_html, unsafe_allow_html=True)
             else:
                 st.warning("해당 시간대에 분석된 종목 데이터가 없습니다.")
     else:

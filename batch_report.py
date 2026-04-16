@@ -28,9 +28,11 @@ TARGET_CHANNELS = [
 ]
 
 # 💡 [수정] 텍스트 하나로 뭉치지 않고, 각 레포트를 리스트 형태로 반환합니다!
+# 💡 1. PDF 다운로드 함수 (파일명 중복 방지 추가)
 async def get_pdf_reports_from_telegram_list(client, hours=12):
     print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 PDF 레포트 수집 중...")
     extracted_texts_list = []
+    seen_files = set() # 👈 중복 체크용 바구니 추가!
     limit_time = datetime.now() - timedelta(hours=hours)
     
     os.makedirs('temp_pdfs', exist_ok=True)
@@ -43,6 +45,12 @@ async def get_pdf_reports_from_telegram_list(client, hours=12):
                     
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
+                    
+                    # 💡 파일명이 이미 수집한 거면 패스!
+                    if file_name in seen_files:
+                        continue
+                    seen_files.add(file_name)
+                    
                     pdf_path = await client.download_media(message.document, file=f"temp_pdfs/{file_name}")
                     
                     try:
@@ -191,6 +199,9 @@ async def main():
             results.append(item)
         else:
             print(f"   ⚠️ 매칭 실패: AI가 뽑은 이름 [{raw_name}] -> 필터 통과 이름 [{clean_name}]")
+
+    # 💡 2. 최종 저장 직전에 '종목명' 기준으로 중복 한 번 더 싹 제거!
+    results = [dict(t) for t in {tuple(d.items()) for d in results}]
 
     print(f"\n4. 최종 데이터 {len(results)}건 저장 중...")
     
