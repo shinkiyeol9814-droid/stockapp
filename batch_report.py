@@ -201,8 +201,11 @@ async def main():
         else:
             print(f"   ⚠️ 매칭 실패: AI가 뽑은 이름 [{raw_name}] -> 필터 통과 이름 [{clean_name}]")
 
-    # 💡 2. 최종 저장 직전에 '종목명' 기준으로 중복 한 번 더 싹 제거!
-    results = [dict(t) for t in {tuple(d.items()) for d in results}]
+    # 💡 [수정] 종목명 기준으로 중복 제거 (리스트 에러 방지 및 가장 최신 1개만 유지)
+    unique_results = {}
+    for item in results:
+        unique_results[item['종목명']] = item
+    results = list(unique_results.values())
 
     print(f"\n4. 최종 데이터 {len(results)}건 저장 중...")
     
