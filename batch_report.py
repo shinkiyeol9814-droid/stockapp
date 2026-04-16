@@ -151,8 +151,9 @@ async def main():
             print(f"      ➡️ {len(analyzed_part)}건 추출 완료")
             all_analyzed_data.extend(analyzed_part)
         
-        # API 부하 방지용 휴식
-        time.sleep(5)
+        # 💡 [수정] API 1분당 토큰 한도(Quota) 보호를 위해 충분한 휴식 부여
+        print("      ⏳ API 한도 보호를 위해 20초 대기합니다...")
+        time.sleep(20)
 
     if not all_analyzed_data:
         print("AI가 추출한 데이터가 최종적으로 0건입니다.")
@@ -201,8 +202,11 @@ async def main():
         else:
             print(f"   ⚠️ 매칭 실패: AI가 뽑은 이름 [{raw_name}] -> 필터 통과 이름 [{clean_name}]")
 
-    # 💡 2. 최종 저장 직전에 '종목명' 기준으로 중복 한 번 더 싹 제거!
-    results = [dict(t) for t in {tuple(d.items()) for d in results}]
+    # 💡 [수정] 종목명 기준으로 중복 제거 (리스트 에러 방지 및 가장 최신 1개만 유지)
+    unique_results = {}
+    for item in results:
+        unique_results[item['종목명']] = item
+    results = list(unique_results.values())
 
     print(f"\n4. 최종 데이터 {len(results)}건 저장 중...")
     
