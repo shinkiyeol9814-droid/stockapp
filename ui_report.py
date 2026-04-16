@@ -85,28 +85,53 @@ def render_report_summary():
                 display_df = df[['종목명', '증권사', 'Upside', '평가방식', '투자포인트_표시']].copy()
                 display_df = display_df.astype(str)
 
-                st.markdown("<br>", unsafe_allow_html=True) # 시각적 여백
+                st.markdown("<br>", unsafe_allow_html=True)
 
                 for _, row in df.iterrows():
-                    # 💡 모바일 화면에 맞춰 자동으로 줄바꿈되는 '반응형 카드' 생성
-                    with st.container(border=True):
+                    # 1. 데이터 추출
+                    title = row.get('레포트 제목', '제목 없음')
+                    curr_price = row.get('현재가', 'N/A')
+                    curr_mc = row.get('현재시총', 'N/A')
+                    tgt_price = row.get('목표주가', 'N/A')
+                    tgt_mc = row.get('목표시총', 'N/A')
+                    
+                    upside_val = row.get('Upside_num', 0)
+                    upside_str = row.get('Upside', 'N/A')
+
+                    # 2. Upside 높이에 따른 불꽃 이모지 (제목 강조용)
+                    if pd.isna(upside_val):
+                        fire = ""
+                    elif upside_val >= 50:
+                        fire = "🔥🔥🔥"
+                    elif upside_val >= 30:
+                        fire = "🔥🔥"
+                    elif upside_val > 0:
+                        fire = "🔥"
+                    else:
+                        fire = "❄️"
+
+                    # 3. 기열님이 요청하신 완벽한 한 줄 요약 타이틀!
+                    expander_title = f"{row['종목명']} ({row['증권사']}) | {title} | 🚀 Upside: {upside_str} {fire} | 📊 {curr_price} ({curr_mc}) ➡️ {tgt_price} ({tgt_mc})"
+                    
+                    # 4. 펼치기(Expander) UI 생성
+                    with st.expander(expander_title):
+                        # 내부 Upside 색상 처리 (높을수록 붉은색)
+                        if upside_val >= 50:
+                            color = "#FF0000" # 진한 빨강
+                        elif upside_val >= 30:
+                            color = "#FF4500" # 주황-빨강
+                        elif upside_val > 0:
+                            color = "#FFA500" # 주황
+                        else:
+                            color = "#808080" # 회색
+                            
+                        # 평가방식 및 컬러 풀 Upside 출력
+                        st.markdown(f"<h3 style='color: {color}; margin-bottom: 5px;'>🚀 목표수익률: {upside_str}</h3>", unsafe_allow_html=True)
+                        st.markdown(f"**💡 평가 방식:** {row.get('평가방식', 'N/A')}")
+                        st.markdown("---")
                         
-                        # 1. 레포트 제목 (가장 눈에 띄게)
-                        title = row.get('레포트 제목', '제목 없음')
-                        st.markdown(f"#### 📘 {title}")
-                        
-                        # 2. 종목명, 증권사, 그리고 Upside 강조
-                        st.markdown(f"**{row['종목명']}** ({row['증권사']}) &nbsp;|&nbsp; 🚀 Upside: **{row['Upside']}**")
-                        
-                        # 3. 가격 및 시총 (이전 ➡️ 목표)
-                        curr_price = row.get('현재가', 'N/A')
-                        curr_mc = row.get('현재시총', 'N/A')
-                        tgt_price = row.get('목표주가', 'N/A')
-                        tgt_mc = row.get('목표시총', 'N/A')
-                        st.markdown(f"📊 {curr_price} ({curr_mc}) ➡️ **{tgt_price} ({tgt_mc})**")
-                        
-                        # 4. 투자 포인트 (리스트 형태로 깔끔하게 줄바꿈)
-                        st.markdown("**💡 핵심 투자 포인트**")
+                        # 5. 핵심 투자 포인트 리스트업
+                        st.markdown("**📝 핵심 투자 포인트**")
                         points = row.get('투자포인트', [])
                         if isinstance(points, list):
                             for p in points:
