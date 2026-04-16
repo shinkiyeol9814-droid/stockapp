@@ -85,14 +85,34 @@ def render_report_summary():
                 display_df = df[['종목명', '증권사', 'Upside', '평가방식', '투자포인트_표시']].copy()
                 display_df = display_df.astype(str)
 
-                st.data_editor(
-                    display_df,
-                    column_config={
-                        "투자포인트_표시": st.column_config.TextColumn("레포트 핵심 내용", width="large")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.markdown("<br>", unsafe_allow_html=True) # 시각적 여백
+
+                for _, row in df.iterrows():
+                    # 💡 모바일 화면에 맞춰 자동으로 줄바꿈되는 '반응형 카드' 생성
+                    with st.container(border=True):
+                        
+                        # 1. 레포트 제목 (가장 눈에 띄게)
+                        title = row.get('레포트 제목', '제목 없음')
+                        st.markdown(f"#### 📘 {title}")
+                        
+                        # 2. 종목명, 증권사, 그리고 Upside 강조
+                        st.markdown(f"**{row['종목명']}** ({row['증권사']}) &nbsp;|&nbsp; 🚀 Upside: **{row['Upside']}**")
+                        
+                        # 3. 가격 및 시총 (이전 ➡️ 목표)
+                        curr_price = row.get('현재가', 'N/A')
+                        curr_mc = row.get('현재시총', 'N/A')
+                        tgt_price = row.get('목표주가', 'N/A')
+                        tgt_mc = row.get('목표시총', 'N/A')
+                        st.markdown(f"📊 {curr_price} ({curr_mc}) ➡️ **{tgt_price} ({tgt_mc})**")
+                        
+                        # 4. 투자 포인트 (리스트 형태로 깔끔하게 줄바꿈)
+                        st.markdown("**💡 핵심 투자 포인트**")
+                        points = row.get('투자포인트', [])
+                        if isinstance(points, list):
+                            for p in points:
+                                st.markdown(f"- {p}")
+                        else:
+                            st.markdown(f"- {points}")
             else:
                 st.warning("해당 시간대에 분석된 종목 데이터가 없습니다.")
     else:
