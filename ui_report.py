@@ -68,6 +68,7 @@ def render_report_summary():
                 # 💡 데이터 에디터(표) 대신 HTML 커스텀 아코디언 카드 렌더링
                 for _, row in df.iterrows():
                     title = row.get('레포트 제목', '제목 없음')
+                    report_date = row.get('발행일자', 'N/A') # 👈 발행일자 가져오기
                     curr_price = row.get('현재가', 'N/A')
                     curr_mc = row.get('현재시총', 'N/A')
                     tgt_price = row.get('목표주가', 'N/A')
@@ -76,31 +77,17 @@ def render_report_summary():
                     upside_val = row.get('Upside_num', 0)
                     upside_str = row.get('Upside_str', 'N/A')
 
-                    # Upside 수치에 따른 색상 및 이모지 설정
-                    if pd.isna(upside_val):
-                        fire = "❄️"
-                        up_color = "#808080" # 회색
-                    elif upside_val >= 50:
-                        fire = "🔥🔥🔥"
-                        up_color = "#FF0000" # 강렬한 빨강
-                    elif upside_val >= 30:
-                        fire = "🔥🔥"
-                        up_color = "#FF4500" # 다홍색
-                    elif upside_val > 0:
-                        fire = "🔥"
-                        up_color = "#FF8C00" # 주황색
-                    else:
-                        fire = "💧"
-                        up_color = "#1E90FF" # 파란색
+                    # Upside 수치에 따른 색상 설정 (동일)
+                    if pd.isna(upside_val): fire, up_color = "❄️", "#808080"
+                    elif upside_val >= 50: fire, up_color = "🔥🔥🔥", "#FF0000"
+                    elif upside_val >= 30: fire, up_color = "🔥🔥", "#FF4500"
+                    elif upside_val > 0: fire, up_color = "🔥", "#FF8C00"
+                    else: fire, up_color = "💧", "#1E90FF"
 
-                    # 투자 포인트 HTML 리스트로 변환 (엔터 없이 한 줄로)
                     points = row.get('투자포인트', [])
-                    if isinstance(points, list):
-                        points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points])
-                    else:
-                        points_html = f"<li>{points}</li>"
+                    points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points]) if isinstance(points, list) else f"<li>{points}</li>"
 
-                    # 💡 [핵심] 줄바꿈 기호를 없애고 괄호로 묶어서 하나의 거대한 문자열로 만듭니다. (자동 들여쓰기 원천 차단!)
+                    # 💡 [최종 수정] 2줄 타이틀 + 발행일자 포함
                     card_html = (
                         f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
                         f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
@@ -109,6 +96,8 @@ def render_report_summary():
                         f"<span style='font-size: 13px; color: #666;'>({row['증권사']})</span>"
                         f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
                         f"<span style='font-size: 14px; color: #444;'>{title}</span>"
+                        f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
+                        f"<span style='font-size: 13px; color: #888;'>{report_date}</span>" # 👈 발행일자 추가됨
                         f"</div>"
                         f"<div style='font-size: 14px; color: #555;'>"
                         f"<span style='color: {up_color}; font-weight: bold;'>🚀 Upside: {upside_str} {fire}</span>"
