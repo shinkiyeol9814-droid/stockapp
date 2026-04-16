@@ -98,46 +98,115 @@ def render_report_summary():
                     upside_val = row.get('Upside_num', 0)
                     upside_str = row.get('Upside', 'N/A')
 
-                    # 2. Upside 높이에 따른 불꽃 이모지 (제목 강조용)
+                    # 2. Upside 수치에 따른 색상 및 이모지 설정 (높을수록 붉게)
                     if pd.isna(upside_val):
-                        fire = ""
+                        fire = "❄️"
+                        up_color = "#808080" # 회색
                     elif upside_val >= 50:
                         fire = "🔥🔥🔥"
+                        up_color = "#FF0000" # 강렬한 빨강
                     elif upside_val >= 30:
                         fire = "🔥🔥"
+                        up_color = "#FF4500" # 다홍색
                     elif upside_val > 0:
                         fire = "🔥"
+                        up_color = "#FF8C00" # 주황색
                     else:
-                        fire = "❄️"
+                        fire = "💧"
+                        up_color = "#1E90FF" # 파란색
 
-                    # 3. 기열님이 요청하신 완벽한 한 줄 요약 타이틀!
-                    expander_title = f"{row['종목명']} ({row['증권사']}) | {title} | 🚀 Upside: {upside_str} {fire} | 📊 {curr_price} ({curr_mc}) ➡️ {tgt_price} ({tgt_mc})"
-                    
-                    # 4. 펼치기(Expander) UI 생성
-                    with st.expander(expander_title):
-                        # 내부 Upside 색상 처리 (높을수록 붉은색)
-                        if upside_val >= 50:
-                            color = "#FF0000" # 진한 빨강
-                        elif upside_val >= 30:
-                            color = "#FF4500" # 주황-빨강
-                        elif upside_val > 0:
-                            color = "#FFA500" # 주황
-                        else:
-                            color = "#808080" # 회색
-                            
-                        # 평가방식 및 컬러 풀 Upside 출력
-                        st.markdown(f"<h3 style='color: {color}; margin-bottom: 5px;'>🚀 목표수익률: {upside_str}</h3>", unsafe_allow_html=True)
-                        st.markdown(f"**💡 평가 방식:** {row.get('평가방식', 'N/A')}")
-                        st.markdown("---")
+                    # 3. 투자 포인트 HTML 리스트로 변환
+                    points = row.get('투자포인트', [])
+                    if isinstance(points, list):
+                        points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points])
+                    else:
+                        points_html = f"<li>{points}</li>"
+
+                    # 4. 💡 HTML/CSS로 2줄짜리 완벽한 '커스텀 아코디언' 생성
+                    card_html = f"""
+                    <details style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <summary style="cursor: pointer; list-style: none; outline: none;">
+                            <div style="margin-bottom: 6px;">
+                                <span style="font-size: 16px; font-weight: bold; color: #222;">{row['종목명']}</span>
+                                <span style="font-size: 13px; color: #666;">({row['증권사']})</span>
+                                <span style="font-size: 14px; color: #ccc;"> &nbsp;|&nbsp; </span>
+                                <span style="font-size: 14px; color: #444;">{title}</span>
+                            </div>
+                            <div style="font-size: 14px; color: #555;">
+                                <span style="color: {up_color}; font-weight: bold;">🚀 Upside: {upside_str} {fire}</span>
+                                <span style="color: #ccc;"> &nbsp;|&nbsp; </span>
+                                📊 {curr_price} ({curr_mc}) ➡️ <b>{tgt_price} ({tgt_mc})</b>
+                            </div>
+                        </summary>
                         
-                        # 5. 핵심 투자 포인트 리스트업
-                        st.markdown("**📝 핵심 투자 포인트**")
-                        points = row.get('투자포인트', [])
-                        if isinstance(points, list):
-                            for p in points:
-                                st.markdown(f"- {p}")
-                        else:
-                            st.markdown(f"- {points}")
+                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 14px; color: #333;">
+                            <b style="color: #0056b3;">💡 핵심 투자 포인트</b>
+                            <ul style="margin-top: 6px; padding-left: 20px;">
+                                {points_html}
+                            </ul>
+                            <div style="margin-top: 10px; font-size: 12px; color: #888; background-color: #f9f9f9; padding: 8px; border-radius: 4px;">
+                                <b>평가 방식:</b> {row.get('평가방식', 'N/A')}
+                            </div>
+                        </div>
+                    </details>
+                    """
+                    
+                    # 5. 생성한 HTML을 Streamlit에 강제로 그리기
+                    st.markdown(card_html, unsafe_allow_html=True)
+
+                # st.markdown("<br>", unsafe_allow_html=True)
+
+                # for _, row in df.iterrows():
+                #     # 1. 데이터 추출
+                #     title = row.get('레포트 제목', '제목 없음')
+                #     curr_price = row.get('현재가', 'N/A')
+                #     curr_mc = row.get('현재시총', 'N/A')
+                #     tgt_price = row.get('목표주가', 'N/A')
+                #     tgt_mc = row.get('목표시총', 'N/A')
+                    
+                #     upside_val = row.get('Upside_num', 0)
+                #     upside_str = row.get('Upside', 'N/A')
+
+                #     # 2. Upside 높이에 따른 불꽃 이모지 (제목 강조용)
+                #     if pd.isna(upside_val):
+                #         fire = ""
+                #     elif upside_val >= 50:
+                #         fire = "🔥🔥🔥"
+                #     elif upside_val >= 30:
+                #         fire = "🔥🔥"
+                #     elif upside_val > 0:
+                #         fire = "🔥"
+                #     else:
+                #         fire = "❄️"
+
+                #     # 3. 기열님이 요청하신 완벽한 한 줄 요약 타이틀!
+                #     expander_title = f"{row['종목명']} ({row['증권사']}) | {title} | 🚀 Upside: {upside_str} {fire} | 📊 {curr_price} ({curr_mc}) ➡️ {tgt_price} ({tgt_mc})"
+                    
+                #     # 4. 펼치기(Expander) UI 생성
+                #     with st.expander(expander_title):
+                #         # 내부 Upside 색상 처리 (높을수록 붉은색)
+                #         if upside_val >= 50:
+                #             color = "#FF0000" # 진한 빨강
+                #         elif upside_val >= 30:
+                #             color = "#FF4500" # 주황-빨강
+                #         elif upside_val > 0:
+                #             color = "#FFA500" # 주황
+                #         else:
+                #             color = "#808080" # 회색
+                            
+                #         # 평가방식 및 컬러 풀 Upside 출력
+                #         st.markdown(f"<h3 style='color: {color}; margin-bottom: 5px;'>🚀 목표수익률: {upside_str}</h3>", unsafe_allow_html=True)
+                #         st.markdown(f"**💡 평가 방식:** {row.get('평가방식', 'N/A')}")
+                #         st.markdown("---")
+                        
+                #         # 5. 핵심 투자 포인트 리스트업
+                #         st.markdown("**📝 핵심 투자 포인트**")
+                #         points = row.get('투자포인트', [])
+                #         if isinstance(points, list):
+                #             for p in points:
+                #                 st.markdown(f"- {p}")
+                #         else:
+                #             st.markdown(f"- {points}")
             else:
                 st.warning("해당 시간대에 분석된 종목 데이터가 없습니다.")
     else:
