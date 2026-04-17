@@ -178,8 +178,11 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             return reasons_dict
         except Exception as e:
             error_msg = str(e)
-            wait_time = 30 if ("429" in error_msg or "503" in error_msg) else 10
-            print(f"      ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기...")
+            wait_time = 65 if "429" in error_msg else 10
+            
+            # 💡 [핵심] 구글이 뭐라고 욕하면서 튕겨내는지 '진짜 사유'를 화면에 적나라하게 찍어봅니다!
+            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기... (사유: {error_msg})")
+
             if attempt < max_retries - 1:
                 time.sleep(wait_time) 
             else:
