@@ -32,7 +32,7 @@ def get_high_stocks():
     df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
     
-    # 💡 요청사항: 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
+    # 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
     
     # 당일 상승 마감(양봉) 종목만 선정
@@ -83,7 +83,7 @@ async def get_telegram_news(client, stock_name):
     messages_text = []
     today = datetime.now().date()
     try:
-        # 💡 요청사항: 찌라시 수집 개수 5개로 통제
+        # 찌라시 수집 개수 5개로 통제
         async for message in client.iter_messages(None, search=stock_name, limit=5):
             if message.date.date() == today and message.text:
                 messages_text.append(message.text)
@@ -91,7 +91,7 @@ async def get_telegram_news(client, stock_name):
         print(f"텔레그램 에러 ({stock_name}): {e}")
     return " \n".join(messages_text)
 
-# 💡 구글 뉴스 크롤링 완전 비동기화 (aiohttp 적용)
+# 구글 뉴스 크롤링 완전 비동기화 (aiohttp 적용)
 async def get_google_news(session, stock_name):
     query = f'"{stock_name}" 특징주 OR 주가'
     encoded_query = urllib.parse.quote(query)
@@ -121,7 +121,7 @@ async def get_google_news(session, stock_name):
     except Exception as e:
         return f"뉴스 수집 에러: {e}", "관련 뉴스 없음", ""
 
-# 💡 텔레그램과 구글 뉴스를 동시에 비동기로 긁어오는 워커 함수
+# 텔레그램과 구글 뉴스를 동시에 비동기로 긁어오는 워커 함수
 async def fetch_stock_data(s, client_tg, session, sem):
     async with sem: # 과부하 차단(동시접속 제한)
         tg_task = get_telegram_news(client_tg, s['종목명'])
@@ -141,7 +141,7 @@ async def fetch_stock_data(s, client_tg, session, sem):
             s['추정 사유'] = "분석 대기"
             return {'name': s['종목명'], 'tg': tg_text, 'news': ai_news_text, 'ref': s}
 
-def summarize_batch_with_gemini(batch_data, max_retries=2):
+def summarize_batch_with_gemini(batch_data, max_retries=3):
     if not batch_data: return {}
 
     prompt = f"""너는 냉철한 주식 분석가야. 아래 전달하는 {len(batch_data)}개 종목의 뉴스(팩트)와 텔레그램(루머) 데이터를 읽고, 각 종목이 신고가를 뚫은 핵심 모멘텀을 50자 이내로 1줄 요약해.
@@ -162,7 +162,6 @@ def summarize_batch_with_gemini(batch_data, max_retries=2):
 
     for attempt in range(max_retries):
         try:
-            # 💡 [요청사항] 최신 모델 Gemini 2.5 Flash 적용 확정
             response = client_ai.models.generate_content(
                 model='gemini-2.5-flash', 
                 contents=prompt,
@@ -172,107 +171,133 @@ def summarize_batch_with_gemini(batch_data, max_retries=2):
             for line in res_text.split('\n'):
                 if '|' in line:
                     parts = line.split('|', 1)
-                    # 무적의 정규식 파싱: AI가 붙인 기호 제거
                     raw_name = parts[0].strip()
                     stock_name = re.sub(r'^[\d\.\-\*\s]+', '', raw_name).replace("[", "").replace("]", "")
                     summary = parts[1].strip().replace("[", "").replace("]", "")
                     reasons_dict[stock_name] = summary
             return reasons_dict
         except Exception as e:
-            wait_time = 65 if "429" in str(e) else 10
-            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기...")
-            time.sleep(wait_time) 
-    return {}
+            error_msg = str(e)
+            wait_time = 65 if "429" in error_msg else 10
+            
+            # 💡 [핵심] 구글이 뭐라고 욕하면서 튕겨내는지 '진짜 사유'를 화면에 적나라하게 찍어봅니다!
+            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기... (사유: {error_msg})")
+
+            if attempt < max_retries - 1:
+                time.sleep(wait_time) 
+            else:
+                return None # 3번 다 실패하면 명시적 None 반환
+
+# 💡 [핵심] 1바퀴 돌 때마다 즉시 JSON에 덮어쓰는 저장 함수
+def save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, pass_num):
+    m, sec = divmod(time.time() - start_time, 60)
+    execution_time_str = f"진행중 (현재 {int(m)}분 {int(sec)}초)"
+    
+    report = {
+        "analysis_time": analysis_time,
+        "execution_time": execution_time_str,
+        "results": stocks
+    }
+    with open(file_name, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=4, ensure_ascii=False)
+    print(f"\n💾 [{pass_num}차 저장 완료] 데이터가 웹 대시보드에 즉시 업데이트되었습니다!")
 
 async def main():
     start_time = time.time()
-    print("=== 주도주 트래킹 배치 시작 (초고속 병렬 모드) ===")
+    print("=== 주도주 트래킹 배치 시작 (초고속 병렬 + 5회 패자부활전) ===")
+    
+    now = datetime.utcnow() + timedelta(hours=9)
+    analysis_time = now.strftime("%Y-%m-%d %H:%M")
+    save_dir = 'data/new_high'
+    os.makedirs(save_dir, exist_ok=True)
+    file_name = f"{save_dir}/newhigh_{now.strftime('%Y%m%d_%H%M')}.json"
+    
     stocks = get_high_stocks()
     
     if not stocks:
         print("조건을 만족하는 신고가 종목이 없습니다.")
-    else:
-        client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
-        await client_tg.start()
+        return
         
-        print(f"\n⚡ {len(stocks)}개 종목 뉴스/찌라시 병렬 크롤링 시작...")
-        
-        # 💡 수백 개의 종목을 비동기(병렬)로 동시에 크롤링 처리
-        analysis_queue = []
-        sem = asyncio.Semaphore(15) # 동시 접속 15개 제한
-        
-        async with aiohttp.ClientSession() as session:
-            tasks = [fetch_stock_data(s, client_tg, session, sem) for s in stocks]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            # 예외 필터링
-            for res in results:
-                if isinstance(res, Exception):
-                    print(f"⚠️ 수집 실패: {res}")
-                elif res is not None:
-                    analysis_queue.append(res)
-            
-        await client_tg.disconnect()
-        print(f"✅ 크롤링 완료. AI 분석 대상: {len(analysis_queue)}건")
+    client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
+    await client_tg.start()
+    
+    print(f"\n⚡ {len(stocks)}개 종목 뉴스/찌라시 병렬 크롤링 시작...")
+    
+    analysis_queue = []
+    sem = asyncio.Semaphore(15) 
+    
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_stock_data(s, client_tg, session, sem) for s in stocks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, Exception):
+                print(f"⚠️ 수집 실패: {res}")
+            elif res is not None:
+                analysis_queue.append(res)
+    
+    await client_tg.disconnect()
+    print(f"✅ 크롤링 완료. AI 분석 대상: {len(analysis_queue)}건")
 
-        # 💡 [요청사항] 15개 청크 사이즈 적용 (API 호출 횟수 최적화)
-        chunk_size = 15 
-        retry_queue = []
+    # 💡 5회 패자부활전 로직 설정
+    chunk_size = 15 
+    MAX_PASSES = 5
+    current_queue = analysis_queue
+
+    for pass_num in range(1, MAX_PASSES + 1):
+        if not current_queue:
+            print(f"\n🎉 [완벽 성공] 누락/실패 없이 모든 찌라시 분석이 완료되었습니다! (총 {pass_num-1}회전)")
+            break
+            
+        print(f"\n=============================================")
+        print(f"🚀 [{pass_num}차 분석 시작] 총 {len(current_queue)}개 종목 분석 중...")
+        print(f"=============================================")
         
-        # 1차 분석
-        for i in range(0, len(analysis_queue), chunk_size):
-            chunk = analysis_queue[i:i+chunk_size]
-            print(f"\n🚀 1차 AI 일괄 분석 중 ({i+1}~{min(i+chunk_size, len(analysis_queue))}) / {len(analysis_queue)}개...")
+        failed_queue = []
+        
+        for i in range(0, len(current_queue), chunk_size):
+            chunk = current_queue[i:i+chunk_size]
+            print(f"\n▶️ AI 분석 중 ({i+1}~{min(i+chunk_size, len(current_queue))}) / {len(current_queue)}개...")
+            
             result_dict = summarize_batch_with_gemini(chunk)
             
-            for item in chunk:
-                stock_name = item['name']
-                if stock_name in result_dict:
-                    item['ref']['추정 사유'] = result_dict[stock_name]
-                else:
-                    print(f"   🚨 AI 요약 누락: [{stock_name}] -> 재시도 대기열 추가")
-                    retry_queue.append(item)
-            
-            # 청크 단위 처리 후 API 제한 회피를 위한 짧은 휴식
-            time.sleep(5)
-
-        # 누락분 재시도
-        if retry_queue:
-            print(f"\n♻️ 누락된 {len(retry_queue)}개 종목에 대해 2차 재시도 분석을 시작합니다...")
-            for i in range(0, len(retry_queue), chunk_size):
-                chunk = retry_queue[i:i+chunk_size]
-                print(f"   -> 재시도 분석 중 ({i+1}~{min(i+chunk_size, len(retry_queue))}) / {len(retry_queue)}개...")
-                
-                result_dict = summarize_batch_with_gemini(chunk)
-                
+            if result_dict is None:
+                print(f"      ❌ [통째로 실패] 해당 구간 API 에러. 패자부활전으로 통째로 넘깁니다.")
+                failed_queue.extend(chunk)
+            else:
+                # 성공했지만 빼먹은 놈들이 있는지 체크
                 for item in chunk:
-                    if item['name'] in result_dict:
-                        item['ref']['추정 사유'] = result_dict[item['name']]
-                        print(f"   ✅ 복구 완료: [{item['name']}]")
+                    stock_name = item['name']
+                    if stock_name in result_dict:
+                        item['ref']['추정 사유'] = result_dict[stock_name]
+                        print(f"      ➡️ 추출 성공: [{stock_name}]")
                     else:
-                        print(f"   ❌ 최종 누락: [{item['name']}] -> 수동 확인 필요")
-                        item['ref']['추정 사유'] = "추출 누락 (수동 확인 필요)"
-                
-                time.sleep(5)
+                        print(f"      ⚠️ AI 요약 누락: [{stock_name}] -> 패자부활전 대기열 추가")
+                        failed_queue.append(item)
+            
+            # API 제한 회피를 위한 짧은 휴식 (청크가 클수록 넉넉히)
+            time.sleep(10)
 
-    end_time = time.time()
-    m, sec = divmod(end_time - start_time, 60)
-    execution_time_str = f"{int(m)}분 {int(sec)}초"
+        # 💡 1바퀴 끝날 때마다 JSON 실시간 덮어쓰기!
+        save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, pass_num)
 
-    # ✅ 수정 후 (new_high 전용 폴더 생성)
-    save_dir = 'data/new_high'
-    os.makedirs(save_dir, exist_ok=True)
-    now = datetime.utcnow() + timedelta(hours=9)
-    report = {
-        "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
-        "execution_time": execution_time_str,
-        "results": stocks
-    }
-    
-    file_name = f"{save_dir}/newhigh_{now.strftime('%Y%m%d_%H%M')}.json"
-    with open(file_name, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=4, ensure_ascii=False)
+        # 실패한 종목들을 다음 바퀴의 대상으로 설정
+        current_queue = failed_queue
         
-    print(f"\n=== 모든 분석 완료. 소요시간: {execution_time_str} ===")
+        if current_queue and pass_num < MAX_PASSES:
+            print(f"\n⏳ {pass_num}차 분석 종료. 누락된 {len(current_queue)}개 종목 재도전을 위해 20초 대기합니다...")
+            time.sleep(20)
+
+    # 5바퀴 다 돌았는데도 남은 녀석들은 최종 수동 확인 처리
+    if current_queue:
+        print(f"\n💀 [최종 종료] 최대 {MAX_PASSES}회 시도했으나 {len(current_queue)}개 종목은 AI가 추출하지 못했습니다.")
+        for item in current_queue:
+            item['ref']['추정 사유'] = "추출 누락 (수동 확인 필요)"
+        # 마지막 마무리를 위해 한 번 더 저장
+        save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, "최종")
+
+    m, sec = divmod(time.time() - start_time, 60)
+    execution_time_str = f"{int(m)}분 {int(sec)}초"
+    print(f"\n=== ✅ 모든 분석 완전 종료. 총 소요시간: {execution_time_str} ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
