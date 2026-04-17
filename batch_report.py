@@ -27,12 +27,10 @@ TARGET_CHANNELS = [
     -1001710268401                  
 ]
 
-# 💡 [수정] 텍스트 하나로 뭉치지 않고, 각 레포트를 리스트 형태로 반환합니다!
-# 💡 1. PDF 다운로드 함수 (파일명 중복 방지 추가)
 async def get_pdf_reports_from_telegram_list(client, hours=12):
     print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 PDF 레포트 수집 중...")
     extracted_texts_list = []
-    seen_files = set() # 👈 중복 체크용 바구니 추가!
+    seen_files = set()
     limit_time = datetime.now() - timedelta(hours=hours)
     
     os.makedirs('temp_pdfs', exist_ok=True)
@@ -46,7 +44,6 @@ async def get_pdf_reports_from_telegram_list(client, hours=12):
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
                     
-                    # 💡 파일명이 이미 수집한 거면 패스!
                     if file_name in seen_files:
                         continue
                     seen_files.add(file_name)
@@ -87,7 +84,7 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
             "종목명": "종목이름",
             "증권사": "증권사명",
             "레포트 제목": "레포트의 메인 타이틀(제목)",
-            "발행일자": "YYYY-MM-DD 형식", # 👈 이 줄을 추가하세요!
+            "발행일자": "YYYY-MM-DD 형식",
             "목표주가": "숫자만(예: 250000)",
             "평가방식": "텍스트에 있는 밸류에이션 근거",
             "투자포인트": ["포인트1", "포인트2"]
@@ -112,59 +109,20 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
             return json.loads(res_text)
             
         except Exception as e:
-            wait_time = 30 if "429" in str(e) else 10
-            print(f"      ⚠️ AI 에러 (시도 {attempt + 1}/{max_retries}) | {wait_time}초 대기... (사유: {str(e)[:50]})")
+            error_msg = str(e)
+            wait_time = 30 if ("429" in error_msg or "503" in error_msg) else 10
+            print(f"      ⚠️ AI 에러 (시도 {attempt + 1}/{max_retries}) | {wait_time}초 대기... (사유: {error_msg[:30]})")
+            
             if attempt < max_retries - 1:
                 time.sleep(wait_time)
             else:
-                print("      💀 [해당 구간 최종 실패] 다음 구간으로 넘어갑니다.")
-                return []
+                return None
 
-async def main():
-    print("=== 증권사 레포트 배치 시작 ===")
-    
-    client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
-    await client_tg.start()
-    
-    # 💡 1. 텍스트를 하나로 뭉치지 않고 리스트로 받습니다.
-    report_text_list = await get_pdf_reports_from_telegram_list(client_tg)
-    await client_tg.disconnect() 
-    
-    if not report_text_list:
-        print("조건에 맞는 새로운 레포트가 없습니다.")
-        return
-
-    print(f"\n📊 총 {len(report_text_list)}개의 레포트를 분석합니다. (API 한도 보호를 위해 10개씩 나누어 처리)")
-
-    # 💡 2. 10개씩 쪼개서(Chunking) AI에게 질문합니다!
-    chunk_size = 10
-    all_analyzed_data = []
-    
-    for i in range(0, len(report_text_list), chunk_size):
-        chunk = report_text_list[i : i + chunk_size]
-        chunk_raw_text = "\n".join(chunk)
-        
-        print(f"\n🚀 AI 분석 중... ({i+1}~{min(i+chunk_size, len(report_text_list))}번째 레포트)")
-        analyzed_part = analyze_reports_with_gemini(chunk_raw_text)
-        
-        if analyzed_part:
-            print(f"      ➡️ {len(analyzed_part)}건 추출 완료")
-            all_analyzed_data.extend(analyzed_part)
-        
-        # 💡 [수정] API 1분당 토큰 한도(Quota) 보호를 위해 충분한 휴식 부여
-        print("      ⏳ API 한도 보호를 위해 20초 대기합니다...")
-        time.sleep(20)
-
-    if not all_analyzed_data:
-        print("AI가 추출한 데이터가 최종적으로 0건입니다.")
-        return
-
-    print(f"\n3. FDR 실시간 시총 및 Upside 매칭 중... (총 {len(all_analyzed_data)}건)")
-    df_listing = fdr.StockListing('KRX')
+# 💡 [핵심] 매칭과 저장을 1바퀴 돌 때마다 호출할 수 있도록 분리한 함수
+def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
     results = []
     
-    for item in all_analyzed_data:
-        # 1. AI가 추출한 종목명에서 괄호와 그 안의 숫자(코드)를 싹 지우고 공백 제거
+    for item in analyzed_data:
         raw_name = item.get('종목명', '')
         clean_name = raw_name.split('(')[0].strip() 
         
@@ -182,7 +140,6 @@ async def main():
             curr_price = matched.iloc[0]['Close']
             curr_marcap = matched.iloc[0]['Marcap']
             
-            # 💡 [여기 수정됨!] 현재가를 FDR에서 가져와 콤마 찍어서 저장
             item['현재가'] = f"{int(curr_price):,}원"
             item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억"
             
@@ -199,38 +156,97 @@ async def main():
                 if target_price != "N/A": item['목표주가'] = f"{target_price:,}원"
                 
             results.append(item)
-        else:
-            print(f"   ⚠️ 매칭 실패: AI가 뽑은 이름 [{raw_name}] -> 필터 통과 이름 [{clean_name}]")
 
-    # 💡 [수정] 종목명 기준으로 중복 제거 (리스트 에러 방지 및 가장 최신 1개만 유지)
+    # 종목명 기준 중복 제거
     unique_results = {}
     for item in results:
         unique_results[item['종목명']] = item
     results = list(unique_results.values())
-
-    print(f"\n4. 최종 데이터 {len(results)}건 저장 중...")
     
-    save_dir = 'data/broker_report'
-    os.makedirs(save_dir, exist_ok=True)
-    
-    now = datetime.utcnow() + timedelta(hours=9)
-    
-    if 8 <= now.hour < 20:
-        market_type = "regular"
-    else:
-        market_type = "premarket"
-        
     report = {
-        "analysis_time": now.strftime("%Y-%m-%d %H:%M"),
+        "analysis_time": analysis_time,
         "market_type": market_type,
         "results": results
     }
     
-    file_name = f"{save_dir}/{market_type}_{now.strftime('%Y%m%d_%H%M')}.json"
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"✅ 배치 완료! 저장된 파일: {file_name}")
+    print(f"\n💾 [{pass_num}차 저장 완료] 누적 데이터 {len(results)}건이 웹 대시보드에 즉시 업데이트되었습니다!")
+
+async def main():
+    print("=== 증권사 레포트 배치 시작 ===")
+    
+    # 초기에 파일명과 시간을 고정해두어, 루프를 돌며 동일한 파일에 덮어쓰기(업데이트) 합니다.
+    now = datetime.utcnow() + timedelta(hours=9)
+    market_type = "regular" if 8 <= now.hour < 20 else "premarket"
+    analysis_time = now.strftime("%Y-%m-%d %H:%M")
+    
+    save_dir = 'data/broker_report'
+    os.makedirs(save_dir, exist_ok=True)
+    file_name = f"{save_dir}/{market_type}_{now.strftime('%Y%m%d_%H%M')}.json"
+    
+    client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
+    await client_tg.start()
+    
+    report_text_list = await get_pdf_reports_from_telegram_list(client_tg)
+    await client_tg.disconnect() 
+    
+    if not report_text_list:
+        print("조건에 맞는 새로운 레포트가 없습니다.")
+        return
+
+    # FDR 종목 정보는 시작할 때 딱 한 번만 불러옵니다 (속도 최적화)
+    print("\n🔍 한국거래소 종목 리스트 불러오는 중...")
+    df_listing = fdr.StockListing('KRX')
+
+    chunk_size = 10
+    MAX_PASSES = 5 # 💡 최대 5바퀴 (1차 본게임 + 4차 패자부활전)
+    current_chunks = [report_text_list[i : i + chunk_size] for i in range(0, len(report_text_list), chunk_size)]
+    all_analyzed_data = []
+
+    for pass_num in range(1, MAX_PASSES + 1):
+        if not current_chunks:
+            print(f"\n🎉 [완벽 성공] 실패한 구간 없이 모든 레포트 분석이 완료되었습니다! (총 {pass_num-1}회전)")
+            break
+            
+        print(f"\n=============================================")
+        print(f"🚀 [{pass_num}차 분석 시작] 총 {len(current_chunks)}개 구간 분석 중...")
+        print(f"=============================================")
+        
+        failed_chunks = []
+        
+        for idx, chunk in enumerate(current_chunks):
+            chunk_raw_text = "\n".join(chunk)
+            
+            print(f"\n▶️ 진행 중... (구간 {idx+1}/{len(current_chunks)})")
+            analyzed_part = analyze_reports_with_gemini(chunk_raw_text)
+            
+            if analyzed_part is not None:
+                print(f"      ➡️ {len(analyzed_part)}건 추출 성공!")
+                all_analyzed_data.extend(analyzed_part)
+            else:
+                print(f"      ❌ [실패] 해당 구간은 다음 패자부활전으로 넘깁니다.")
+                failed_chunks.append(chunk)
+            
+            # API 한도 보호
+            time.sleep(20)
+            
+        # 💡 [핵심] 1바퀴 돌 때마다 모인 데이터로 JSON을 즉시 덮어씌웁니다!
+        if all_analyzed_data:
+            save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
+            
+        # 다음 바퀴를 위해 실패한 청크들을 장전
+        current_chunks = failed_chunks
+        
+        if current_chunks and pass_num < MAX_PASSES:
+            print(f"\n⏳ {pass_num}차 분석 종료. {len(current_chunks)}개 실패 구간 재도전을 위해 30초 대기합니다...")
+            time.sleep(30)
+            
+    if current_chunks:
+        print(f"\n💀 [최종 종료] 최대 {MAX_PASSES}회 시도했으나 {len(current_chunks)}개 구간은 끝내 구출하지 못했습니다.")
+    
+    print(f"\n✅ 최종 배치 프로세스 완전 종료!")
 
 if __name__ == "__main__":
     asyncio.run(main())
