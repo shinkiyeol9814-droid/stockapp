@@ -27,10 +27,11 @@ TARGET_CHANNELS = [
     -1001710268401                  
 ]
 
+# 💡 1. PDF 다운로드 함수 (파일명 중복 방지 추가)
 async def get_pdf_reports_from_telegram_list(client, hours=12):
     print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 PDF 레포트 수집 중...")
     extracted_texts_list = []
-    seen_files = set()
+    seen_files = set() # 👈 중복 체크용 바구니 추가!
     limit_time = datetime.now() - timedelta(hours=hours)
     
     os.makedirs('temp_pdfs', exist_ok=True)
@@ -44,6 +45,7 @@ async def get_pdf_reports_from_telegram_list(client, hours=12):
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
                     
+                    # 파일명이 이미 수집한 거면 패스!
                     if file_name in seen_files:
                         continue
                     seen_files.add(file_name)
@@ -69,6 +71,7 @@ async def get_pdf_reports_from_telegram_list(client, hours=12):
             
     return extracted_texts_list
 
+# 💡 2. AI 분석 함수 (실패 시 명시적으로 None 반환)
 def analyze_reports_with_gemini(raw_text, max_retries=3):
     if not raw_text.strip():
         return []
@@ -110,15 +113,17 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
             
         except Exception as e:
             error_msg = str(e)
-            wait_time = 30 if ("429" in error_msg or "503" in error_msg) else 10
+            # 💡 [핵심] 429 에러 시 65초 대기하여 할당량을 완벽히 초기화합니다.
+            wait_time = 65 if ("429" in error_msg or "503" in error_msg) else 10
             print(f"      ⚠️ AI 에러 (시도 {attempt + 1}/{max_retries}) | {wait_time}초 대기... (사유: {error_msg[:30]})")
             
             if attempt < max_retries - 1:
                 time.sleep(wait_time)
             else:
-                return None
+                print("      💀 [해당 구간 최종 실패] 다음 구간으로 넘어갑니다.")
+                return None # 패자부활전을 위해 None 반환
 
-# 💡 [핵심] 매칭과 저장을 1바퀴 돌 때마다 호출할 수 있도록 분리한 함수
+# 💡 3. 1바퀴 돌 때마다 즉시 JSON에 덮어쓰는 저장 함수 (추가됨!)
 def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
     results = []
     
@@ -156,8 +161,11 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, an
                 if target_price != "N/A": item['목표주가'] = f"{target_price:,}원"
                 
             results.append(item)
+        else:
+            # 매칭 실패 로그는 너무 길어질 수 있으니 숨기거나 짧게 표시
+            pass
 
-    # 종목명 기준 중복 제거
+    # 종목명 기준으로 중복 제거 (리스트 에러 방지 및 가장 최신 1개만 유지)
     unique_results = {}
     for item in results:
         unique_results[item['종목명']] = item
@@ -174,10 +182,10 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, an
         
     print(f"\n💾 [{pass_num}차 저장 완료] 누적 데이터 {len(results)}건이 웹 대시보드에 즉시 업데이트되었습니다!")
 
+# 💡 4. 메인 함수 (5회 패자부활전 적용)
 async def main():
-    print("=== 증권사 레포트 배치 시작 ===")
+    print("=== 증권사 레포트 배치 시작 (점진적 업데이트 & 5회 패자부활전) ===")
     
-    # 초기에 파일명과 시간을 고정해두어, 루프를 돌며 동일한 파일에 덮어쓰기(업데이트) 합니다.
     now = datetime.utcnow() + timedelta(hours=9)
     market_type = "regular" if 8 <= now.hour < 20 else "premarket"
     analysis_time = now.strftime("%Y-%m-%d %H:%M")
@@ -196,12 +204,12 @@ async def main():
         print("조건에 맞는 새로운 레포트가 없습니다.")
         return
 
-    # FDR 종목 정보는 시작할 때 딱 한 번만 불러옵니다 (속도 최적화)
     print("\n🔍 한국거래소 종목 리스트 불러오는 중...")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 10
-    MAX_PASSES = 5 # 💡 최대 5바퀴 (1차 본게임 + 4차 패자부활전)
+    # 💡 [핵심] API 한도 방어를 위해 5개씩 쪼개고, 최대 5바퀴 돕니다!
+    chunk_size = 5 
+    MAX_PASSES = 5 
     current_chunks = [report_text_list[i : i + chunk_size] for i in range(0, len(report_text_list), chunk_size)]
     all_analyzed_data = []
 
@@ -229,14 +237,14 @@ async def main():
                 print(f"      ❌ [실패] 해당 구간은 다음 패자부활전으로 넘깁니다.")
                 failed_chunks.append(chunk)
             
-            # API 한도 보호
-            time.sleep(20)
+            # 다음 요청을 위한 기본 대기
+            time.sleep(10)
             
-        # 💡 [핵심] 1바퀴 돌 때마다 모인 데이터로 JSON을 즉시 덮어씌웁니다!
+        # 💡 1바퀴 돌 때마다 모인 데이터로 JSON을 즉시 덮어씌웁니다!
         if all_analyzed_data:
             save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
             
-        # 다음 바퀴를 위해 실패한 청크들을 장전
+        # 다음 바퀴를 위해 실패한 덩어리들을 장전
         current_chunks = failed_chunks
         
         if current_chunks and pass_num < MAX_PASSES:
