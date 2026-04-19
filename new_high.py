@@ -45,7 +45,7 @@ def save_to_github(file_path, content, message):
     else: return False, put_res.text 
 
 def render_new_high_menu():
-    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 주도주 모멘텀 & 코멘트 관리 (V2.0)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 신고가 트래킹 </div>", unsafe_allow_html=True)
     
     report_files = get_all_reports()
     if not report_files:
