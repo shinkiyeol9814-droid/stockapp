@@ -9,20 +9,26 @@ from datetime import datetime
 # 💡 파일명 변환 함수 (UI 표시용)
 def format_json_name(file_path):
     base_name = os.path.basename(file_path)
-    if base_name.startswith("premarket_"):
-        clean_name = base_name.replace("premarket_", "").replace(".json", "")
-        prefix = "🌅 Pre-Market"
-    elif base_name.startswith("regular_"):
-        clean_name = base_name.replace("regular_", "").replace(".json", "")
-        prefix = "🏢 Regular-Market"
-    else:
-        return base_name
-
-    try:
-        dt = datetime.strptime(clean_name, "%Y%m%d_%H%M")
-        return f"{prefix} 리포트 ({dt.strftime('%Y-%m-%d %H:%M')})"
-    except:
-        return base_name
+    
+    # 파일명에서 날짜/시간 부분(YYYYMMDD_HHMM) 추출
+    match = re.search(r'(\d{8}_\d{4})', base_name)
+    if match:
+        try:
+            dt = datetime.strptime(match.group(1), "%Y%m%d_%H%M")
+            
+            # 💡 시간에 따라 '정규'와 '전일' 구분 (이모지 삭제)
+            # 낮 12시 이후(예: 20시)에 생성된 파일은 '정규 레포트'
+            if dt.hour >= 12:
+                prefix = "정규 레포트"
+            # 낮 12시 이전(예: 07시)에 생성된 파일은 '전일 레포트'
+            else:
+                prefix = "전일 레포트"
+                
+            return f"{prefix} ({dt.strftime('%Y-%m-%d %H:%M')})"
+        except:
+            return base_name
+            
+    return base_name
 
 # 💡 날짜 추출용 정렬 함수 (항상 최신 날짜가 위로 오게)
 def get_sort_key(file_path):
