@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 # --- GitHub 연동 설정 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
-# 💡 valuation 전용 폴더로 저장 경로 분리!
+# valuation 전용 폴더로 저장 경로 분리!
 ESTIMATES_FILE = "data/valuation/user_estimates.json"
 
 # 공통 헤더 설정
@@ -25,7 +25,7 @@ HEADERS = {
 }
 API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# --- 💡 헬퍼 함수: GitHub 데이터 입출력 ---
+# --- 헬퍼 함수: GitHub 데이터 입출력 ---
 def load_user_estimates():
     try:
         github_token = st.secrets.get("GH_PAT")
@@ -189,31 +189,34 @@ def extract_number(val):
     m = re.search(r'-?\d+\.?\d*', s)
     return float(m.group()) if m else 0.0
 
-def execute_search():
-    ui_corp = st.session_state.get('ui_corp_name', '').strip()
-    if ui_corp != "":
-        st.session_state.search_corp_name = ui_corp
-        
-        ui_val = st.session_state.get('ui_val_type', 'POR(영업익)')
-        st.session_state.val_type = ui_val
-        
-        if "PBR" in ui_val:
-            st.session_state.target_mult = float(st.session_state.get('ui_target_mult_float', 1.0))
-        else:
-            st.session_state.target_mult = float(st.session_state.get('ui_target_mult_int', 10))
+
+# 💡 [핵심] '갱신' 버튼을 눌렀을 때만 실행되는 적용 함수
+def apply_search():
+    st.session_state.active_corp_name = st.session_state.ui_corp_name.strip()
+    st.session_state.active_val_type = st.session_state.ui_val_type
+    
+    if "PBR" in st.session_state.ui_val_type:
+        st.session_state.active_target_mult = float(st.session_state.ui_target_mult_float)
+    else:
+        st.session_state.active_target_mult = float(st.session_state.ui_target_mult_int)
+
 
 def render_valuation_menu():
-    if 'search_corp_name' not in st.session_state: st.session_state.search_corp_name = ""
-    if 'val_type' not in st.session_state: st.session_state.val_type = "POR(영업익)"
-    if 'target_mult' not in st.session_state: st.session_state.target_mult = 10.0
+    # 💡 1. 세션 상태 초기화 (계산에 사용되는 Active 상태)
+    if 'active_corp_name' not in st.session_state: st.session_state.active_corp_name = ""
+    if 'active_val_type' not in st.session_state: st.session_state.active_val_type = "POR(영업익)"
+    if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
     if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
     if 'last_val_type' not in st.session_state: st.session_state.last_val_type = ""
 
-    if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.search_corp_name
-    if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.val_type
+    # 💡 2. UI 위젯 상태 초기화 (모바일 튕김 방지용 복원)
+    if 'ui_corp_name' not in st.session_state: st.session_state.ui_corp_name = st.session_state.active_corp_name
+    if 'ui_val_type' not in st.session_state: st.session_state.ui_val_type = st.session_state.active_val_type
     
-    if 'ui_target_mult_float' not in st.session_state: st.session_state.ui_target_mult_float = 1.0
-    if 'ui_target_mult_int' not in st.session_state: st.session_state.ui_target_mult_int = 10
+    if 'ui_target_mult_float' not in st.session_state: 
+        st.session_state.ui_target_mult_float = float(st.session_state.active_target_mult) if "PBR" in st.session_state.active_val_type else 1.0
+    if 'ui_target_mult_int' not in st.session_state: 
+        st.session_state.ui_target_mult_int = int(st.session_state.active_target_mult) if "PBR" not in st.session_state.active_val_type else 10
 
     st.markdown("""
         <style>
@@ -235,23 +238,26 @@ def render_valuation_menu():
     
     val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)"]
     
+    # 💡 3. UI 구성 (on_change를 싹 지워서 자동으로 새로고침되지 않게 만듦)
     col1, col2, col3, col4 = st.columns([2, 1.5, 1.2, 1])
     with col1:
-        st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자", on_change=execute_search)
+        st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
     with col2:
-        st.selectbox("평가방식", val_options, key="ui_val_type", on_change=execute_search)
+        st.selectbox("평가방식", val_options, key="ui_val_type")
     with col3:
-        if "PBR" in st.session_state.get('ui_val_type', st.session_state.val_type):
-            st.number_input("목표배수", step=0.1, format="%.2f", value=float(st.session_state.target_mult), key="ui_target_mult_float", on_change=execute_search)
+        if "PBR" in st.session_state.ui_val_type:
+            st.number_input("목표배수", step=0.1, format="%.2f", key="ui_target_mult_float")
         else:
-            st.number_input("목표배수", step=1, format="%d", value=int(st.session_state.target_mult), key="ui_target_mult_int", on_change=execute_search)
+            st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
     with col4:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-        st.button("갱신", type="primary", use_container_width=True, on_click=execute_search)
+        # 💡 [핵심] 오직 갱신 버튼을 눌렀을 때만 apply_search 함수 실행
+        st.button("갱신", type="primary", use_container_width=True, on_click=apply_search)
 
-    corp_name = st.session_state.search_corp_name
-    val_type = st.session_state.val_type
-    target_mult = float(st.session_state.target_mult)
+    # 💡 4. 실제 계산 로직은 'Active' 상태값을 기반으로만 작동 (화면 깜빡임 원천 차단)
+    corp_name = st.session_state.active_corp_name
+    val_type = st.session_state.active_val_type
+    target_mult = float(st.session_state.active_target_mult)
     
     display_mult_str = f"{target_mult:.2f}" if "PBR" in val_type else f"{int(target_mult)}"
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계']
@@ -352,7 +358,6 @@ def render_valuation_menu():
                                     else:
                                         new_estimates[ticker][yr].pop(col, None)
                             
-                            # 💡 KeyError 철벽 방어 로직 (빈 껍데기 안전하게 삭제)
                             empty_years = [y for y, data in new_estimates[ticker].items() if not data]
                             for y in empty_years:
                                 del new_estimates[ticker][y]
