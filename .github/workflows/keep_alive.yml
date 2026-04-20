@@ -13,5 +13,8 @@ jobs:
     steps:
       - name: Ping Streamlit App
         run: |
-          # 💡 본인의 스트림릿 앱 주소로 변경하세요.
-          curl -I "https://shinkiyeol9814-stockapp.streamlit.app"
+          # 💡 본(Main) 서버 깨우기
+          curl -I "https://stockapp-sky.streamlit.app/"
+          
+          # 💡 Dev(개발) 서버 깨우기 (아래 주소를 실제 Dev 주소로 변경하세요)
+          curl -I "https://stockapp-sky-dev.streamlit.app/"
