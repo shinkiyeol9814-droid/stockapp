@@ -113,10 +113,11 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
             
         except Exception as e:
             error_msg = str(e)
-            # 💡 [핵심] 429 에러 시 65초 대기하여 할당량을 완벽히 초기화합니다.
-            wait_time = 65 if ("429" in error_msg or "503" in error_msg) else 10
-            print(f"      ⚠️ AI 에러 (시도 {attempt + 1}/{max_retries}) | {wait_time}초 대기... (사유: {error_msg[:30]})")
+            wait_time = 80 if ("429" in error_msg or "503" in error_msg) else 30
             
+            # 💡 [핵심 수정] [:30] 을 지워서 구글의 정확한 에러 메시지를 끝까지 다 출력합니다!
+            print(f"      ⚠️ AI 에러 (시도 {attempt + 1}/{max_retries}) | {wait_time}초 대기... \n[상세사유]: {error_msg}")
+
             if attempt < max_retries - 1:
                 time.sleep(wait_time)
             else:
