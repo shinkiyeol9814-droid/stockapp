@@ -157,8 +157,7 @@ def analyze_chunk_with_gemini(chunk_docs):
     """
     
     try:
-        # 💡 [요구사항] gemini-1.5-flash 모델 적용 (한도 넉넉함)
-        current_model = 'gemini-1.5-flash-latest' 
+        current_model = 'gemini-2.0-flash' # 💡 아까 찾은 혜자 모델로 세팅
         start_time = time.time()
         
         response = client_ai.models.generate_content(model=current_model, contents=prompt)
@@ -170,10 +169,15 @@ def analyze_chunk_with_gemini(chunk_docs):
         return json.loads(res_text)
         
     except Exception as e:
-        # 💡 [요구사항] 내부 재시도(for문) 제거. 실패하면 바로 패자부활전 대기열로 넘김.
         error_msg = str(e)
+        
+        # 💡 [추가된 로직] 404 에러면 비상벨("FATAL_404")을 반환합니다!
+        if "404" in error_msg:
+            print(f"      🚨 [치명적 에러] 모델을 찾을 수 없습니다(404).")
+            return "FATAL_404"
+            
         print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
-        return None 
+        return None
 
 # 💡 4. JSON 저장 & 중복 제거 (버틀러 우선)
 def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
@@ -297,11 +301,16 @@ async def main():
             print(f"\n▶️ 진행 중... ({i+1}~{min(i+chunk_size, len(current_queue))}) / {len(current_queue)}")
             res = analyze_chunk_with_gemini(chunk)
             
-            if res is None:
-                # 💡 API 에러 시 청크 5개 몽땅 다음 패자부활전으로 넘김
+            # 💡 [추가된 로직] 비상벨이 울리면 전체 배치를 즉시 박살냅니다.
+            if res == "FATAL_404":
+                print("\n🛑 [배치 강제 종료] 404 모델 에러가 발생하여 더 이상 진행하지 않고 전체 배치를 취소합니다.")
+                return  # 메인 함수 자체를 여기서 완전히 빠져나감 (프로그램 종료)
+                
+            elif res is None:
+                # 일반적인 API 에러 시 청크 5개 몽땅 다음 패자부활전으로 넘김
                 failed_queue.extend(chunk)
             else:
-                # 💡 [요구사항] 종목별 성공/누락 판별
+                # 종목별 성공/누락 판별
                 returned_ids = [str(r.get('doc_id', '')) for r in res]
                 
                 # 성공한 데이터만 마스터 리스트에 추가 (출처 source 붙여서)
