@@ -18,7 +18,7 @@ from google import genai
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
