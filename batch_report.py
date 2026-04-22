@@ -15,7 +15,7 @@ API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 # 💡 B계정(새 API 키) 사용
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY_B", "") 
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "") 
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
@@ -146,7 +146,7 @@ async def get_all_reports_from_telegram(client, hours=12):
             
     return docs_to_process
 
-# 💡 3. AI 분석 
+# 💡 3. AI 분석 (503 에러 방어 및 스마트 재시도 로직 탑재)
 def analyze_chunk_with_gemini(chunk_docs):
     if not chunk_docs: return []
     
@@ -182,35 +182,44 @@ def analyze_chunk_with_gemini(chunk_docs):
     {prompt_text} 
     """
     
-    try:
-        # 새 API 키이므로 2.5-flash로 시도!
-        current_model = 'gemini-2.5-flash' 
-        start_time = time.time()
-        
-        response = client_ai.models.generate_content(model=current_model, contents=prompt)
-        
-        elapsed = time.time() - start_time
-        current_usage = increment_api_usage()
-        print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초) 📊 [오늘 누적 사용량: {current_usage}회]")
-        
-        res_text = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(res_text)
-        
-    except Exception as e:
-        error_msg = str(e)
-        
-        if "404" in error_msg:
-            print(f"      🚨 [치명적 에러] 모델을 찾을 수 없습니다(404).")
-            return "FATAL_404"
+    current_usage = increment_api_usage()
+    current_model = 'gemini-2.5-flash' 
+    max_retries = 3 # 💡 503 에러 시 최대 3번까지 알아서 재시도합니다.
+    
+    for attempt in range(max_retries):
+        try:
+            start_time = time.time()
+            response = client_ai.models.generate_content(model=current_model, contents=prompt)
+            elapsed = time.time() - start_time
             
-        if "429" in error_msg:
-            current_usage = get_today_api_usage()
-            print(f"      🚨 [한도 초과] 429 에러 발생. 📊 [현재 누적 사용량: {current_usage}회]")
-            return "FATAL_429"
+            print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초) 📊 [누적 요청: {current_usage}회]")
+            res_text = response.text.strip().replace("```json", "").replace("```", "")
+            return json.loads(res_text)
             
-        print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
-        return None
-
+        except Exception as e:
+            error_msg = str(e)
+            
+            if "503" in error_msg:
+                # 💡 503 에러면 포기하지 않고 3초 대기 후 다시 찔러봅니다!
+                if attempt < max_retries - 1:
+                    print(f"      ⚠️ 서버 과부하(503). 3초 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
+                    time.sleep(3)
+                    continue # for문의 처음으로 돌아가서 다시 try 실행
+                else:
+                    print(f"      ❌ 503 에러 3회 연속 발생. 패자부활전으로 넘깁니다.")
+                    return None
+                    
+            elif "404" in error_msg:
+                print(f"      🚨 [치명적 에러] 모델을 찾을 수 없습니다(404).")
+                return "FATAL_404"
+                
+            elif "429" in error_msg:
+                print(f"      🚨 [한도 초과] 429 에러 발생. 📊 [현재 누적 요청: {current_usage}회]")
+                return "FATAL_429"
+                
+            print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
+            return None
+            
 # 💡 4. JSON 저장 & 중복 제거
 def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
     results = []
@@ -366,10 +375,10 @@ async def main():
                     else:
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
-            
-            # 💡 15초 대기 (if-elif-else 구문이 끝난 뒤 무조건 실행)
-            print("      ⏳ 다음 문서를 위해 15초 대기합니다...") 
-            time.sleep(15)
+                                
+            # 💡 구글 로드밸런서가 화내지 않도록 청크당 2초의 매너 쿨타임을 줍니다.
+            print("      ⏳ 다음 문서를 위해 2초 대기합니다...") 
+            time.sleep(2)
             
         if all_analyzed_data:
             save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
