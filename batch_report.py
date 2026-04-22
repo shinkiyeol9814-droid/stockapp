@@ -18,7 +18,9 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-TARGET_CHANNELS = [
+# 텔레그램 채널 설정
+TARGET_CHANNELS_TEXT = ["https://t.me/butler_works"]
+TARGET_CHANNELS_PDF = [
     "https://t.me/DOC_POOL",
     "https://t.me/report_figure_by_offset",
     "https://t.me/companyreport",
@@ -27,26 +29,43 @@ TARGET_CHANNELS = [
     -1001710268401                  
 ]
 
-# 💡 1. PDF 다운로드 함수 (파일명 중복 방지 추가)
-async def get_pdf_reports_from_telegram_list(client, hours=12):
-    print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 PDF 레포트 수집 중...")
-    extracted_texts_list = []
-    seen_files = set() # 👈 중복 체크용 바구니 추가!
+# 💡 데이터 수집 함수 (제외 사유 로그 상세화)
+async def get_all_reports_from_telegram(client, hours=12):
+    print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 레포트 수집 시작...")
+    docs_to_process = []
+    doc_id_counter = 1
+    seen_files = set()
     limit_time = datetime.now() - timedelta(hours=hours)
     
-    os.makedirs('temp_pdfs', exist_ok=True)
-    
-    for channel in TARGET_CHANNELS:
+    # [A] 버틀러 요약 텍스트
+    for channel in TARGET_CHANNELS_TEXT:
         try:
             async for message in client.iter_messages(channel, limit=100):
-                if message.date.replace(tzinfo=None) < limit_time:
-                    break
+                if message.date.replace(tzinfo=None) < limit_time: break
+                if message.text and len(message.text) > 50:
+                    docs_to_process.append({
+                        "id": str(doc_id_counter),
+                        "source": "butler_works",
+                        "text": f"--- [버틀러 요약 텍스트] ---\n{message.text}"
+                    })
+                    print(f"  📝 [성공] 버틀러 요약본 (ID: {doc_id_counter})")
+                    doc_id_counter += 1
+        except Exception as e:
+            print(f"  ⚠️ 텍스트 채널 에러: {e}")
+
+    # [B] PDF 파일 분석
+    os.makedirs('temp_pdfs', exist_ok=True)
+    for channel in TARGET_CHANNELS_PDF:
+        try:
+            async for message in client.iter_messages(channel, limit=100):
+                if message.date.replace(tzinfo=None) < limit_time: break
                     
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
                     
-                    # 파일명이 이미 수집한 거면 패스!
+                    # 💡 사유 1: 중복 파일
                     if file_name in seen_files:
+                        print(f"  ⏩ [제외] {file_name} (사유: 중복 수집됨)")
                         continue
                     seen_files.add(file_name)
                     
@@ -54,36 +73,75 @@ async def get_pdf_reports_from_telegram_list(client, hours=12):
                     
                     try:
                         doc = fitz.open(pdf_path)
-                        first_page_text = doc[0].get_text()
-                        
-                        if len(first_page_text) > 200:
-                            extracted_texts_list.append(f"--- [파일명: {file_name}] ---\n{first_page_text}\n")
-                            print(f"  📄 [성공] {file_name}")
+                        valid_text = ""
+                        for page_num in range(min(3, doc.page_count)):
+                            page_text = doc[page_num].get_text()
+                            if len(page_text) > 200:
+                                valid_text = page_text
+                                break 
                         doc.close()
-                    except Exception as pdf_e:
-                        print(f"  ⚠️ PDF 읽기 에러 ({file_name}): {pdf_e}")
-                    
-                    if os.path.exists(pdf_path):
-                        os.remove(pdf_path)
                         
+                        if not valid_text:
+                            # 💡 사유 2: 텍스트 추출 실패
+                            print(f"  ⏩ [제외] {file_name} (사유: 3페이지 내 유효 텍스트 없음/통이미지)")
+                        else:
+                            file_name_lower = file_name.lower()
+                            text_lower = valid_text.lower()
+                            
+                            # 블랙리스트 체크
+                            blacklist = ['산업', '시황', 'weekly', '위클리', 'daily', '데일리', 'morning', '모닝', 'macro', '매크로', '전략', 'strategy', 'etf', '채권', 'spot']
+                            matched_black = [w for w in blacklist if w in file_name_lower]
+                            
+                            # 화이트리스트 체크
+                            whitelist = ['목표주가', '목표가', '투자의견', 'target price', '매수', 'buy', 'not rated', 'n/r']
+                            has_white = any(w in text_lower for w in whitelist)
+                            
+                            if matched_black:
+                                # 💡 사유 3: 산업/매크로 키워드 감지
+                                print(f"  ⏩ [제외] {file_name} (사유: 블랙리스트 키워드 '{matched_black[0]}' 포함)")
+                            elif not has_white:
+                                # 💡 사유 4: 기업 레포트 핵심 키워드 부재
+                                print(f"  ⏩ [제외] {file_name} (사유: 투자의견/목표가 등 핵심 키워드 없음)")
+                            else:
+                                docs_to_process.append({
+                                    "id": str(doc_id_counter),
+                                    "source": file_name,
+                                    "text": f"--- [파일명: {file_name}] ---\n{valid_text}"
+                                })
+                                print(f"  📄 [성공] {file_name} (ID: {doc_id_counter})")
+                                doc_id_counter += 1
+                                
+                    except Exception as pdf_e:
+                        print(f"  ⚠️ [실패] {file_name} (사유: PDF 파싱 에러 - {pdf_e})")
+                    
+                    if os.path.exists(pdf_path): os.remove(pdf_path)
         except Exception as e:
-            print(f"⚠️ 채널 '{channel}' 수집 에러: {e}")
+            print(f"  ⚠️ PDF 채널 에러: {e}")
             
-    return extracted_texts_list
+    return docs_to_process
 
-# 💡 2. AI 분석 함수 (실패 시 명시적으로 None 반환)
-def analyze_reports_with_gemini(raw_text, max_retries=3):
-    if not raw_text.strip():
-        return []
+# 💡 3. AI 분석 (내부 재시도 없이 쿨하게 패스)
+def analyze_chunk_with_gemini(chunk_docs):
+    if not chunk_docs: return []
+    
+    prompt_text = ""
+    for d in chunk_docs:
+        safe_text = d['text'][:5000] 
+        prompt_text += f"\n\n[문서 ID: {d['id']}]\n{safe_text}"
         
     prompt = f"""너는 증권사 레포트 전문 분석가야. 
-    아래 텍스트는 여러 증권사 레포트의 '1페이지'를 모아놓은 거야. 
-    여기서 정보를 추출해서 반드시 아래 JSON 배열 포맷으로만 응답해.
-    계산하지 말고 텍스트에 있는 팩트만 가져와.
+    아래 텍스트는 여러 증권사 레포트의 요약본(버틀러)이거나 PDF 발췌본이야. 
+    각 문서별로 정보를 추출해서 반드시 아래 JSON 배열 포맷으로만 응답해.
+    기업 분석 레포트가 아니라고 판단되면 결과에서 제외해.
     
+    [주의사항: 버틀러 요약 텍스트 처리법]
+    - 첫 줄 괄호 앞은 '종목명', '작성자'는 '증권사', 두 번째 줄은 '레포트 제목', '- '로 시작하는 문장들은 '투자포인트'로 정리해.
+    - '평가방식'이 명시되어 있지 않으면 "N/A"로 기입해.
+
     [응답 포맷]
     [
         {{
+            "doc_id": "원문에 부여된 문서 ID (반드시 기입할 것)",
             "종목명": "종목이름",
             "증권사": "증권사명",
             "레포트 제목": "레포트의 메인 타이틀(제목)",
@@ -94,37 +152,30 @@ def analyze_reports_with_gemini(raw_text, max_retries=3):
         }}
     ]
     
-    [PDF 추출 데이터]
-    {raw_text} 
+    [분석할 문서들]
+    {prompt_text} 
     """
     
-    for attempt in range(max_retries):
-        try:
-            current_model = 'gemini-2.5-flash'
-            start_time = time.time()
-            
-            response = client_ai.models.generate_content(model=current_model, contents=prompt)
-            
-            elapsed = time.time() - start_time
-            print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초)")
-            
-            res_text = response.text.strip().replace("```json", "").replace("```", "")
-            return json.loads(res_text)
-            
-        except Exception as e:
-            error_msg = str(e)
-            wait_time = 80 if ("429" in error_msg or "503" in error_msg) else 30
-            
-            # 💡 [핵심 수정] [:30] 을 지워서 구글의 정확한 에러 메시지를 끝까지 다 출력합니다!
-            print(f"      ⚠️ AI 에러 (시도 {attempt + 1}/{max_retries}) | {wait_time}초 대기... \n[상세사유]: {error_msg}")
+    try:
+        # 💡 [요구사항] gemini-1.5-flash 모델 적용 (한도 넉넉함)
+        current_model = 'gemini-1.5-flash' 
+        start_time = time.time()
+        
+        response = client_ai.models.generate_content(model=current_model, contents=prompt)
+        
+        elapsed = time.time() - start_time
+        print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초)")
+        
+        res_text = response.text.strip().replace("```json", "").replace("```", "")
+        return json.loads(res_text)
+        
+    except Exception as e:
+        # 💡 [요구사항] 내부 재시도(for문) 제거. 실패하면 바로 패자부활전 대기열로 넘김.
+        error_msg = str(e)
+        print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
+        return None 
 
-            if attempt < max_retries - 1:
-                time.sleep(wait_time)
-            else:
-                print("      💀 [해당 구간 최종 실패] 다음 구간으로 넘어갑니다.")
-                return None # 패자부활전을 위해 None 반환
-
-# 💡 3. 1바퀴 돌 때마다 즉시 JSON에 덮어쓰는 저장 함수 (추가됨!)
+# 💡 4. JSON 저장 & 중복 제거 (버틀러 우선)
 def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
     results = []
     
@@ -162,30 +213,41 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, an
                 if target_price != "N/A": item['목표주가'] = f"{target_price:,}원"
                 
             results.append(item)
-        else:
-            # 매칭 실패 로그는 너무 길어질 수 있으니 숨기거나 짧게 표시
-            pass
 
-    # 종목명 기준으로 중복 제거 (리스트 에러 방지 및 가장 최신 1개만 유지)
+    # 💡 [요구사항] 중복 제거: 버틀러 우선 원칙
     unique_results = {}
     for item in results:
-        unique_results[item['종목명']] = item
-    results = list(unique_results.values())
+        clean_name = item['종목명'].split('(')[0].strip()
+        is_butler = (item.get('source') == 'butler_works')
+        
+        if clean_name in unique_results:
+            # 기존에 들어간 게 PDF이고, 이번에 들어온 게 버틀러면 덮어쓰기!
+            if is_butler and unique_results[clean_name].get('source') != 'butler_works':
+                unique_results[clean_name] = item
+        else:
+            unique_results[clean_name] = item
+            
+    # 최종 저장할 때 쓸데없는 내부 변수(doc_id, source) 제거
+    final_results = []
+    for val in unique_results.values():
+        val.pop('doc_id', None)
+        val.pop('source', None)
+        final_results.append(val)
     
     report = {
         "analysis_time": analysis_time,
         "market_type": market_type,
-        "results": results
+        "results": final_results
     }
     
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"\n💾 [{pass_num}차 저장 완료] 누적 데이터 {len(results)}건이 웹 대시보드에 즉시 업데이트되었습니다!")
+    print(f"\n💾 [{pass_num}회전 저장] 누적 데이터 {len(final_results)}건이 웹 대시보드에 업데이트되었습니다!")
 
-# 💡 4. 메인 함수 (5회 패자부활전 적용)
+# 💡 5. 메인 루프 (본게임 1회 + 패자부활전 3회)
 async def main():
-    print("=== 증권사 레포트 배치 시작 (점진적 업데이트 & 5회 패자부활전) ===")
+    print("=== 증권사 레포트 배치 시작 (버틀러 통합 & 3단 패자부활전) ===")
     
     now = datetime.utcnow() + timedelta(hours=9)
     market_type = "regular" if 8 <= now.hour < 20 else "premarket"
@@ -198,62 +260,81 @@ async def main():
     client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client_tg.start()
     
-    report_text_list = await get_pdf_reports_from_telegram_list(client_tg)
+    docs_to_process = await get_all_reports_from_telegram(client_tg)
     await client_tg.disconnect() 
     
-    if not report_text_list:
-        print("조건에 맞는 새로운 레포트가 없습니다.")
+    if not docs_to_process:
+        print("조건에 맞는 새로운 레포트/텍스트가 없습니다.")
         return
 
-    print("\n🔍 한국거래소 종목 리스트 불러오는 중...")
+    # ID와 Source 매핑 딕셔너리 생성 (나중에 출처를 확인하기 위함)
+    doc_source_map = {str(d['id']): d['source'] for d in docs_to_process}
+
+    print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    # 💡 [핵심] API 한도 방어를 위해 5개씩 쪼개고, 최대 5바퀴 돕니다!
     chunk_size = 5 
-    MAX_PASSES = 5 
-    current_chunks = [report_text_list[i : i + chunk_size] for i in range(0, len(report_text_list), chunk_size)]
+    MAX_PASSES = 4 # 1차 본게임 + 1차 패자 + 2차 패자 + 3차 패자
+    
+    current_queue = docs_to_process
     all_analyzed_data = []
 
     for pass_num in range(1, MAX_PASSES + 1):
-        if not current_chunks:
-            print(f"\n🎉 [완벽 성공] 실패한 구간 없이 모든 레포트 분석이 완료되었습니다! (총 {pass_num-1}회전)")
+        if not current_queue:
+            print(f"\n🎉 [완벽 성공] 누락된 문서 없이 모든 분석이 완료되었습니다!")
             break
             
+        phase_name = "본게임" if pass_num == 1 else f"패자부활전 {pass_num-1}차"
         print(f"\n=============================================")
-        print(f"🚀 [{pass_num}차 분석 시작] 총 {len(current_chunks)}개 구간 분석 중...")
+        print(f"🚀 [{pass_num}회전: {phase_name}] 총 {len(current_queue)}개 문서 진행 중...")
         print(f"=============================================")
         
-        failed_chunks = []
+        failed_queue = []
         
-        for idx, chunk in enumerate(current_chunks):
-            chunk_raw_text = "\n".join(chunk)
+        for i in range(0, len(current_queue), chunk_size):
+            chunk = current_queue[i : i + chunk_size]
             
-            print(f"\n▶️ 진행 중... (구간 {idx+1}/{len(current_chunks)})")
-            analyzed_part = analyze_reports_with_gemini(chunk_raw_text)
+            print(f"\n▶️ 진행 중... ({i+1}~{min(i+chunk_size, len(current_queue))}) / {len(current_queue)}")
+            res = analyze_chunk_with_gemini(chunk)
             
-            if analyzed_part is not None:
-                print(f"      ➡️ {len(analyzed_part)}건 추출 성공!")
-                all_analyzed_data.extend(analyzed_part)
+            if res is None:
+                # 💡 API 에러 시 청크 5개 몽땅 다음 패자부활전으로 넘김
+                failed_queue.extend(chunk)
             else:
-                print(f"      ❌ [실패] 해당 구간은 다음 패자부활전으로 넘깁니다.")
-                failed_chunks.append(chunk)
+                # 💡 [요구사항] 종목별 성공/누락 판별
+                returned_ids = [str(r.get('doc_id', '')) for r in res]
+                
+                # 성공한 데이터만 마스터 리스트에 추가 (출처 source 붙여서)
+                for r in res:
+                    if '종목명' in r and r['종목명']:
+                        r['source'] = doc_source_map.get(str(r.get('doc_id', '')), 'pdf')
+                        all_analyzed_data.append(r)
+                
+                # 5개 중 대답 안 한(누락된) ID 찾아서 패자부활전으로!
+                for d in chunk:
+                    doc_id = str(d['id'])
+                    if doc_id in returned_ids:
+                        print(f"      ➡️ 성공: [ID {doc_id}]")
+                    else:
+                        print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
+                        failed_queue.append(d)
             
-            # 다음 요청을 위한 기본 대기
-            time.sleep(10)
+            # gemini-1.5-flash는 한도가 넉넉하므로 숨만 고르고 바로 넘어감
+            time.sleep(3)
             
-        # 💡 1바퀴 돌 때마다 모인 데이터로 JSON을 즉시 덮어씌웁니다!
+        # 1바퀴 돌 때마다 모인 데이터로 JSON 즉시 업데이트
         if all_analyzed_data:
             save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
             
-        # 다음 바퀴를 위해 실패한 덩어리들을 장전
-        current_chunks = failed_chunks
+        # 다음 바퀴를 위해 실패한 문서 큐 장전
+        current_queue = failed_queue
         
-        if current_chunks and pass_num < MAX_PASSES:
-            print(f"\n⏳ {pass_num}차 분석 종료. {len(current_chunks)}개 실패 구간 재도전을 위해 30초 대기합니다...")
-            time.sleep(30)
+        if current_queue and pass_num < MAX_PASSES:
+            print(f"\n⏳ {pass_num}회전 종료. 누락된 {len(current_queue)}개 문서 재도전을 위해 10초 대기합니다...")
+            time.sleep(10)
             
-    if current_chunks:
-        print(f"\n💀 [최종 종료] 최대 {MAX_PASSES}회 시도했으나 {len(current_chunks)}개 구간은 끝내 구출하지 못했습니다.")
+    if current_queue:
+        print(f"\n💀 [최종 종료] 마지막 3차 패자부활전까지 시도했으나 {len(current_queue)}개 문서는 끝내 분석하지 못했습니다.")
     
     print(f"\n✅ 최종 배치 프로세스 완전 종료!")
 
