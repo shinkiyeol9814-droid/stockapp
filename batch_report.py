@@ -329,7 +329,7 @@ async def main():
                         failed_queue.append(d)
             
             # gemini-1.5-flash는 한도가 넉넉하므로 숨만 고르고 바로 넘어감
-            time.sleep(3)
+            time.sleep(15)
             
         # 1바퀴 돌 때마다 모인 데이터로 JSON 즉시 업데이트
         if all_analyzed_data:
