@@ -182,16 +182,18 @@ def analyze_chunk_with_gemini(chunk_docs):
     {prompt_text} 
     """
     
+    # 💡 [핵심 수정] API 요청을 시도하기 직전에 "무조건" 카운트를 1 올립니다!
+    # 이렇게 해야 실패하든 성공하든 구글의 실제 카운터와 완벽하게 동기화됩니다.
+    current_usage = increment_api_usage()
+    
     try:
-        # 새 API 키이므로 2.5-flash로 시도!
-        current_model = 'gemini-2.5-flash' 
+        current_model = 'gemini-2.0-flash'
         start_time = time.time()
         
         response = client_ai.models.generate_content(model=current_model, contents=prompt)
         
         elapsed = time.time() - start_time
-        current_usage = increment_api_usage()
-        print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초) 📊 [오늘 누적 사용량: {current_usage}회]")
+        print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초) 📊 [오늘 누적 요청: {current_usage}회]")
         
         res_text = response.text.strip().replace("```json", "").replace("```", "")
         return json.loads(res_text)
@@ -204,11 +206,11 @@ def analyze_chunk_with_gemini(chunk_docs):
             return "FATAL_404"
             
         if "429" in error_msg:
-            current_usage = get_today_api_usage()
-            print(f"      🚨 [한도 초과] 429 에러 발생. 📊 [현재 누적 사용량: {current_usage}회]")
+            # 카운트를 위에서 이미 올렸으므로 현재 변수를 그대로 출력하면 됩니다.
+            print(f"      🚨 [한도 초과] 429 에러 발생. 📊 [현재 누적 요청: {current_usage}회]")
             return "FATAL_429"
             
-        print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
+        print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. 📊 [누적 요청: {current_usage}회] (사유: {error_msg[:50]})")
         return None
 
 # 💡 4. JSON 저장 & 중복 제거
@@ -367,9 +369,9 @@ async def main():
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
             
-            # 💡 15초 대기 (if-elif-else 구문이 끝난 뒤 무조건 실행)
-            print("      ⏳ 다음 문서를 위해 15초 대기합니다...") 
-            time.sleep(15)
+            # # 💡 15초 대기 (if-elif-else 구문이 끝난 뒤 무조건 실행)
+            # print("      ⏳ 다음 문서를 위해 15초 대기합니다...") 
+            # time.sleep(15)
             
         if all_analyzed_data:
             save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
