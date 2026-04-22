@@ -187,7 +187,7 @@ def analyze_chunk_with_gemini(chunk_docs):
     current_usage = increment_api_usage()
     
     try:
-        current_model = 'gemini-2.0-flash'
+        current_model = 'gemini-2.5-flash'
         start_time = time.time()
         
         response = client_ai.models.generate_content(model=current_model, contents=prompt)
