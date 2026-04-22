@@ -369,9 +369,9 @@ async def main():
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
             
-            # # 💡 15초 대기 (if-elif-else 구문이 끝난 뒤 무조건 실행)
-            # print("      ⏳ 다음 문서를 위해 15초 대기합니다...") 
-            # time.sleep(15)
+            # 💡 15초 대기 (if-elif-else 구문이 끝난 뒤 무조건 실행)
+            print("      ⏳ 다음 문서를 위해 15초 대기합니다...") 
+            time.sleep(15)
             
         if all_analyzed_data:
             save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
