@@ -171,14 +171,18 @@ def analyze_chunk_with_gemini(chunk_docs):
     except Exception as e:
         error_msg = str(e)
         
-        # 💡 [추가된 로직] 404 에러면 비상벨("FATAL_404")을 반환합니다!
         if "404" in error_msg:
             print(f"      🚨 [치명적 에러] 모델을 찾을 수 없습니다(404).")
             return "FATAL_404"
             
+        # 💡 [추가] 429 한도 초과 에러일 때만 셧다운 비상벨을 울립니다.
+        if "429" in error_msg:
+            print(f"      🚨 [한도 초과] 1분당 토큰 또는 하루 횟수 초과(429).")
+            return "FATAL_429"
+            
         print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
         return None
-
+        
 # 💡 4. JSON 저장 & 중복 제거 (버틀러 우선)
 def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
     results = []
@@ -304,12 +308,24 @@ async def main():
             res = analyze_chunk_with_gemini(chunk)
             
             if res == "FATAL_404":
-                print("\n🛑 [배치 강제 종료] 404 모델 에러가 발생하여 더 이상 진행하지 않고 전체 배치를 취소합니다.")
+                print("\n🛑 [배치 강제 종료] 404 모델 에러가 발생하여 전체 배치를 취소합니다.")
                 return  
                 
+            elif res == "FATAL_429":
+                failed_queue.extend(chunk)
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    print(f"\n🛑 [배치 셧다운] 429(한도 초과) 3회 연속 발생! 배치를 즉시 종료합니다.")
+                    return 
+                    
             elif res is None:
+                # 💡 [변경] 503 같은 기타 에러는 셧다운 카운트를 올리지 않고 
+                # 그냥 조용히 패자부활전 큐에만 넣습니다.
                 failed_queue.extend(chunk)
                 
+                # 💡 [핵심 수정] 503 에러는 일시적 서버 문제이므로 셧다운 카운트에서 제외합니다.
+                # error_msg 변수를 위에서 못 가져오므로, analyze_chunk_with_gemini에서
+                # "FATAL_429" 같은 문자열을 반환하도록 바꾸는 게 더 깔끔합니다!
                 # 💡 [핵심 추가] 실패 시 카운터 1 증가. 3번 연속 쌓이면 가차 없이 종료!
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
@@ -335,7 +351,10 @@ async def main():
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
             
-            # 💡 [중요] 1분당 토큰 한도(429 에러) 방지를 위해 15초씩 넉넉히 대기
+            # 💡 [여기가 중요합니다!] 
+            # if-elif-else 구문이 완전히 끝나고 나서, 
+            # for문의 안쪽 들여쓰기 라인에 맞춰서 time.sleep()이 있어야 합니다.
+            print("      ⏳ 다음 문서를 위해 15초 대기합니다...") # <--- 이렇게 로그를 찍어보면 쉬는지 안 쉬는지 알 수 있습니다.
             time.sleep(15)
             
         if all_analyzed_data:
