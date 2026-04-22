@@ -14,7 +14,8 @@ from google import genai
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY_B", "")
+# 💡 B계정(새 API 키) 사용
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY_B", "") 
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
@@ -28,6 +29,37 @@ TARGET_CHANNELS_PDF = [
     "https://t.me/YoungTiger_stock",
     -1001710268401                  
 ]
+
+# 💡 [신규] API 일일 사용량 관리 함수
+USAGE_LOG_FILE = "data/api_usage_log.json"
+
+def get_today_api_usage():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    os.makedirs(os.path.dirname(USAGE_LOG_FILE), exist_ok=True)
+    
+    if os.path.exists(USAGE_LOG_FILE):
+        with open(USAGE_LOG_FILE, "r") as f:
+            try:
+                data = json.load(f)
+                if data.get("date") == today_str:
+                    return data.get("count", 0)
+            except:
+                pass
+    return 0
+
+def increment_api_usage():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    current_count = get_today_api_usage() + 1
+    
+    data = {
+        "date": today_str,
+        "count": current_count
+    }
+    
+    with open(USAGE_LOG_FILE, "w") as f:
+        json.dump(data, f)
+        
+    return current_count
 
 # 💡 데이터 수집 함수 (제외 사유 로그 상세화)
 async def get_all_reports_from_telegram(client, hours=12):
@@ -63,7 +95,6 @@ async def get_all_reports_from_telegram(client, hours=12):
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
                     
-                    # 💡 사유 1: 중복 파일
                     if file_name in seen_files:
                         print(f"  ⏩ [제외] {file_name} (사유: 중복 수집됨)")
                         continue
@@ -82,25 +113,20 @@ async def get_all_reports_from_telegram(client, hours=12):
                         doc.close()
                         
                         if not valid_text:
-                            # 💡 사유 2: 텍스트 추출 실패
                             print(f"  ⏩ [제외] {file_name} (사유: 3페이지 내 유효 텍스트 없음/통이미지)")
                         else:
                             file_name_lower = file_name.lower()
                             text_lower = valid_text.lower()
                             
-                            # 블랙리스트 체크
                             blacklist = ['산업', '시황', 'weekly', '위클리', 'daily', '데일리', 'morning', '모닝', 'macro', '매크로', '전략', 'strategy', 'etf', '채권', 'spot']
                             matched_black = [w for w in blacklist if w in file_name_lower]
                             
-                            # 화이트리스트 체크
                             whitelist = ['목표주가', '목표가', '투자의견', 'target price', '매수', 'buy', 'not rated', 'n/r']
                             has_white = any(w in text_lower for w in whitelist)
                             
                             if matched_black:
-                                # 💡 사유 3: 산업/매크로 키워드 감지
                                 print(f"  ⏩ [제외] {file_name} (사유: 블랙리스트 키워드 '{matched_black[0]}' 포함)")
                             elif not has_white:
-                                # 💡 사유 4: 기업 레포트 핵심 키워드 부재
                                 print(f"  ⏩ [제외] {file_name} (사유: 투자의견/목표가 등 핵심 키워드 없음)")
                             else:
                                 docs_to_process.append({
@@ -120,7 +146,7 @@ async def get_all_reports_from_telegram(client, hours=12):
             
     return docs_to_process
 
-# 💡 3. AI 분석 (내부 재시도 없이 쿨하게 패스)
+# 💡 3. AI 분석 
 def analyze_chunk_with_gemini(chunk_docs):
     if not chunk_docs: return []
     
@@ -157,13 +183,15 @@ def analyze_chunk_with_gemini(chunk_docs):
     """
     
     try:
-        current_model = 'gemini-2.5-flash' # 💡 아까 찾은 혜자 모델로 세팅
+        # 새 API 키이므로 2.5-flash로 시도!
+        current_model = 'gemini-2.5-flash' 
         start_time = time.time()
         
         response = client_ai.models.generate_content(model=current_model, contents=prompt)
         
         elapsed = time.time() - start_time
-        print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초)")
+        current_usage = increment_api_usage()
+        print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초) 📊 [오늘 누적 사용량: {current_usage}회]")
         
         res_text = response.text.strip().replace("```json", "").replace("```", "")
         return json.loads(res_text)
@@ -175,15 +203,15 @@ def analyze_chunk_with_gemini(chunk_docs):
             print(f"      🚨 [치명적 에러] 모델을 찾을 수 없습니다(404).")
             return "FATAL_404"
             
-        # 💡 [추가] 429 한도 초과 에러일 때만 셧다운 비상벨을 울립니다.
         if "429" in error_msg:
-            print(f"      🚨 [한도 초과] 1분당 토큰 또는 하루 횟수 초과(429).")
+            current_usage = get_today_api_usage()
+            print(f"      🚨 [한도 초과] 429 에러 발생. 📊 [현재 누적 사용량: {current_usage}회]")
             return "FATAL_429"
             
         print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
         return None
-        
-# 💡 4. JSON 저장 & 중복 제거 (버틀러 우선)
+
+# 💡 4. JSON 저장 & 중복 제거
 def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
     results = []
     
@@ -222,20 +250,17 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, an
                 
             results.append(item)
 
-    # 💡 [요구사항] 중복 제거: 버틀러 우선 원칙
     unique_results = {}
     for item in results:
         clean_name = item['종목명'].split('(')[0].strip()
         is_butler = (item.get('source') == 'butler_works')
         
         if clean_name in unique_results:
-            # 기존에 들어간 게 PDF이고, 이번에 들어온 게 버틀러면 덮어쓰기!
             if is_butler and unique_results[clean_name].get('source') != 'butler_works':
                 unique_results[clean_name] = item
         else:
             unique_results[clean_name] = item
             
-    # 최종 저장할 때 쓸데없는 내부 변수(doc_id, source) 제거
     final_results = []
     for val in unique_results.values():
         val.pop('doc_id', None)
@@ -253,9 +278,11 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, an
         
     print(f"\n💾 [{pass_num}회전 저장] 누적 데이터 {len(final_results)}건이 웹 대시보드에 업데이트되었습니다!")
 
-# 💡 5. 메인 루프 (3연속 실패 시 강제 종료 & 3단 패자부활전)
+# 💡 5. 메인 루프 
 async def main():
+    today_usage = get_today_api_usage()
     print("=== 증권사 레포트 배치 시작 (버틀러 통합 & 3단 패자부활전) ===")
+    print(f"📊 [현재 상태] 오늘 {today_usage}회의 API를 이미 사용했습니다.")
     
     now = datetime.utcnow() + timedelta(hours=9)
     market_type = "regular" if 8 <= now.hour < 20 else "premarket"
@@ -280,13 +307,11 @@ async def main():
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 3
+    chunk_size = 5 # 💡 청크 사이즈 다시 5개로 원복!
     MAX_PASSES = 4 
     
     current_queue = docs_to_process
     all_analyzed_data = []
-    
-    # 💡 [핵심 추가] 연속 실패 횟수를 기억하는 카운터
     consecutive_failures = 0 
 
     for pass_num in range(1, MAX_PASSES + 1):
@@ -307,6 +332,7 @@ async def main():
             print(f"\n▶️ 진행 중... ({i+1}~{min(i+chunk_size, len(current_queue))}) / {len(current_queue)}")
             res = analyze_chunk_with_gemini(chunk)
             
+            # 💡 [로직 완전 정리] 404, 429, 503(None) 구별
             if res == "FATAL_404":
                 print("\n🛑 [배치 강제 종료] 404 모델 에러가 발생하여 전체 배치를 취소합니다.")
                 return  
@@ -319,21 +345,11 @@ async def main():
                     return 
                     
             elif res is None:
-                # 💡 [변경] 503 같은 기타 에러는 셧다운 카운트를 올리지 않고 
-                # 그냥 조용히 패자부활전 큐에만 넣습니다.
+                # 503 등 일시적 서버 에러는 카운트를 올리지 않고 조용히 패자부활전으로 넘김
                 failed_queue.extend(chunk)
                 
-                # 💡 [핵심 수정] 503 에러는 일시적 서버 문제이므로 셧다운 카운트에서 제외합니다.
-                # error_msg 변수를 위에서 못 가져오므로, analyze_chunk_with_gemini에서
-                # "FATAL_429" 같은 문자열을 반환하도록 바꾸는 게 더 깔끔합니다!
-                # 💡 [핵심 추가] 실패 시 카운터 1 증가. 3번 연속 쌓이면 가차 없이 종료!
-                consecutive_failures += 1
-                if consecutive_failures >= 3:
-                    print(f"\n🛑 [배치 셧다운] 3회 연속 API 호출에 실패했습니다! (API 한도 초과 또는 서버 장애 의심)")
-                    print("시간 낭비를 막기 위해 남아있는 모든 작업을 즉시 취소하고 배치를 종료합니다.")
-                    return 
             else:
-                # 💡 [핵심 추가] 한 번이라도 성공하면 카운터를 다시 0으로 리셋!
+                # 성공하면 연속 429 실패 카운터를 리셋!
                 consecutive_failures = 0
                 
                 returned_ids = [str(r.get('doc_id', '')) for r in res]
@@ -351,10 +367,8 @@ async def main():
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
             
-            # 💡 [여기가 중요합니다!] 
-            # if-elif-else 구문이 완전히 끝나고 나서, 
-            # for문의 안쪽 들여쓰기 라인에 맞춰서 time.sleep()이 있어야 합니다.
-            print("      ⏳ 다음 문서를 위해 15초 대기합니다...") # <--- 이렇게 로그를 찍어보면 쉬는지 안 쉬는지 알 수 있습니다.
+            # 💡 15초 대기 (if-elif-else 구문이 끝난 뒤 무조건 실행)
+            print("      ⏳ 다음 문서를 위해 15초 대기합니다...") 
             time.sleep(15)
             
         if all_analyzed_data:
