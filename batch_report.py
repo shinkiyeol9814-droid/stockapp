@@ -158,7 +158,7 @@ def analyze_chunk_with_gemini(chunk_docs):
     
     try:
         # 💡 [요구사항] gemini-1.5-flash 모델 적용 (한도 넉넉함)
-        current_model = 'gemini-1.5-flash' 
+        current_model = 'gemini-1.5-flash-latest' 
         start_time = time.time()
         
         response = client_ai.models.generate_content(model=current_model, contents=prompt)
