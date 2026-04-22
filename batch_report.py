@@ -157,7 +157,7 @@ def analyze_chunk_with_gemini(chunk_docs):
     """
     
     try:
-        current_model = 'gemini-2.0-flash-lite' # 💡 아까 찾은 혜자 모델로 세팅
+        current_model = 'gemini-2.0-flash' # 💡 아까 찾은 혜자 모델로 세팅
         start_time = time.time()
         
         response = client_ai.models.generate_content(model=current_model, contents=prompt)
@@ -276,7 +276,7 @@ async def main():
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 1
+    chunk_size = 3
     MAX_PASSES = 4 
     
     current_queue = docs_to_process
