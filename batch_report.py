@@ -249,7 +249,7 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, an
         
     print(f"\n💾 [{pass_num}회전 저장] 누적 데이터 {len(final_results)}건이 웹 대시보드에 업데이트되었습니다!")
 
-# 💡 5. 메인 루프 (본게임 1회 + 패자부활전 3회)
+# 💡 5. 메인 루프 (3연속 실패 시 강제 종료 & 3단 패자부활전)
 async def main():
     print("=== 증권사 레포트 배치 시작 (버틀러 통합 & 3단 패자부활전) ===")
     
@@ -271,17 +271,19 @@ async def main():
         print("조건에 맞는 새로운 레포트/텍스트가 없습니다.")
         return
 
-    # ID와 Source 매핑 딕셔너리 생성 (나중에 출처를 확인하기 위함)
     doc_source_map = {str(d['id']): d['source'] for d in docs_to_process}
 
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 3 
-    MAX_PASSES = 4 # 1차 본게임 + 1차 패자 + 2차 패자 + 3차 패자
+    chunk_size = 5 
+    MAX_PASSES = 4 
     
     current_queue = docs_to_process
     all_analyzed_data = []
+    
+    # 💡 [핵심 추가] 연속 실패 횟수를 기억하는 카운터
+    consecutive_failures = 0 
 
     for pass_num in range(1, MAX_PASSES + 1):
         if not current_queue:
@@ -301,25 +303,30 @@ async def main():
             print(f"\n▶️ 진행 중... ({i+1}~{min(i+chunk_size, len(current_queue))}) / {len(current_queue)}")
             res = analyze_chunk_with_gemini(chunk)
             
-            # 💡 [추가된 로직] 비상벨이 울리면 전체 배치를 즉시 박살냅니다.
             if res == "FATAL_404":
                 print("\n🛑 [배치 강제 종료] 404 모델 에러가 발생하여 더 이상 진행하지 않고 전체 배치를 취소합니다.")
-                return  # 메인 함수 자체를 여기서 완전히 빠져나감 (프로그램 종료)
+                return  
                 
             elif res is None:
-                # 일반적인 API 에러 시 청크 5개 몽땅 다음 패자부활전으로 넘김
                 failed_queue.extend(chunk)
+                
+                # 💡 [핵심 추가] 실패 시 카운터 1 증가. 3번 연속 쌓이면 가차 없이 종료!
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    print(f"\n🛑 [배치 셧다운] 3회 연속 API 호출에 실패했습니다! (API 한도 초과 또는 서버 장애 의심)")
+                    print("시간 낭비를 막기 위해 남아있는 모든 작업을 즉시 취소하고 배치를 종료합니다.")
+                    return 
             else:
-                # 종목별 성공/누락 판별
+                # 💡 [핵심 추가] 한 번이라도 성공하면 카운터를 다시 0으로 리셋!
+                consecutive_failures = 0
+                
                 returned_ids = [str(r.get('doc_id', '')) for r in res]
                 
-                # 성공한 데이터만 마스터 리스트에 추가 (출처 source 붙여서)
                 for r in res:
                     if '종목명' in r and r['종목명']:
                         r['source'] = doc_source_map.get(str(r.get('doc_id', '')), 'pdf')
                         all_analyzed_data.append(r)
                 
-                # 5개 중 대답 안 한(누락된) ID 찾아서 패자부활전으로!
                 for d in chunk:
                     doc_id = str(d['id'])
                     if doc_id in returned_ids:
@@ -328,14 +335,12 @@ async def main():
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
             
-            # gemini-1.5-flash는 한도가 넉넉하므로 숨만 고르고 바로 넘어감
+            # 💡 [중요] 1분당 토큰 한도(429 에러) 방지를 위해 15초씩 넉넉히 대기
             time.sleep(15)
             
-        # 1바퀴 돌 때마다 모인 데이터로 JSON 즉시 업데이트
         if all_analyzed_data:
             save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
             
-        # 다음 바퀴를 위해 실패한 문서 큐 장전
         current_queue = failed_queue
         
         if current_queue and pass_num < MAX_PASSES:
