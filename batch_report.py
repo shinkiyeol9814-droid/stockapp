@@ -126,7 +126,7 @@ def analyze_chunk_with_gemini(chunk_docs):
     
     prompt_text = ""
     for d in chunk_docs:
-        safe_text = d['text'][:5000] 
+        safe_text = d['text'][:2500] 
         prompt_text += f"\n\n[문서 ID: {d['id']}]\n{safe_text}"
         
     prompt = f"""너는 증권사 레포트 전문 분석가야. 
@@ -276,7 +276,7 @@ async def main():
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 3
+    chunk_size = 1
     MAX_PASSES = 4 
     
     current_queue = docs_to_process
