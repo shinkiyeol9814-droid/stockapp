@@ -277,7 +277,7 @@ async def main():
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 5 
+    chunk_size = 3 
     MAX_PASSES = 4 # 1차 본게임 + 1차 패자 + 2차 패자 + 3차 패자
     
     current_queue = docs_to_process
