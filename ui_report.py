@@ -3,46 +3,56 @@ import pandas as pd
 import json
 import os
 import glob
-import re
-from datetime import datetime
 
-# 💡 파일명 변환 함수 (UI 표시용)
-def format_json_name(file_path):
-    base_name = os.path.basename(file_path)
-    
-    # 파일명에서 날짜/시간 부분(YYYYMMDD_HHMM) 추출
-    match = re.search(r'(\d{8}_\d{4})', base_name)
-    if match:
+# 💡 [핵심] 파일명이 아닌 JSON 내부 데이터를 읽어 예쁜 옵션 리스트를 만드는 함수
+def get_report_options():
+    file_list = glob.glob('data/broker_report/*.json')
+    options = {}
+
+    for file_path in file_list:
         try:
-            dt = datetime.strptime(match.group(1), "%Y%m%d_%H%M")
+            # 파일 속을 열어서 메타데이터 확인
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
             
-            # 💡 시간에 따라 '정규'와 '전일' 구분 (이모지 삭제)
-            # 낮 12시 이후(예: 20시)에 생성된 파일은 '정규 레포트'
-            if dt.hour >= 12:
-                prefix = "정규 레포트"
-            # 낮 12시 이전(예: 07시)에 생성된 파일은 '전일 레포트'
-            else:
-                prefix = "전일 레포트"
-                
-            return f"{prefix} ({dt.strftime('%Y-%m-%d %H:%M')})"
-        except:
-            return base_name
+            r_type = data.get('report_type', '')
+            a_time = data.get('analysis_time', '')
             
-    return base_name
+            if not r_type or not a_time:
+                continue 
 
-# 💡 날짜 추출용 정렬 함수 (항상 최신 날짜가 위로 오게)
-def get_sort_key(file_path):
-    match = re.search(r'(\d{8}_\d{4})', file_path)
-    return match.group(1) if match else "00000000_0000"
+            # 한글 패치 및 예쁜 이름 조립
+            kor_type = "☀️ 정규 레포트" if "Regular" in r_type else "🌙 전일 레포트" if "Previous" in r_type else "기타 레포트"
+            display_name = f"{kor_type} ({a_time} 업데이트)"
+            
+            # 정렬을 위해 시간 데이터도 함께 임시 저장
+            options[display_name] = {
+                "path": file_path,
+                "time": a_time
+            }
+        except Exception:
+            continue
+
+    # analysis_time을 기준으로 내림차순(최신순) 정렬
+    sorted_options = dict(sorted(options.items(), key=lambda item: item[1]['time'], reverse=True))
+    
+    # UI 셀렉트박스에서 쓰기 편하게 { "예쁜이름": "파일경로" } 형태로 반환
+    final_options = {k: v['path'] for k, v in sorted_options.items()}
+    return final_options
+
 
 def render_report_summary():
     st.markdown("<div class='main-title'>📊 증권사 레포트 AI 요약</div>", unsafe_allow_html=True)
     
-    # 💡 Pre/Regular 상관없이 무조건 날짜/시간 추출해서 내림차순 정렬
-    report_files = sorted(glob.glob("data/broker_report/*.json"), key=get_sort_key, reverse=True)
+    # 💡 새로 만든 함수로 옵션 딕셔너리 가져오기
+    report_options = get_report_options()
     
-    if report_files:
-        selected_file = st.selectbox("분석 데이터 선택", report_files, format_func=format_json_name)
+    if report_options:
+        # 💡 예쁜 이름(딕셔너리의 키)들을 셀렉트박스에 나열
+        selected_name = st.selectbox("분석 데이터 선택", list(report_options.keys()))
+        
+        # 💡 유저가 선택한 이름의 진짜 파일 경로를 꺼내옴
+        selected_file = report_options[selected_name]
         
         with open(selected_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -71,10 +81,10 @@ def render_report_summary():
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # 💡 데이터 에디터(표) 대신 HTML 커스텀 아코디언 카드 렌더링
+                # HTML 커스텀 아코디언 카드 렌더링
                 for _, row in df.iterrows():
                     title = row.get('레포트 제목', '제목 없음')
-                    report_date = row.get('발행일자', 'N/A') # 👈 발행일자 가져오기
+                    report_date = row.get('발행일자', 'N/A') 
                     curr_price = row.get('현재가', 'N/A')
                     curr_mc = row.get('현재시총', 'N/A')
                     tgt_price = row.get('목표주가', 'N/A')
@@ -83,7 +93,7 @@ def render_report_summary():
                     upside_val = row.get('Upside_num', 0)
                     upside_str = row.get('Upside_str', 'N/A')
 
-                    # Upside 수치에 따른 색상 설정 (동일)
+                    # Upside 수치에 따른 색상 설정
                     if pd.isna(upside_val): fire, up_color = "❄️", "#808080"
                     elif upside_val >= 50: fire, up_color = "🔥🔥🔥", "#FF0000"
                     elif upside_val >= 30: fire, up_color = "🔥🔥", "#FF4500"
@@ -93,7 +103,6 @@ def render_report_summary():
                     points = row.get('투자포인트', [])
                     points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points]) if isinstance(points, list) else f"<li>{points}</li>"
 
-                    # 💡 [최종 수정] 2줄 타이틀 + 발행일자 포함
                     card_html = (
                         f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
                         f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
@@ -103,7 +112,7 @@ def render_report_summary():
                         f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
                         f"<span style='font-size: 14px; color: #444;'>{title}</span>"
                         f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
-                        f"<span style='font-size: 13px; color: #888;'>{report_date}</span>" # 👈 발행일자 추가됨
+                        f"<span style='font-size: 13px; color: #888;'>{report_date}</span>" 
                         f"</div>"
                         f"<div style='font-size: 14px; color: #555;'>"
                         f"<span style='color: {up_color}; font-weight: bold;'>🚀 Upside: {upside_str} {fire}</span>"
