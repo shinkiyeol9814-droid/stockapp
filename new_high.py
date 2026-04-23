@@ -138,7 +138,7 @@ def render_new_high_menu():
         disabled=['종목명', '등락률', '시가총액', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크'], 
         hide_index=True, 
         use_container_width=True, 
-        key="high_price_editor"
+        key=f"high_price_editor_v2_{selected_file}" # 💡 [강제 초기화] 키 값을 바꿔버립니다!
     )
 
     if st.button("저장", type="primary"):
