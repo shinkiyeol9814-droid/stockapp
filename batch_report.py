@@ -14,7 +14,7 @@ from google import genai
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
-# 💡 B계정(새 API 키) 사용
+# 💡 A계정 결제했음. Tier1이므로 통합하여 사용
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "") 
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
@@ -30,7 +30,7 @@ TARGET_CHANNELS_PDF = [
     -1001710268401                  
 ]
 
-# 💡 [신규] API 일일 사용량 관리 함수
+# 💡 API 일일 사용량 관리 함수
 USAGE_LOG_FILE = "data/api_usage_log.json"
 
 def get_today_api_usage():
@@ -61,7 +61,7 @@ def increment_api_usage():
         
     return current_count
 
-# 💡 데이터 수집 함수 (제외 사유 로그 상세화)
+# 💡 데이터 수집 함수 (블랙리스트 추가 반영)
 async def get_all_reports_from_telegram(client, hours=12):
     print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 레포트 수집 시작...")
     docs_to_process = []
@@ -118,7 +118,13 @@ async def get_all_reports_from_telegram(client, hours=12):
                             file_name_lower = file_name.lower()
                             text_lower = valid_text.lower()
                             
-                            blacklist = ['산업', '시황', 'weekly', '위클리', 'daily', '데일리', 'morning', '모닝', 'macro', '매크로', '전략', 'strategy', 'etf', '채권', 'spot']
+                            # 💡 섹터, 부동산, 마켓 등 광범위 레포트 차단
+                            blacklist = [
+                                '산업', '시황', 'weekly', '위클리', 'daily', '데일리', 
+                                'morning', '모닝', 'macro', '매크로', '전략', 'strategy', 
+                                'etf', '채권', 'spot', 
+                                '섹터', '마켓', '클로징', '증시', '부동산', '포트폴리오', '시장_전망'
+                            ]
                             matched_black = [w for w in blacklist if w in file_name_lower]
                             
                             whitelist = ['목표주가', '목표가', '투자의견', 'target price', '매수', 'buy', 'not rated', 'n/r']
@@ -146,160 +152,164 @@ async def get_all_reports_from_telegram(client, hours=12):
             
     return docs_to_process
 
-# 💡 3. AI 분석 (503 에러 방어 및 스마트 재시도 로직 탑재)
+# 💡 3. AI 분석 (503 재시도 로직 탑재)
 def analyze_chunk_with_gemini(chunk_docs):
     if not chunk_docs: return []
-    
     prompt_text = ""
     for d in chunk_docs:
         safe_text = d['text'][:2500] 
         prompt_text += f"\n\n[문서 ID: {d['id']}]\n{safe_text}"
         
     prompt = f"""너는 증권사 레포트 전문 분석가야. 
-    아래 텍스트는 여러 증권사 레포트의 요약본(버틀러)이거나 PDF 발췌본이야. 
-    각 문서별로 정보를 추출해서 반드시 아래 JSON 배열 포맷으로만 응답해.
-    기업 분석 레포트가 아니라고 판단되면 결과에서 제외해.
-    
-    [주의사항: 버틀러 요약 텍스트 처리법]
-    - 첫 줄 괄호 앞은 '종목명', '작성자'는 '증권사', 두 번째 줄은 '레포트 제목', '- '로 시작하는 문장들은 '투자포인트'로 정리해.
-    - '평가방식'이 명시되어 있지 않으면 "N/A"로 기입해.
-
+    아래 텍스트에서 정보를 추출해서 반드시 JSON 배열 포맷으로만 응답해.
+    기업 분석 레포트가 아니면 제외해.
     [응답 포맷]
     [
         {{
-            "doc_id": "원문에 부여된 문서 ID (반드시 기입할 것)",
+            "doc_id": "문서 ID",
             "종목명": "종목이름",
             "증권사": "증권사명",
-            "레포트 제목": "레포트의 메인 타이틀(제목)",
-            "발행일자": "YYYY-MM-DD 형식",
-            "목표주가": "숫자만(예: 250000)",
-            "평가방식": "텍스트에 있는 밸류에이션 근거",
+            "레포트 제목": "제목",
+            "발행일자": "YYYY-MM-DD",
+            "목표주가": "숫자만",
+            "평가방식": "밸류에이션 근거",
             "투자포인트": ["포인트1", "포인트2"]
         }}
     ]
-    
     [분석할 문서들]
     {prompt_text} 
     """
     
     current_usage = increment_api_usage()
-    current_model = 'gemini-2.5-flash' 
-    max_retries = 3 # 💡 503 에러 시 최대 3번까지 알아서 재시도합니다.
+    current_model = 'gemini-2.5-flash'
+    max_retries = 3
     
     for attempt in range(max_retries):
         try:
             start_time = time.time()
             response = client_ai.models.generate_content(model=current_model, contents=prompt)
             elapsed = time.time() - start_time
-            
             print(f"      ✅ AI 응답 성공 ({elapsed:.1f}초) 📊 [누적 요청: {current_usage}회]")
             res_text = response.text.strip().replace("```json", "").replace("```", "")
             return json.loads(res_text)
-            
         except Exception as e:
             error_msg = str(e)
-            
             if "503" in error_msg:
-                # 💡 503 에러면 포기하지 않고 3초 대기 후 다시 찔러봅니다!
                 if attempt < max_retries - 1:
                     print(f"      ⚠️ 서버 과부하(503). 3초 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
                     time.sleep(3)
-                    continue # for문의 처음으로 돌아가서 다시 try 실행
+                    continue
                 else:
                     print(f"      ❌ 503 에러 3회 연속 발생. 패자부활전으로 넘깁니다.")
                     return None
-                    
             elif "404" in error_msg:
                 print(f"      🚨 [치명적 에러] 모델을 찾을 수 없습니다(404).")
                 return "FATAL_404"
-                
             elif "429" in error_msg:
                 print(f"      🚨 [한도 초과] 429 에러 발생. 📊 [현재 누적 요청: {current_usage}회]")
                 return "FATAL_429"
                 
             print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
             return None
-            
-# 💡 4. JSON 저장 & 중복 제거
-def save_and_match_to_json(analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num):
-    results = []
-    
+
+# 💡 4. JSON 파일 누적 저장 & 3중 키 중복 제거 (종목명+증권사+제목)
+def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_name, analysis_time):
+    # [1] 기존 데이터 로드 (파일이 있으면 읽어옴)
+    existing_results = []
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, "r", encoding="utf-8") as f:
+                old_data = json.load(f)
+                existing_results = old_data.get("results", [])
+        except Exception as e:
+            print(f"      ⚠️ 기존 파일 로드 에러 (무시하고 새로 생성): {e}")
+
+    # [2] 중복 판별용 딕셔너리 구성 (기존 데이터 세팅)
+    unique_results = {}
+    for item in existing_results:
+        clean_name = item.get('종목명', '').split('(')[0].strip()
+        broker = item.get('증권사', '정보없음').strip()
+        title = item.get('레포트 제목', '제목없음').strip()
+        dup_key = f"{clean_name}_{broker}_{title}"
+        unique_results[dup_key] = item
+
+    # [3] 신규 데이터 매칭 및 3중 키 병합
+    new_matched_count = 0
     for item in analyzed_data:
         raw_name = item.get('종목명', '')
         clean_name = raw_name.split('(')[0].strip() 
+        broker = item.get('증권사', '정보없음').strip()
+        title = item.get('레포트 제목', '제목없음').strip()
         
-        target_price_str = item.get("목표주가", "N/A")
-        target_price = 0
-        if target_price_str != "N/A":
-            try:
-                target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
-            except:
-                target_price = "N/A"
-
+        dup_key = f"{clean_name}_{broker}_{title}"
         matched = df_listing[df_listing['Name'] == clean_name]
         
         if not matched.empty:
             curr_price = matched.iloc[0]['Close']
             curr_marcap = matched.iloc[0]['Marcap']
             
+            target_price_str = item.get("목표주가", "0")
+            try:
+                target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
+            except:
+                target_price = 0
+            
             item['현재가'] = f"{int(curr_price):,}원"
             item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억"
-            
-            if target_price != "N/A" and curr_price > 0 and target_price > 0:
+            if target_price > 0:
                 upside = (target_price / curr_price - 1) * 100
                 item['Upside'] = round(upside, 1)
-                
-                target_marcap_val = int(curr_marcap * (1 + upside/100))
-                item['목표시총'] = f"{int(target_marcap_val // 100_000_000):,}억"
+                item['목표시총'] = f"{int(curr_marcap * (1 + upside/100) // 100_000_000):,}억"
                 item['목표주가'] = f"{target_price:,}원"
-            else:
-                item['Upside'] = "N/A"
-                item['목표시총'] = "N/A"
-                if target_price != "N/A": item['목표주가'] = f"{target_price:,}원"
-                
-            results.append(item)
-
-    unique_results = {}
-    for item in results:
-        clean_name = item['종목명'].split('(')[0].strip()
-        is_butler = (item.get('source') == 'butler_works')
-        
-        if clean_name in unique_results:
-            if is_butler and unique_results[clean_name].get('source') != 'butler_works':
-                unique_results[clean_name] = item
-        else:
-            unique_results[clean_name] = item
             
-    final_results = []
+            # 버틀러 우선순위 덮어쓰기 로직
+            is_butler = (item.get('source') == 'butler_works')
+            if dup_key in unique_results:
+                if is_butler and unique_results[dup_key].get('source_type') != 'butler_works':
+                    item['source_type'] = 'butler_works'
+                    unique_results[dup_key] = item
+            else:
+                item['source_type'] = 'butler_works' if is_butler else 'pdf'
+                unique_results[dup_key] = item
+                new_matched_count += 1
+            
+    # [4] 최종 결과 정리 및 저장
+    final_list = []
     for val in unique_results.values():
         val.pop('doc_id', None)
         val.pop('source', None)
-        final_results.append(val)
+        final_list.append(val)
     
     report = {
         "analysis_time": analysis_time,
-        "market_type": market_type,
-        "results": final_results
+        "report_type": report_type_name,
+        "results": final_list
     }
     
     with open(file_name, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, ensure_ascii=False)
         
-    print(f"\n💾 [{pass_num}회전 저장] 누적 데이터 {len(final_results)}건이 웹 대시보드에 업데이트되었습니다!")
+    print(f"💾 [{report_type_name}] 누적 업데이트 완료! (기존 {len(existing_results)}건 + 신규 {new_matched_count}건 = 총 {len(final_list)}건)")
 
-# 💡 5. 메인 루프 
+# 💡 5. 메인 루프 (누적 업데이트 모드)
 async def main():
     today_usage = get_today_api_usage()
-    print("=== 증권사 레포트 배치 시작 (버틀러 통합 & 3단 패자부활전) ===")
+    print("=== 증권사 레포트 배치 시작 (누적 업데이트 모드) ===")
     print(f"📊 [현재 상태] 오늘 {today_usage}회의 API를 이미 사용했습니다.")
-    
+
     now = datetime.utcnow() + timedelta(hours=9)
-    market_type = "regular" if 8 <= now.hour < 20 else "premarket"
-    analysis_time = now.strftime("%Y-%m-%d %H:%M")
+    hour = now.hour
     
-    save_dir = 'data/broker_report'
-    os.makedirs(save_dir, exist_ok=True)
-    file_name = f"{save_dir}/{market_type}_{now.strftime('%Y%m%d_%H%M')}.json"
+    # 💡 [명칭 규칙 적용] 07:01 ~ 20:00 -> 정기 리포트 / 20:01 ~ 익일 07:00 -> 전일 리포트
+    if 7 < hour <= 20: 
+        report_type_name = "Regular Report"
+        file_name = "data/broker_report/regular_report.json"
+    else: 
+        report_type_name = "Previous Day Report"
+        file_name = "data/broker_report/previous_day_report.json"
+        
+    analysis_time = now.strftime("%Y-%m-%d %H:%M")
+    os.makedirs('data/broker_report', exist_ok=True)
     
     client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client_tg.start()
@@ -316,7 +326,7 @@ async def main():
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
     df_listing = fdr.StockListing('KRX')
 
-    chunk_size = 5 # 💡 청크 사이즈 다시 5개로 원복!
+    chunk_size = 5
     MAX_PASSES = 4 
     
     current_queue = docs_to_process
@@ -341,7 +351,6 @@ async def main():
             print(f"\n▶️ 진행 중... ({i+1}~{min(i+chunk_size, len(current_queue))}) / {len(current_queue)}")
             res = analyze_chunk_with_gemini(chunk)
             
-            # 💡 [로직 완전 정리] 404, 429, 503(None) 구별
             if res == "FATAL_404":
                 print("\n🛑 [배치 강제 종료] 404 모델 에러가 발생하여 전체 배치를 취소합니다.")
                 return  
@@ -354,13 +363,10 @@ async def main():
                     return 
                     
             elif res is None:
-                # 503 등 일시적 서버 에러는 카운트를 올리지 않고 조용히 패자부활전으로 넘김
                 failed_queue.extend(chunk)
                 
             else:
-                # 성공하면 연속 429 실패 카운터를 리셋!
                 consecutive_failures = 0
-                
                 returned_ids = [str(r.get('doc_id', '')) for r in res]
                 
                 for r in res:
@@ -375,13 +381,15 @@ async def main():
                     else:
                         print(f"      ⚠️ 누락: [ID {doc_id}] -> 패자부활전 대기열 추가")
                         failed_queue.append(d)
-                                
-            # 💡 구글 로드밸런서가 화내지 않도록 청크당 2초의 매너 쿨타임을 줍니다.
+                        
             print("      ⏳ 다음 문서를 위해 2초 대기합니다...") 
             time.sleep(2)
             
+        # 매 패스(회전)가 끝날 때마다 성공한 데이터들을 누적 저장합니다.
         if all_analyzed_data:
-            save_and_match_to_json(all_analyzed_data, df_listing, file_name, market_type, analysis_time, pass_num)
+            save_and_match_to_json(all_analyzed_data, df_listing, file_name, report_type_name, analysis_time)
+            # 저장 후에는 다음 회전에서 중복 저장되지 않도록 비워줍니다.
+            all_analyzed_data = [] 
             
         current_queue = failed_queue
         
