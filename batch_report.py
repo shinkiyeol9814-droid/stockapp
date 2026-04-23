@@ -300,13 +300,16 @@ async def main():
     now = datetime.utcnow() + timedelta(hours=9)
     hour = now.hour
     
-    # 💡 [명칭 규칙 적용] 07:01 ~ 20:00 -> 정기 리포트 / 20:01 ~ 익일 07:00 -> 전일 리포트
+    # 💡 [핵심 수정] 오늘 날짜를 'YYYYMMDD' 형태로 뽑아냅니다. (예: 20260423)
+    today_str = now.strftime("%Y%m%d")
+    
+    # 💡 파일명에 today_str 변수를 넣어서 일자별로 파일이 쪼개지게 만듭니다.
     if 7 < hour <= 20: 
         report_type_name = "Regular Report"
-        file_name = "data/broker_report/regular_report.json"
+        file_name = f"data/broker_report/regular_report_{today_str}.json"
     else: 
         report_type_name = "Previous Day Report"
-        file_name = "data/broker_report/previous_day_report.json"
+        file_name = f"data/broker_report/previous_day_report_{today_str}.json"
         
     analysis_time = now.strftime("%Y-%m-%d %H:%M")
     os.makedirs('data/broker_report', exist_ok=True)
