@@ -116,27 +116,26 @@ def render_new_high_menu():
     # ✨ Data Editor 렌더링 (돋보기 아이콘 적용 및 컬럼 순서 재배치)
     # ---------------------------------------------------------
     edited_df = st.data_editor(
-        # 컬럼 순서: 종목명 -> 가치평가(돋보기) -> 등락률 ... -> 최신뉴스 -> 기사링크(돋보기)
-        disp_df[['종목명', '가치평가_이동', '등락률', '시가총액', '돌파기간', '추정 사유', '최신뉴스', '최신뉴스_링크', '코드']],
+        # 💡 [핵심] 요청하신 순서대로 컬럼 배열 완벽 변경! (버튼들은 맨 뒤로)
+        disp_df[['종목명', '등락률', '시가총액', '추정 사유', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크', '코드']],
         column_config={
             "종목명": st.column_config.TextColumn("종목명", width="small"),
-            # 디스플레이 텍스트를 돋보기만 나오도록 변경
+            "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
+            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
+            "시가총액": st.column_config.TextColumn("시가총액"),
             "가치평가_이동": st.column_config.LinkColumn(
                 "분석", 
                 display_text="🔍", 
                 width="small"
             ),
-            "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
-            "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
             "최신뉴스_링크": st.column_config.LinkColumn(
                 "원문", 
                 display_text="🔍", 
                 width="small"
             ),
-            "시가총액": st.column_config.TextColumn("시가총액"),
             "코드": None  
         },
-        disabled=['종목명', '등락률', '시가총액', '돌파기간', '가치평가_이동', '최신뉴스', '최신뉴스_링크'], 
+        disabled=['종목명', '등락률', '시가총액', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크'], 
         hide_index=True, 
         use_container_width=True, 
         key="high_price_editor"
