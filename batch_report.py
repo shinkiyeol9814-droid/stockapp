@@ -61,19 +61,27 @@ def increment_api_usage():
         
     return current_count
 
-# 💡 데이터 수집 함수 (블랙리스트 추가 반영)
-async def get_all_reports_from_telegram(client, hours=12):
-    print(f"\n📥 텔레그램에서 최근 {hours}시간 이내의 레포트 수집 시작...")
+# 💡 데이터 수집 함수 (Fix된 시간 구간 적용)
+async def get_all_reports_from_telegram(client, start_time, end_time):
+    print(f"\n📥 텔레그램 레포트 수집 시작")
+    print(f"   ⏱️ 수집 타겟 구간: {start_time.strftime('%Y-%m-%d %H:%M')} ~ {end_time.strftime('%Y-%m-%d %H:%M')}")
+    
     docs_to_process = []
     doc_id_counter = 1
     seen_files = set()
-    limit_time = datetime.now() - timedelta(hours=hours)
     
     # [A] 버틀러 요약 텍스트
     for channel in TARGET_CHANNELS_TEXT:
         try:
             async for message in client.iter_messages(channel, limit=100):
-                if message.date.replace(tzinfo=None) < limit_time: break
+                # 💡 텔레그램의 UTC 시간을 한국 시간(KST)으로 변환
+                msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
+                
+                # 수집 시작 시간보다 과거 메시지면 반복문 중단
+                if msg_time_kst < start_time: break 
+                # 수집 종료 시간보다 미래 메시지면 스킵 (안전장치)
+                if msg_time_kst > end_time: continue 
+                
                 if message.text and len(message.text) > 50:
                     docs_to_process.append({
                         "id": str(doc_id_counter),
@@ -90,7 +98,10 @@ async def get_all_reports_from_telegram(client, hours=12):
     for channel in TARGET_CHANNELS_PDF:
         try:
             async for message in client.iter_messages(channel, limit=100):
-                if message.date.replace(tzinfo=None) < limit_time: break
+                msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
+                
+                if msg_time_kst < start_time: break 
+                if msg_time_kst > end_time: continue
                     
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name
@@ -118,7 +129,6 @@ async def get_all_reports_from_telegram(client, hours=12):
                             file_name_lower = file_name.lower()
                             text_lower = valid_text.lower()
                             
-                            # 💡 섹터, 부동산, 마켓 등 광범위 레포트 차단
                             blacklist = [
                                 '산업', '시황', 'weekly', '위클리', 'daily', '데일리', 
                                 'morning', '모닝', 'macro', '매크로', '전략', 'strategy', 
@@ -291,34 +301,52 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
         
     print(f"💾 [{report_type_name}] 누적 업데이트 완료! (기존 {len(existing_results)}건 + 신규 {new_matched_count}건 = 총 {len(final_list)}건)")
 
-# 💡 5. 메인 루프 (누적 업데이트 모드)
+# 💡 5. 메인 루프 (시간 Fix 기준 적용)
 async def main():
     today_usage = get_today_api_usage()
-    print("=== 증권사 레포트 배치 시작 (누적 업데이트 모드) ===")
+    print("=== 증권사 레포트 배치 시작 (구간 픽스 & 누적 업데이트 모드) ===")
     print(f"📊 [현재 상태] 오늘 {today_usage}회의 API를 이미 사용했습니다.")
 
     now = datetime.utcnow() + timedelta(hours=9)
     hour = now.hour
-    
-    # 💡 [핵심 수정] 오늘 날짜를 'YYYYMMDD' 형태로 뽑아냅니다. (예: 20260423)
     today_str = now.strftime("%Y%m%d")
     
-    # 💡 파일명에 today_str 변수를 넣어서 일자별로 파일이 쪼개지게 만듭니다.
-    if 7 < hour <= 20: 
+    # 오늘의 07시와 20시 기준 객체 생성
+    today_07 = now.replace(hour=7, minute=0, second=0, microsecond=0)
+    today_20 = now.replace(hour=20, minute=0, second=0, microsecond=0)
+    
+    # 💡 [정밀 구간 픽스] 
+    if 8 < hour <= 21: 
+        # 낮/저녁에 도는 정규 레포트 (당일 07:00 ~ 당일 20:00)
         report_type_name = "Regular Report"
         file_name = f"data/broker_report/regular_report_{today_str}.json"
+        fetch_start = today_07
+        fetch_end = today_20
     else: 
+        # 아침/밤에 도는 전일 레포트
         report_type_name = "Previous Day Report"
         file_name = f"data/broker_report/previous_day_report_{today_str}.json"
         
+        if hour <= 8:
+            # 아침에 도는 경우 (어제 20:00 ~ 오늘 07:00)
+            yesterday_20 = today_20 - timedelta(days=1)
+            fetch_start = yesterday_20
+            fetch_end = today_07
+        else:
+            # 밤(22, 23시)에 도는 경우 (오늘 20:00 ~ 내일 07:00)
+            tomorrow_07 = today_07 + timedelta(days=1)
+            fetch_start = today_20
+            fetch_end = tomorrow_07
+            
     analysis_time = now.strftime("%Y-%m-%d %H:%M")
     os.makedirs('data/broker_report', exist_ok=True)
     
     client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client_tg.start()
     
-    docs_to_process = await get_all_reports_from_telegram(client_tg)
-    await client_tg.disconnect() 
+    # 💡 수정된 함수 호출부: fetch_start와 fetch_end를 직접 던집니다!
+    docs_to_process = await get_all_reports_from_telegram(client_tg, fetch_start, fetch_end)
+    await client_tg.disconnect()
     
     if not docs_to_process:
         print("조건에 맞는 새로운 레포트/텍스트가 없습니다.")
