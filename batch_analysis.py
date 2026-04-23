@@ -106,8 +106,8 @@ async def get_google_news(session, stock_name):
             news_markdown = []
             first_link = "" 
             
-            # 구글 뉴스는 핵심 2개만 유지하여 토큰 절약
-            for i, item in enumerate(root.findall('.//item')[:2]):
+            # 💡 [최적화] Tier 1의 넉넉한 토큰을 활용해 상위 5개 기사 제목을 긁어옵니다!
+            for i, item in enumerate(root.findall('.//item')[:5]): 
                 title = item.find('title').text
                 link = item.find('link').text
                 news_titles.append(title)
@@ -156,8 +156,8 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
 """
     for data in batch_data:
         # 텍스트 슬라이싱으로 토큰 한도 초과 방어
-        safe_news = data['news'][:300] + "..." if len(data['news']) > 300 else data['news']
-        safe_tg = data['tg'][:300] + "..." if len(data['tg']) > 300 else data['tg']
+        safe_news = data['news'][:500] + "..." if len(data['news']) > 300 else data['news']
+        safe_tg = data['tg'][:800] + "..." if len(data['tg']) > 300 else data['tg']
         prompt += f"■ {data['name']}\n- 뉴스: {safe_news}\n- 찌라시: {safe_tg}\n\n"
 
     for attempt in range(max_retries):
@@ -178,15 +178,24 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
             return reasons_dict
         except Exception as e:
             error_msg = str(e)
-            wait_time = 65 if "429" in error_msg else 10
             
-            # 💡 [핵심] 구글이 뭐라고 욕하면서 튕겨내는지 '진짜 사유'를 화면에 적나라하게 찍어봅니다!
-            print(f"   ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기... (사유: {error_msg})")
+            # 💡 [최적화] Tier 1에 맞는 초고속 회복 로직
+            if "503" in error_msg:
+                wait_time = 3
+                reason = "서버 일시적 과부하(503)"
+            elif "429" in error_msg:
+                wait_time = 5
+                reason = "순간 토큰 초과(429)"
+            else:
+                wait_time = 2
+                reason = f"기타 에러 ({error_msg[:30]})"
+                
+            print(f"    ⚠️ AI 분석 에러 (시도 {attempt+1}/{max_retries}) | {wait_time}초 대기... (사유: {reason})")
 
             if attempt < max_retries - 1:
                 time.sleep(wait_time) 
             else:
-                return None # 3번 다 실패하면 명시적 None 반환
+                return None
 
 # 💡 [핵심] 1바퀴 돌 때마다 즉시 JSON에 덮어쓰는 저장 함수
 def save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, pass_num):
@@ -274,8 +283,9 @@ async def main():
                         print(f"      ⚠️ AI 요약 누락: [{stock_name}] -> 패자부활전 대기열 추가")
                         failed_queue.append(item)
             
-            # API 제한 회피를 위한 짧은 휴식 (청크가 클수록 넉넉히)
-            time.sleep(10)
+            # 💡 [최적화] 10초 대기 -> 1~2초 매너 쿨타임으로 축소
+            # API 제한 회피를 위한 짧은 휴식 (Tier 1이므로 2초면 충분)
+            time.sleep(2)
 
         # 💡 1바퀴 끝날 때마다 JSON 실시간 덮어쓰기!
         save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, pass_num)
@@ -284,8 +294,9 @@ async def main():
         current_queue = failed_queue
         
         if current_queue and pass_num < MAX_PASSES:
-            print(f"\n⏳ {pass_num}차 분석 종료. 누락된 {len(current_queue)}개 종목 재도전을 위해 20초 대기합니다...")
-            time.sleep(20)
+            # 💡 [최적화] 20초 대기 -> 5초로 축소
+            print(f"\n⏳ {pass_num}차 분석 종료. 누락된 {len(current_queue)}개 종목 재도전을 위해 5초 대기합니다...")
+            time.sleep(5)
 
     # 5바퀴 다 돌았는데도 남은 녀석들은 최종 수동 확인 처리
     if current_queue:
