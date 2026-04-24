@@ -246,10 +246,15 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
     # [3] 신규 데이터 매칭 및 3중 키 병합
     new_matched_count = 0
     for item in analyzed_data:
-        raw_name = item.get('종목명', '')
-        clean_name = raw_name.split('(')[0].strip() 
-        broker = item.get('증권사', '정보없음').strip()
-        title = item.get('레포트 제목', '제목없음').strip()
+        # 💡 [철벽 방어] AI가 null(None)을 뱉어도 안전하게 문자열로 처리
+        raw_name = item.get('종목명') or ''
+        clean_name = str(raw_name).split('(')[0].strip() 
+        
+        raw_broker = item.get('증권사') or '정보없음'
+        broker = str(raw_broker).strip()
+        
+        raw_title = item.get('레포트 제목') or '제목없음'
+        title = str(raw_title).strip()
         
         dup_key = f"{clean_name}_{broker}_{title}"
         matched = df_listing[df_listing['Name'] == clean_name]
