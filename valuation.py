@@ -202,7 +202,23 @@ def apply_search():
 
 
 def render_valuation_menu():
-    # 💡 1. 세션 상태 초기화 (계산에 사용되는 Active 상태)
+    # 💡 [기억 복구] 초기 진입 또는 모바일 세션 끊김으로 튕겼을 때 URL에서 데이터를 긁어옵니다.
+    if 'app_init_done' not in st.session_state:
+        st.session_state.app_init_done = True
+        q_code = st.query_params.get("stock_code", "")
+        q_val = st.query_params.get("val_type", "")
+        q_mult = st.query_params.get("mult", "")
+        
+        # URL에 종목 코드가 남아있다면 세션에 쑤셔넣기!
+        if q_code:
+            listing = get_ticker_listing()
+            matched = listing[listing['Code'] == str(q_code).zfill(6)]
+            if not matched.empty:
+                st.session_state.active_corp_name = matched['Name'].values[0]
+                if q_val: st.session_state.active_val_type = q_val
+                if q_mult: st.session_state.active_target_mult = float(q_mult)
+
+    # 💡 1. 세션 상태 초기화 (계산에 사용되는 Active 상태) - 기존 코드 유지
     if 'active_corp_name' not in st.session_state: st.session_state.active_corp_name = ""
     if 'active_val_type' not in st.session_state: st.session_state.active_val_type = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
@@ -274,10 +290,14 @@ def render_valuation_menu():
         if not ticker_row.empty:
             ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
             
+            # 💡 [기억 저장] 종목이 검색될 때마다 주소창에 현재 상태를 백업!
+            st.query_params["stock_code"] = ticker
+            st.query_params["val_type"] = val_type
+            st.query_params["mult"] = str(target_mult)
+            
             if st.session_state.last_ticker != ticker or st.session_state.last_val_type != val_type:
                 st.session_state.last_ticker = ticker
                 st.session_state.last_val_type = val_type
-
         with st.spinner("데이터 분석 중..."):
             if ticker_row.empty:
                 st.error("❌ 종목을 찾을 수 없습니다. 종목명을 정확히 입력해주세요.")
