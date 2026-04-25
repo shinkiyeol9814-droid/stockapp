@@ -29,15 +29,19 @@ if query_stock_code:
     matched = listing[listing['Code'] == str(query_stock_code).zfill(6)]
     if not matched.empty:
         st.session_state.search_corp_name = matched['Name'].values[0]
-    
-    st.query_params.clear()
+        
+    # 💡 [삭제] 여기서 냅다 지워버리면 새로고침 시 기억을 잃습니다!
+    # st.query_params.clear() 
     default_menu_idx = 0 
 
 # --- 메뉴 구성 ---
 st.sidebar.title("🧭 StkPro 메뉴")
-# 💡 세 번째 메뉴 이름 동기화 완료!
 menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 레포트 요약", "🛠️ 업데이트 이력"], index=default_menu_idx)
 
+# 💡 [핵심 추가] 시뮬레이터 화면이 아닐 때만 파라미터를 지워서 메뉴 꼬임을 방지합니다.
+if menu != "📈 가치평가 시뮬레이터":
+    st.query_params.clear()
+    
 # --- 메뉴 라우팅 ---
 if menu == "📈 가치평가 시뮬레이터":
     render_valuation_menu()
