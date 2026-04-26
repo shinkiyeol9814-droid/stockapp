@@ -88,25 +88,30 @@ async def main():
     client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client.start()
     
-    # 💡 최근 24시간 메시지 50개만 긁어옵니다.
-    target_time = datetime.utcnow() + timedelta(hours=9) - timedelta(days=1)
+    # 💡 [핵심 수정] 타겟 시간을 올해 4월 1일 00시 00분으로 고정!
+    now_kst = datetime.utcnow() + timedelta(hours=9)
+    target_time = datetime(now_kst.year, 4, 1) # 2026년 4월 1일
+    
     new_count = 0
     
-    async for message in client.iter_messages(TARGET_CHANNEL, limit=50):
+    # 💡 limit=None 으로 설정하여 4월 1일이 나올 때까지 무제한으로 과거를 파고듭니다.
+    # (target_time에 도달하면 break로 알아서 멈추니 서버에 무리는 없습니다)
+    async for message in client.iter_messages(TARGET_CHANNEL, limit=None):
         msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
-        if msg_time_kst < target_time: break 
+        
+        # 4월 1일 이전 메시지가 나오면 미련 없이 반복문 즉시 종료
+        if msg_time_kst < target_time: 
+            break 
         
         if message.text:
             parsed_data = parse_earnings_text(message.text)
             if parsed_data:
                 code = parsed_data['코드']
                 
-                # 💡 중복 제거 로직: 동일 종목이 들어오면 최신(또는 잠정->확정)으로 덮어씁니다.
-                # (텔레그램은 최신 메시지부터 긁어오므로, 이미 dict에 넣었다면 그게 가장 최신임)
                 if code not in earnings_dict:
                     earnings_dict[code] = parsed_data
                     new_count += 1
-                    print(f"✅ 수집: {parsed_data['종목명']} ({parsed_data['서프_상태']})")
+                    print(f"✅ 수집: {parsed_data['종목명']} ({parsed_data['서프_상태']}) - {msg_time_kst.strftime('%m/%d')}")
                 
     await client.disconnect()
     
