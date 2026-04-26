@@ -67,7 +67,7 @@ def parse_earnings_text(text):
                 except:
                     data['서프_상태'] = "💡 데이터오류"
             else:
-                data['서프_상태'] = "💡 컨센없음 (흑전/적전 등)"
+                data['서프_상태'] = "💡 컨센없음"
         else:
             data['영업익'] = "-"
             data['서프_상태'] = "N/A"
@@ -79,54 +79,47 @@ def parse_earnings_text(text):
         return None
 
 async def main():
-    print("=== 실적 스크리닝 수집 시작 (Gemini 안 씀!) ===")
+    print("=== 실적 스크리닝 수집 시작 ===")
     
-    # 기존 데이터 로드 (중복 제거 및 덮어쓰기를 위해 딕셔너리로 관리)
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     earnings_dict = {}
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             old_list = json.load(f)
-            # 종목코드를 키(Key)로 사용
             earnings_dict = {item['코드']: item for item in old_list}
 
     client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client.start()
     
-    # 💡 [핵심 수정] 타겟 시간을 올해 4월 1일 00시 00분으로 고정!
     now_kst = datetime.utcnow() + timedelta(hours=9)
-    target_time = datetime(now_kst.year, 4, 1) # 2026년 4월 1일
+    target_time = datetime(now_kst.year, 4, 1) 
     
     new_count = 0
+    current_run_seen = set() # 이번 턴에 수집한 종목 기억용
     
-    # 💡 limit=None 으로 설정하여 4월 1일이 나올 때까지 무제한으로 과거를 파고듭니다.
-    # (target_time에 도달하면 break로 알아서 멈추니 서버에 무리는 없습니다)
     async for message in client.iter_messages(TARGET_CHANNEL, limit=None):
         msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
-        
-        # 4월 1일 이전 메시지가 나오면 미련 없이 반복문 즉시 종료
-        if msg_time_kst < target_time: 
-            break 
+        if msg_time_kst < target_time: break 
         
         if message.text:
             parsed_data = parse_earnings_text(message.text)
             if parsed_data:
                 code = parsed_data['코드']
                 
-                if code not in earnings_dict:
+                # 💡 [핵심] 텔레그램은 최신순으로 읽어옵니다. 
+                # 이번 수집에서 처음 본 종목이라면, 무조건 기존 JSON 데이터를 덮어씁니다! (잠정->확정 갱신)
+                if code not in current_run_seen:
+                    current_run_seen.add(code)
                     earnings_dict[code] = parsed_data
                     new_count += 1
-                    print(f"✅ 수집: {parsed_data['종목명']} ({parsed_data['서프_상태']}) - {msg_time_kst.strftime('%m/%d')}")
+                    print(f"✅ 수집/갱신: {parsed_data['종목명']} ({parsed_data['서프_상태']}) - {msg_time_kst.strftime('%m/%d')}")
                 
     await client.disconnect()
     
-    # 저장할 때는 리스트로 변환
     final_list = list(earnings_dict.values())
-    
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(final_list, f, indent=4, ensure_ascii=False)
         
-    print(f"=== 수집 종료! (신규 {new_count}건 추가, 총 {len(final_list)}건 누적) ===")
-
+    print(f"=== 수집 종료! (최신 {new_count}건 갱신, 총 {len(final_list)}건 누적) ===")
 if __name__ == "__main__":
     asyncio.run(main())
