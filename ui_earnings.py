@@ -1,12 +1,12 @@
 import streamlit as st
 import json
 import os
+import re # 💡 링크 변환을 위해 정규식 라이브러리 추가
 from streamlit_autorefresh import st_autorefresh
 
 DATA_FILE = "data/earnings/earnings_data.json"
 
 def render_earnings_menu():
-    # 💡 3분마다 자동 갱신
     st_autorefresh(interval=3 * 60 * 1000, key="earnings_auto_refresh")
     
     col1, col2 = st.columns([8, 2])
@@ -27,25 +27,28 @@ def render_earnings_menu():
         st.warning("분석된 실적 데이터가 없습니다.")
         return
 
-    # 💡 시간이 최신일수록 상단에 오도록 내림차순 정렬
     results = sorted(results, key=lambda x: x['발표시간'], reverse=True)
     
     st.caption(f"📊 총 **{len(results)}**개의 1분기 실적 공시가 스크리닝 되었습니다.")
     st.divider()
     
-    # 티켓 형태의 HTML 아코디언 카드 렌더링
     for row in results:
         corp_name = row.get('종목명', '')
         code = row.get('코드', '')
         pub_time = row.get('발표시간', '')
         is_provisional = row.get('잠정여부', '')
         
-        rev = row.get('매출액', '-')
-        rev_gap = row.get('매출괴리율', '') # 👈 매출 괴리율 추가
         op = row.get('영업익', '-')
         gap = row.get('괴리율', '')
         surf_status = row.get('서프_상태', '')
+        
+        # 💡 [핵심 1] 텍스트 줄바꿈 처리 및 실제 클릭 가능한 하이퍼링크(<a> 태그)로 변환
         raw_text = row.get('원문', '').replace('\n', '<br>')
+        raw_text = re.sub(
+            r'(https?://[^\s<]+)', 
+            r'<a href="\1" target="_blank" style="color: #0066cc; text-decoration: underline;">\1</a>', 
+            raw_text
+        )
         
         # 상태에 따른 색상 분기
         if "서프라이즈" in surf_status or "상회" in surf_status: 
@@ -55,37 +58,40 @@ def render_earnings_menu():
         else: 
             status_color = "#555555" 
 
-        # 💡 [핵심] 영업이익이 마이너스(-)로 시작하면 차분한 파란색(#5A9BD4) 적용
-        if op.startswith('-'):
+        # 마이너스(-) 영업익 차분한 파란색 처리
+        if str(op).startswith('-'):
             op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
         else:
             op_display = f"<b>{op}억</b>"
 
-        # 💡 영업익 및 매출액 괴리율 표기 텍스트 조립
-        gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
+        # 💡 괴리율 텍스트 조립 (+ 기호 명시적으로 추가)
+        if gap:
+            try:
+                gap_num = int(gap)
+                gap_str = f"+{gap_num}%" if gap_num > 0 else f"{gap_num}%"
+                gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap_str})</span>"
+            except:
+                gap_text = f"({gap}%)"
+        else:
+            gap_text = ""
         
-        # 매출은 튀지 않게 회색빛으로 퍼센트 추가
-        rev_gap_text = f"<span style='font-size: 13px; color: #888;'>({rev_gap}%)</span>" if rev_gap else ""
-        
+        # 💡 [핵심 2] display: flex 를 사용하여 모든 요소를 한 줄(일자)로 나열! (매출 삭제됨)
         card_html = (
             f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
-            f"<div style='margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;'>"
-            f"  <div>"
-            f"    <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span> "
+            f"<div style='display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;'>"
+            f"  <div style='display: flex; align-items: center; flex-wrap: wrap; gap: 10px;'>"
+            f"    <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
             f"    <span style='font-size: 13px; color: #888;'>[{code}]</span>"
-            f"    <span style='font-size: 12px; margin-left: 8px; padding: 2px 6px; border-radius: 4px; background-color: #eee; color: #555;'>{is_provisional}</span>"
+            f"    <span style='font-size: 12px; padding: 2px 6px; border-radius: 4px; background-color: #eee; color: #555;'>{is_provisional}</span>"
+            f"    <span style='color: #ddd;'>|</span>"
+            f"    <span style='color: {status_color}; font-weight: 900; font-size: 14px;'>{surf_status}</span>"
+            f"    <span style='font-size: 14px;'>💰 영업익: {op_display} {gap_text}</span>"
             f"  </div>"
-            f"  <div style='font-size: 12px; color: #aaa;'>{pub_time}</div>"
-            f"</div>"
-            f"<div style='font-size: 15px; color: #333; margin-top: 8px;'>"
-            f"  <span style='color: {status_color}; font-weight: 900; margin-right: 12px;'>{surf_status}</span>"
-            f"  <span>💰 영업익: {op_display} {gap_text}</span>" # 👈 마이너스 컬러가 반영된 변수 적용
-            f"  <span style='color: #ccc;'> &nbsp;|&nbsp; </span>"
-            f"  <span>📈 매출: <b>{rev}억</b> {rev_gap_text}</span>" # 👈 매출 % 추가
+            f"  <div style='font-size: 12px; color: #aaa; min-width: 120px; text-align: right;'>{pub_time}</div>"
             f"</div>"
             f"</summary>"
-            f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.5;'>"
+            f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
             f"{raw_text}"
             f"</div>"
             f"</details>"
