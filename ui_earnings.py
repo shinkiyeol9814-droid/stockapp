@@ -58,8 +58,10 @@ def render_earnings_menu():
         else: 
             status_color = "#555555" 
 
-        # 마이너스(-) 영업익 차분한 파란색 처리
-        if str(op).startswith('-'):
+        # 💡 [핵심 버그 수정] 순수 '-' 문자일 때는 파란색 처리 및 '억' 붙이기 방지!
+        if op == "-":
+            op_display = "<b>-</b>"
+        elif str(op).startswith('-'):
             op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
         else:
             op_display = f"<b>{op}억</b>"
