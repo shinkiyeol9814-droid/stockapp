@@ -92,7 +92,7 @@ async def main():
     await client.start()
     
     now_kst = datetime.utcnow() + timedelta(hours=9)
-    target_time = datetime(now_kst.year, 4, 1) 
+    target_time = datetime(now_kst.year, 1, 1) 
     
     new_count = 0
     current_run_seen = set() # 이번 턴에 수집한 종목 기억용
