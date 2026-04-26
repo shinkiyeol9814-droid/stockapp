@@ -4,6 +4,7 @@ import json
 import os
 import requests
 import base64
+from streamlit_autorefresh import st_autorefresh
 
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
@@ -45,8 +46,17 @@ def save_to_github(file_path, content, message):
     else: return False, put_res.text 
 
 def render_new_high_menu():
-    st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 신고가 트래킹 </div>", unsafe_allow_html=True)
+    # 💡 [자동 갱신] 3분(180,000ms)마다 화면을 조용히 새로고침합니다!
+    st_autorefresh(interval=3 * 60 * 1000, key="newhigh_auto_refresh")
     
+    # 💡 [수동 갱신] 즉시 갱신 버튼 추가
+    col1, col2 = st.columns([8, 2])
+    with col1:
+        st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 신고가 트래킹 </div>", unsafe_allow_html=True)
+    with col2:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.rerun()
+            
     report_files = get_all_reports()
     if not report_files:
         st.warning("분석된 데이터가 없습니다. 장 마감 후 자동 배치가 실행될 때까지 기다려주세요.")
