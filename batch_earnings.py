@@ -12,7 +12,7 @@ API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 
 # 💡 AWAKE 채널 ID (문자열 링크 또는 숫자 ID 입력)
-TARGET_CHANNEL = "https://t.me/AWAKE" # 또는 실제 방 링크/ID로 변경하세요
+TARGET_CHANNEL = "https://t.me/darthacking" # 또는 실제 방 링크/ID로 변경하세요
 
 DATA_FILE = "data/earnings/earnings_data.json"
 
