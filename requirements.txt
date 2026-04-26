@@ -13,3 +13,4 @@ telethon
 google-genai
 aiohttp
 PyMuPDF
+streamlit-autorefresh
