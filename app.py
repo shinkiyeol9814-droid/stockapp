@@ -3,6 +3,7 @@ import pandas as pd
 from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
 from ui_report import render_report_summary  # 💡 ui_report 모듈 Import!
+from ui_earnings import render_earnings_menu
 
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="StkPro 통합 보드", page_icon="📊", layout="wide")
@@ -36,7 +37,12 @@ if query_stock_code:
 
 # --- 메뉴 구성 ---
 st.sidebar.title("🧭 StkPro 메뉴")
-menu = st.sidebar.radio("이동", ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 레포트 요약", "🛠️ 업데이트 이력"], index=default_menu_idx)
+# 사이드바 메뉴 리스트에 4번째 메뉴 추가
+menu = st.sidebar.radio(
+    "이동", 
+    ["📈 가치평가 시뮬레이터", "🚀 신고가 트래킹", "📰 레포트 요약", "📊 실적 스크리닝", "🛠️ 업데이트 이력"], 
+    index=default_menu_idx
+)
 
 # 💡 [핵심 추가] 시뮬레이터 화면이 아닐 때만 파라미터를 지워서 메뉴 꼬임을 방지합니다.
 if menu != "📈 가치평가 시뮬레이터":
@@ -51,6 +57,9 @@ elif menu == "🚀 신고가 트래킹":
 
 elif menu == "📰 레포트 요약":
     render_report_summary()  # 💡 ui_report.py의 함수 호출!
+
+elif menu == "📊 실적 스크리닝":
+    render_earnings_menu()
     
 elif menu == "🛠️ 업데이트 이력":
     st.markdown("<div class='main-title'>🛠️ 업데이트 이력</div>", unsafe_allow_html=True)
