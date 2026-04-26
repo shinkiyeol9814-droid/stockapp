@@ -41,23 +41,31 @@ def render_earnings_menu():
         is_provisional = row.get('잠정여부', '')
         
         rev = row.get('매출액', '-')
+        rev_gap = row.get('매출괴리율', '') # 👈 매출 괴리율 추가
         op = row.get('영업익', '-')
-        exp_op = row.get('예상영업익', '')
         gap = row.get('괴리율', '')
         surf_status = row.get('서프_상태', '')
-        
         raw_text = row.get('원문', '').replace('\n', '<br>')
         
         # 상태에 따른 색상 분기
         if "서프라이즈" in surf_status or "상회" in surf_status: 
-            status_color = "#FF0000" # 빨간색
+            status_color = "#FF0000" 
         elif "쇼크" in surf_status or "하회" in surf_status: 
-            status_color = "#1E90FF" # 파란색
+            status_color = "#1E90FF" 
         else: 
-            status_color = "#555555" # 회색 (부합/없음)
+            status_color = "#555555" 
 
-        # 괴리율 표기 텍스트
+        # 💡 [핵심] 영업이익이 마이너스(-)로 시작하면 차분한 파란색(#5A9BD4) 적용
+        if op.startswith('-'):
+            op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
+        else:
+            op_display = f"<b>{op}억</b>"
+
+        # 💡 영업익 및 매출액 괴리율 표기 텍스트 조립
         gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
+        
+        # 매출은 튀지 않게 회색빛으로 퍼센트 추가
+        rev_gap_text = f"<span style='font-size: 13px; color: #888;'>({rev_gap}%)</span>" if rev_gap else ""
         
         card_html = (
             f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
@@ -72,9 +80,9 @@ def render_earnings_menu():
             f"</div>"
             f"<div style='font-size: 15px; color: #333; margin-top: 8px;'>"
             f"  <span style='color: {status_color}; font-weight: 900; margin-right: 12px;'>{surf_status}</span>"
-            f"  <span>💰 영업익: <b>{op}억</b> {gap_text}</span>"
+            f"  <span>💰 영업익: {op_display} {gap_text}</span>" # 👈 마이너스 컬러가 반영된 변수 적용
             f"  <span style='color: #ccc;'> &nbsp;|&nbsp; </span>"
-            f"  <span>📈 매출: <b>{rev}억</b></span>"
+            f"  <span>📈 매출: <b>{rev}억</b> {rev_gap_text}</span>" # 👈 매출 % 추가
             f"</div>"
             f"</summary>"
             f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.5;'>"
