@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 import os
-import re # 💡 링크 변환을 위해 정규식 라이브러리 추가
+import re
 from streamlit_autorefresh import st_autorefresh
 
 DATA_FILE = "data/earnings/earnings_data.json"
@@ -27,22 +27,42 @@ def render_earnings_menu():
         st.warning("분석된 실적 데이터가 없습니다.")
         return
 
+    # 최신순 정렬
     results = sorted(results, key=lambda x: x['발표시간'], reverse=True)
     
-    st.caption(f"📊 총 **{len(results)}**개의 1분기 실적 공시가 스크리닝 되었습니다.")
+    # ==========================================
+    # 💡 [핵심] 분기 필터 UI 및 로직 추가
+    # ==========================================
+    # 1. 수집된 데이터에서 존재하는 모든 분기를 중복 없이 뽑아내어 정렬 (예: ['2026.1Q', '2025.4Q'])
+    available_quarters = sorted(list(set([row.get('해당분기', '미상') for row in results if row.get('해당분기', '미상') != "미상"])), reverse=True)
+    filter_options = ["전체"] + available_quarters
+
+    # 2. 화면 상단에 필터 셀렉트박스 배치
+    selected_quarter = st.selectbox("📌 분기 필터", filter_options, index=0)
+
+    # 3. 유저가 선택한 분기에 맞춰 데이터 필터링
+    if selected_quarter != "전체":
+        filtered_results = [row for row in results if row.get('해당분기') == selected_quarter]
+    else:
+        filtered_results = results
+    # ==========================================
+
+    # 필터링된 결과 개수 출력
+    st.caption(f"📊 선택된 분기 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
     st.divider()
     
-    for row in results:
+    # results 대신 filtered_results 로 반복문 실행
+    for row in filtered_results:
         corp_name = row.get('종목명', '')
         code = row.get('코드', '')
         pub_time = row.get('발표시간', '')
         is_provisional = row.get('잠정여부', '')
+        quarter = row.get('해당분기', '미상') 
         
         op = row.get('영업익', '-')
         gap = row.get('괴리율', '')
         surf_status = row.get('서프_상태', '')
         
-        # 💡 [핵심 1] 텍스트 줄바꿈 처리 및 실제 클릭 가능한 하이퍼링크(<a> 태그)로 변환
         raw_text = row.get('원문', '').replace('\n', '<br>')
         raw_text = re.sub(
             r'(https?://[^\s<]+)', 
@@ -50,23 +70,14 @@ def render_earnings_menu():
             raw_text
         )
         
-        # 상태에 따른 색상 분기
-        if "서프라이즈" in surf_status or "상회" in surf_status: 
-            status_color = "#FF0000" 
-        elif "쇼크" in surf_status or "하회" in surf_status: 
-            status_color = "#1E90FF" 
-        else: 
-            status_color = "#555555" 
+        if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
+        elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
+        else: status_color = "#555555" 
 
-        # 💡 [핵심 버그 수정] 순수 '-' 문자일 때는 파란색 처리 및 '억' 붙이기 방지!
-        if op == "-":
-            op_display = "<b>-</b>"
-        elif str(op).startswith('-'):
-            op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
-        else:
-            op_display = f"<b>{op}억</b>"
+        if op == "-": op_display = "<b>-</b>"
+        elif str(op).startswith('-'): op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
+        else: op_display = f"<b>{op}억</b>"
 
-        # 💡 괴리율 텍스트 조립 (+ 기호 명시적으로 추가)
         if gap:
             try:
                 gap_num = int(gap)
@@ -77,7 +88,6 @@ def render_earnings_menu():
         else:
             gap_text = ""
         
-        # 💡 [핵심 2] display: flex 를 사용하여 모든 요소를 한 줄(일자)로 나열! (매출 삭제됨)
         card_html = (
             f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
@@ -85,6 +95,7 @@ def render_earnings_menu():
             f"  <div style='display: flex; align-items: center; flex-wrap: wrap; gap: 10px;'>"
             f"    <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
             f"    <span style='font-size: 13px; color: #888;'>[{code}]</span>"
+            f"    <span style='font-size: 12px; padding: 2px 6px; border-radius: 4px; background-color: #FFF3E0; color: #E65100; font-weight: bold; border: 1px solid #FFE0B2;'>{quarter}</span>"
             f"    <span style='font-size: 12px; padding: 2px 6px; border-radius: 4px; background-color: #eee; color: #555;'>{is_provisional}</span>"
             f"    <span style='color: #ddd;'>|</span>"
             f"    <span style='color: {status_color}; font-weight: 900; font-size: 14px;'>{surf_status}</span>"
