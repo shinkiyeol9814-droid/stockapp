@@ -89,12 +89,15 @@ def parse_earnings_text(text):
         history_match = re.search(r'\*\*최근 실적 추이\*\*\s*(.+?)(?:공시링크|$)', text, re.DOTALL)
         if history_match:
             history_text = history_match.group(1)
-            hist_lines = re.findall(r'(\d{4}\.\d[Qq])\s+([-+]?[\d,]+)억\s*/\s*([-+]?[\d,]+)억', history_text)
             
-            if hist_lines:
-                # 표에서 긁어온 첫 번째 줄의 분기를 그대로 가져다 씁니다! (무조건 정확함)
-                data['해당분기'] = hist_lines[0][0].upper()
+            # 💡 [핵심] 숫자나 '억' 글자 유무에 상관없이, 
+            # 이 구역에서 가장 먼저 등장하는 '2025.4Q' 같은 패턴을 무조건 잡아냅니다!
+            q_match = re.search(r'(\d{4}\.\d[Qq])', history_text)
+            if q_match:
+                data['해당분기'] = q_match.group(1).upper()
                 
+            # YoY, QoQ 계산 로직은 기존 유지
+            hist_lines = re.findall(r'(\d{4}\.\d[Qq])\s+([-+]?[\d,]+)억\s*/\s*([-+]?[\d,]+)억', history_text)
             if len(hist_lines) >= 2:
                 data['QoQ'] = calc_growth(hist_lines[0][2], hist_lines[1][2])
             if len(hist_lines) >= 5:
