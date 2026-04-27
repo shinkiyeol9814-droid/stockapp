@@ -35,15 +35,24 @@ def render_earnings_menu():
         if row.get('해당분기') and "미상" not in row.get('해당분기')
     ])), reverse=True)
     
-    filter_options = ["전체"] + available_quarters
-    selected_quarter = st.selectbox("📌 분기 필터", filter_options, index=0)
+# 💡 [핵심] '미상' 제외하고 유효한 분기만 내림차순 정렬 (최신이 0번 인덱스)
+    available_quarters = sorted(list(set([
+        row.get('해당분기') for row in results 
+        if row.get('해당분기') and "미상" not in row.get('해당분기')
+    ])), reverse=True)
+    
+    if not available_quarters:
+        st.warning("표시할 분기 데이터가 없습니다.")
+        return
+    
+    # 💡 [변경] "전체" 옵션 삭제! 리스트의 첫 번째(최신 분기)가 무조건 기본 선택됩니다.
+    selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
 
-    if selected_quarter != "전체":
-        filtered_results = [row for row in results if row.get('해당분기') == selected_quarter]
-    else:
-        filtered_results = results
+    # 💡 [변경] "전체"가 없으므로 무조건 선택된 분기 데이터만 필터링합니다.
+    filtered_results = [row for row in results if row.get('해당분기') == selected_quarter]
 
-    st.caption(f"📊 선택된 분기 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
+    # 캡션 문구도 현재 선택된 분기가 보이도록 수정
+    st.caption(f"📊 **{selected_quarter}** 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
     st.divider()
     
     for row in filtered_results:
