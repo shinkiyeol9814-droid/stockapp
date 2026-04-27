@@ -35,7 +35,7 @@ def render_earnings_menu():
         if row.get('해당분기') and "미상" not in row.get('해당분기')
     ])), reverse=True)
     
-# 💡 [핵심] '미상' 제외하고 유효한 분기만 내림차순 정렬 (최신이 0번 인덱스)
+    # (위쪽은 기존 코드 동일: 정렬 및 available_quarters 세팅 부분까지)    
     available_quarters = sorted(list(set([
         row.get('해당분기') for row in results 
         if row.get('해당분기') and "미상" not in row.get('해당분기')
@@ -45,16 +45,35 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 💡 [변경] "전체" 옵션 삭제! 리스트의 첫 번째(최신 분기)가 무조건 기본 선택됩니다.
-    selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
+    # ==========================================
+    # 💡 [UX 업그레이드] 분기 드롭다운과 검색창을 나란히 배치
+    col_f1, col_f2 = st.columns([1, 1])
+    with col_f1:
+        selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
+    with col_f2:
+        search_keyword = st.text_input("🔍 종목명/코드 검색", placeholder="예: 효성 또는 298020")
 
-    # 💡 [변경] "전체"가 없으므로 무조건 선택된 분기 데이터만 필터링합니다.
-    filtered_results = [row for row in results if row.get('해당분기') == selected_quarter]
+    # 💡 분기 + 검색어 다중 필터링 적용
+    filtered_results = []
+    for row in results:
+        # 1. 분기 체크
+        if row.get('해당분기') != selected_quarter:
+            continue
+            
+        # 2. 검색어 체크 (띄어쓰기 무시하고 대소문자 통일해서 꼼꼼하게 검색)
+        if search_keyword:
+            kw = search_keyword.replace(" ", "").lower()
+            name = row.get('종목명', '').replace(" ", "").lower()
+            code = row.get('코드', '').lower()
+            if kw not in name and kw not in code:
+                continue
+                
+        filtered_results.append(row)
+    # ==========================================
 
-    # 캡션 문구도 현재 선택된 분기가 보이도록 수정
     st.caption(f"📊 **{selected_quarter}** 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
     st.divider()
-    
+        
     for row in filtered_results:
         corp_name = row.get('종목명', '')
         code = row.get('코드', '')
