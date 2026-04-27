@@ -10,9 +10,10 @@ API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 TARGET_CHANNEL = "https://t.me/darthacking" 
-DATA_FILE = "data/earnings/earnings_data.json"
 
-# 💡 [신규] 증감률 계산 헬퍼 함수
+DATA_FILE = "data/earnings/earnings_data.json"
+SYNC_FILE = "data/earnings/last_sync.txt" # 💡 마지막 수집 시간을 기억할 메모장!
+
 def calc_growth(cur_val, prev_val):
     try:
         cur = int(cur_val.replace(',', ''))
@@ -84,16 +85,13 @@ def parse_earnings_text(text):
             data['영업익'] = "-"
             data['서프_상태'] = "N/A"
 
-        # 💡 [신규] 최근 실적 추이 블록을 읽어서 YoY / QoQ 추출
         data['YoY'] = ""
         data['QoQ'] = ""
         history_match = re.search(r'\*\*최근 실적 추이\*\*\s*(.+?)(?:공시링크|$)', text, re.DOTALL)
         if history_match:
             history_text = history_match.group(1)
-            # 정규식: (분기) (매출)억/ (영업익)억 추출
             hist_lines = re.findall(r'(\d{4}\.\d[Qq])\s+([-+]?[\d,]+)억\s*/\s*([-+]?[\d,]+)억', history_text)
             
-            # hist_lines[0]은 현재분기, [1]은 전분기, [4]는 전년동기
             if len(hist_lines) >= 2:
                 data['QoQ'] = calc_growth(hist_lines[0][2], hist_lines[1][2])
             if len(hist_lines) >= 5:
@@ -114,36 +112,67 @@ async def main():
             old_list = json.load(f)
             earnings_dict = {item['코드']: item for item in old_list}
 
-    client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
+    client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH, connection_retries=5, timeout=20)
     await client.start()
     
     now_kst = datetime.utcnow() + timedelta(hours=9)
-    target_time = datetime(now_kst.year, 1, 1) 
+    target_time = datetime(now_kst.year, 1, 1) # 왕초보 기본값: 올해 1월 1일
     
+    # 💡 [핵심 추가] 이전 수집 기록이 있다면 타겟 타임을 덮어씌웁니다.
+    if os.path.exists(SYNC_FILE):
+        try:
+            with open(SYNC_FILE, "r") as f:
+                saved_time_str = f.read().strip()
+                target_time = datetime.fromisoformat(saved_time_str)
+                print(f"🕒 기억 불러오기 성공: {target_time.strftime('%Y-%m-%d %H:%M:%S')} 이후 신규 데이터만 가져옵니다.")
+        except Exception as e:
+            print(f"🕒 기억 불러오기 실패, 1월 1일부터 전체 탐색합니다. ({e})")
+
     new_count = 0
-    current_run_seen = set() 
+    current_run_seen = set()
+    max_seen_time = target_time # 이번 턴에 가장 최신이었던 메시지 시간 저장용
     
-    async for message in client.iter_messages(TARGET_CHANNEL, limit=None):
-        msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
-        if msg_time_kst < target_time: break 
+    try:
+        async for message in client.iter_messages(TARGET_CHANNEL, limit=None):
+            msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
+            
+            # 제일 최신 메시지의 시간을 기록해 둡니다.
+            if msg_time_kst > max_seen_time:
+                max_seen_time = msg_time_kst
+            
+            # 💡 [조기 종료] 저장된 마지막 시간보다 오래된 메시지를 만나면 파싱 즉시 중단!
+            if msg_time_kst <= target_time:
+                print("🛑 기수집 구간 도달! 안전하게 탐색을 종료합니다.")
+                break 
+            
+            if message.text:
+                parsed_data = parse_earnings_text(message.text)
+                if parsed_data:
+                    code = parsed_data['코드']
+                    if code not in current_run_seen:
+                        current_run_seen.add(code)
+                        earnings_dict[code] = parsed_data
+                        new_count += 1
+                        print(f"✅ 신규/갱신 수집: {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d %H:%M')}")
+                        
+    except Exception as e:
+        print(f"\n⚠️ 텔레그램 통신 중단 발생 (지금까지의 데이터를 안전하게 저장합니다): {e}\n")
         
-        if message.text:
-            parsed_data = parse_earnings_text(message.text)
-            if parsed_data:
-                code = parsed_data['코드']
-                if code not in current_run_seen:
-                    current_run_seen.add(code)
-                    earnings_dict[code] = parsed_data
-                    new_count += 1
-                    print(f"✅ 수집/갱신: {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d')}")
-                
-    await client.disconnect()
-    
-    final_list = list(earnings_dict.values())
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(final_list, f, indent=4, ensure_ascii=False)
+    finally:
+        if client.is_connected():
+            await client.disconnect()
+            
+        # 💡 [핵심 추가] 이번에 새로 본 메시지가 있다면 시간 기억 업데이트!
+        if max_seen_time > target_time:
+            with open(SYNC_FILE, "w") as f:
+                f.write(max_seen_time.isoformat())
+            print(f"💾 다음 배치를 위해 수집 시점({max_seen_time.strftime('%Y-%m-%d %H:%M:%S')})을 기억했습니다.")
         
-    print(f"=== 수집 종료! (최신 {new_count}건 갱신, 총 {len(final_list)}건 누적) ===")
+        final_list = list(earnings_dict.values())
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(final_list, f, indent=4, ensure_ascii=False)
+            
+        print(f"=== 수집 종료! (최신 {new_count}건 갱신, 총 {len(final_list)}건 누적) ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
