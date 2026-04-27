@@ -1,10 +1,14 @@
 name: Earnings Screening Auto Batch
 
 on:
-  # 💡 cron-job.org에서 30분마다 쏠 암구호
   repository_dispatch:
     types: [run_earnings_batch] 
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
+
+# 💡 [핵심 추가] 두 개의 배치가 겹치지 않게 철벽 방어!
+concurrency:
+  group: "earnings-batch"
+  cancel-in-progress: false # 돌고 있는 게 있으면 새 작업은 대기(skip)합니다.
 
 jobs:
   run-batch:
