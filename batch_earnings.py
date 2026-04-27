@@ -48,11 +48,7 @@ def parse_earnings_text(text):
         data['보고서명'] = report_match.group(1).strip() if report_match else ""
         data['잠정여부'] = "잠정공시" if "잠정" in data['보고서명'] else "확정공시"
         
-        quarter_match = re.search(r'\*\*최근 실적 추이\*\*\s*(\d{4}\.\d[Qq])', text)
-        if quarter_match:
-            data['해당분기'] = quarter_match.group(1).upper() 
-        else:
-            data['해당분기'] = "분기미상"
+        # 💡 [삭제됨] 너무 깐깐했던 기존 quarter_match 정규식 삭제!
         
         rev_match = re.search(r'매출액\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^\/]*\/\s*([+-]?\s*\d+)%\))?', text)
         if rev_match:
@@ -85,13 +81,20 @@ def parse_earnings_text(text):
             data['영업익'] = "-"
             data['서프_상태'] = "N/A"
 
+        # 💡 [통합됨] 최근 실적 추이 블록에서 분기 + YoY + QoQ 한방에 추출
+        data['해당분기'] = "분기미상" # 기본값
         data['YoY'] = ""
         data['QoQ'] = ""
+        
         history_match = re.search(r'\*\*최근 실적 추이\*\*\s*(.+?)(?:공시링크|$)', text, re.DOTALL)
         if history_match:
             history_text = history_match.group(1)
             hist_lines = re.findall(r'(\d{4}\.\d[Qq])\s+([-+]?[\d,]+)억\s*/\s*([-+]?[\d,]+)억', history_text)
             
+            if hist_lines:
+                # 표에서 긁어온 첫 번째 줄의 분기를 그대로 가져다 씁니다! (무조건 정확함)
+                data['해당분기'] = hist_lines[0][0].upper()
+                
             if len(hist_lines) >= 2:
                 data['QoQ'] = calc_growth(hist_lines[0][2], hist_lines[1][2])
             if len(hist_lines) >= 5:
