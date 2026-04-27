@@ -6,13 +6,13 @@ from datetime import datetime, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
-# 환경 변수 설정 (기존과 동일)
+# 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
 
-# 💡 AWAKE 채널 ID (문자열 링크 또는 숫자 ID 입력)
-TARGET_CHANNEL = "https://t.me/darthacking" # 또는 실제 방 링크/ID로 변경하세요
+# 💡 채널 주소 확인 필요 (AWAKE 채널 등)
+TARGET_CHANNEL = "https://t.me/darthacking" 
 
 DATA_FILE = "data/earnings/earnings_data.json"
 
@@ -22,9 +22,11 @@ def parse_earnings_text(text):
         
     data = {}
     try:
+        # 1. 발표 시간 추출
         time_match = re.search(r'(\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})', text)
         data['발표시간'] = time_match.group(1) if time_match else datetime.now().strftime('%Y.%m.%d %H:%M:%S')
         
+        # 2. 기업명 & 종목코드
         corp_match = re.search(r'기업명:\s*([^\(]+).*?([A-Z0-9]{6})', text)
         if corp_match:
             data['종목명'] = corp_match.group(1).strip()
@@ -32,11 +34,19 @@ def parse_earnings_text(text):
         else:
             return None
             
+        # 3. 보고서명 & 잠정여부
         report_match = re.search(r'보고서명:\s*(.+)', text)
         data['보고서명'] = report_match.group(1).strip() if report_match else ""
         data['잠정여부'] = "잠정공시" if "잠정" in data['보고서명'] else "확정공시"
         
-        # 💡 [수정] 매출액 및 예상치/괴리율 추출 (마이너스 기호 완벽 호환)
+        # 💡 [핵심 추가] 분기 정보 추출 (최근 실적 추이 바로 밑의 분기 텍스트)
+        quarter_match = re.search(r'\*\*최근 실적 추이\*\*\s*(\d{4}\.\d[Qq])', text)
+        if quarter_match:
+            data['해당분기'] = quarter_match.group(1).upper() # 예: 2026.1Q
+        else:
+            data['해당분기'] = "분기미상"
+        
+        # 4. 매출액 및 괴리율 (마이너스 대응)
         rev_match = re.search(r'매출액\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^\/]*\/\s*([+-]?\s*\d+)%\))?', text)
         if rev_match:
             data['매출액'] = rev_match.group(1)
@@ -45,14 +55,12 @@ def parse_earnings_text(text):
             data['매출액'] = "-"
             data['매출괴리율'] = ""
         
-        # 💡 [수정] 영업이익 마이너스(-) 추출 대응
+        # 5. 영업이익 및 괴리율 (마이너스 대응)
         op_match = re.search(r'영업익\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^\/]*\/\s*([+-]?\s*\d+)%\))?', text)
         
         if op_match:
             data['영업익'] = op_match.group(1)
             data['예상영업익'] = op_match.group(2) if op_match.group(2) else ""
-            
-            # 공백이 섞여 있을 수 있는 괴리율 안전하게 처리
             raw_gap = op_match.group(3)
             data['괴리율'] = raw_gap.replace(' ', '') if raw_gap else ""
             
@@ -92,10 +100,11 @@ async def main():
     await client.start()
     
     now_kst = datetime.utcnow() + timedelta(hours=9)
+    # 💡 1월 1일부터 수집 (설정 잘 되어 있습니다)
     target_time = datetime(now_kst.year, 1, 1) 
     
     new_count = 0
-    current_run_seen = set() # 이번 턴에 수집한 종목 기억용
+    current_run_seen = set() 
     
     async for message in client.iter_messages(TARGET_CHANNEL, limit=None):
         msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
@@ -106,13 +115,12 @@ async def main():
             if parsed_data:
                 code = parsed_data['코드']
                 
-                # 💡 [핵심] 텔레그램은 최신순으로 읽어옵니다. 
-                # 이번 수집에서 처음 본 종목이라면, 무조건 기존 JSON 데이터를 덮어씁니다! (잠정->확정 갱신)
+                # 최신 메시지 우선 갱신 로직
                 if code not in current_run_seen:
                     current_run_seen.add(code)
                     earnings_dict[code] = parsed_data
                     new_count += 1
-                    print(f"✅ 수집/갱신: {parsed_data['종목명']} ({parsed_data['서프_상태']}) - {msg_time_kst.strftime('%m/%d')}")
+                    print(f"✅ 수집/갱신: {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d')}")
                 
     await client.disconnect()
     
@@ -121,5 +129,6 @@ async def main():
         json.dump(final_list, f, indent=4, ensure_ascii=False)
         
     print(f"=== 수집 종료! (최신 {new_count}건 갱신, 총 {len(final_list)}건 누적) ===")
+
 if __name__ == "__main__":
     asyncio.run(main())
