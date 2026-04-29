@@ -104,10 +104,12 @@ def render_earnings_menu():
         # 관심 종목 여부 확인
         is_fav = code in st.session_state.favorites
         
-        # 💡 [신규] 별표 클릭 처리 (컬럼을 나눠서 버튼 배치)
-        c1, c2 = st.columns([0.1, 9.9])
+        # 💡 [수정] 버튼 공간을 0.1 -> 0.7 정도로 넉넉하게 늘려서 짤림을 방지합니다.
+        c1, c2 = st.columns([0.7, 9.3]) 
+        
         with c1:
-            # 버튼 클릭 시 세션 및 파일 업데이트
+            # 💡 버튼이 위쪽으로 너무 붙지 않게 투명한 빈 줄을 하나 넣어 수직 중앙 정렬 느낌을 줍니다.
+            st.write("") 
             if st.button(f"{'⭐' if is_fav else '☆'}", key=f"fav_btn_{code}"):
                 if is_fav:
                     st.session_state.favorites.remove(code)
