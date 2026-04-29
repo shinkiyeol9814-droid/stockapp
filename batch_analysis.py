@@ -248,8 +248,8 @@ async def main():
     print(f"✅ 크롤링 완료. AI 분석 대상: {len(analysis_queue)}건")
 
     # 💡 5회 패자부활전 로직 설정
-    chunk_size = 15 
-    MAX_PASSES = 5
+    chunk_size = 15
+    MAX_PASSES = 8
     current_queue = analysis_queue
 
     for pass_num in range(1, MAX_PASSES + 1):
