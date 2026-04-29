@@ -38,8 +38,8 @@ if query_stock_code:
 # ==========================================
 menu = option_menu(
     menu_title=None, 
-    options=["가치평가", "신고가", "레포트", "실적", "업데이트"],
-    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "clock-history"], 
+    options=["가치평가", "신고가", "레포트", "실적"],
+    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line"], 
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
