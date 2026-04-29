@@ -93,11 +93,10 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # ==================================================
-        # 💡 [모바일 최적화] 컬럼 스태킹 문제 해결!
-        # 거대한 버튼을 버리고, 작고 직관적인 순정 체크박스로 변경합니다.
-        # ==================================================
-        new_fav = st.checkbox(f"⭐ 관심종목 ({corp_name})", value=is_fav, key=f"fav_btn_{code}")
+        # 💡 [수정] 텍스트 싹 날리고 아주 깔끔하게 체크박스와 별표만 남깁니다.
+        # (별표마저 없애고 싶으시면 "⭐" 대신 "" 빈 문자열을 넣으시면 됩니다!)
+        new_fav = st.checkbox("⭐", value=is_fav, key=f"fav_btn_{code}")
+        
         if new_fav != is_fav:
             if new_fav:
                 st.session_state.favorites.add(code)
