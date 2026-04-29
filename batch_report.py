@@ -237,16 +237,23 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
     # [2] 중복 판별용 딕셔너리 구성 (기존 데이터 세팅)
     unique_results = {}
     for item in existing_results:
-        clean_name = item.get('종목명', '').split('(')[0].strip()
-        broker = item.get('증권사', '정보없음').strip()
-        title = item.get('레포트 제목', '제목없음').strip()
+        # 💡 [핵심 수정] 기존에 저장된 데이터에도 철벽 방어막을 씌워줍니다!
+        raw_name = item.get('종목명') or ''
+        clean_name = str(raw_name).split('(')[0].strip()
+        
+        raw_broker = item.get('증권사') or '정보없음'
+        broker = str(raw_broker).strip()
+        
+        raw_title = item.get('레포트 제목') or '제목없음'
+        title = str(raw_title).strip()
+        
         dup_key = f"{clean_name}_{broker}_{title}"
         unique_results[dup_key] = item
 
     # [3] 신규 데이터 매칭 및 3중 키 병합
     new_matched_count = 0
     for item in analyzed_data:
-        # 💡 [철벽 방어] AI가 null(None)을 뱉어도 안전하게 문자열로 처리
+        # 💡 AI가 null(None)을 뱉어도 안전하게 문자열로 처리
         raw_name = item.get('종목명') or ''
         clean_name = str(raw_name).split('(')[0].strip() 
         
@@ -349,7 +356,6 @@ async def main():
     client_tg = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
     await client_tg.start()
     
-    # 💡 수정된 함수 호출부: fetch_start와 fetch_end를 직접 던집니다!
     docs_to_process = await get_all_reports_from_telegram(client_tg, fetch_start, fetch_end)
     await client_tg.disconnect()
     
