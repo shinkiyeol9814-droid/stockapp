@@ -5,10 +5,8 @@ import re
 from streamlit_autorefresh import st_autorefresh
 
 DATA_FILE = "data/earnings/earnings_data.json"
-# 💡 [신규] 관심 종목만 따로 저장할 파일 경로
 FAVORITES_FILE = "data/earnings/favorites.json"
 
-# 관심 종목 불러오기/저장하기 헬퍼 함수
 def load_favorites():
     if os.path.exists(FAVORITES_FILE):
         with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
@@ -23,7 +21,6 @@ def save_favorites(favorites_set):
 def render_earnings_menu():
     st_autorefresh(interval=3 * 60 * 1000, key="earnings_auto_refresh")
     
-    # 관심 종목 세션 상태 관리
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
@@ -47,7 +44,6 @@ def render_earnings_menu():
 
     results = sorted(results, key=lambda x: x['발표시간'], reverse=True)
     
-    # 필터 섹션
     available_quarters = sorted(list(set([
         row.get('해당분기') for row in results 
         if row.get('해당분기') and "미상" not in row.get('해당분기')
@@ -57,30 +53,24 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 💡 [UX 개선] 필터 레이아웃 확장
     f_col1, f_col2, f_col3 = st.columns([1, 1, 1])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
         search_keyword = st.text_input("🔍 종목 검색", placeholder="종목명/코드")
     with f_col3:
-        # 💡 [신규] 관심 종목만 보기 토글
         show_only_favs = st.toggle("⭐ 관심종목만", value=False)
 
-    # 다중 필터링 로직
     filtered_results = []
     for row in results:
         code = row.get('코드', '')
         
-        # 1. 분기 필터
         if row.get('해당분기') != selected_quarter:
             continue
-        # 2. 검색어 필터
         if search_keyword:
             kw = search_keyword.replace(" ", "").lower()
             if kw not in row.get('종목명', '').lower() and kw not in code.lower():
                 continue
-        # 3. 관심종목 필터
         if show_only_favs and code not in st.session_state.favorites:
             continue
             
@@ -101,67 +91,15 @@ def render_earnings_menu():
         yoy = row.get('YoY', '')
         qoq = row.get('QoQ', '')
         
-        # 관심 종목 여부 확인
         is_fav = code in st.session_state.favorites
         
-        # 💡 [핵심] 자동으로 크기를 조절하는 CSS 레이아웃입니다.
-        # 전체 행을 감싸는 컨테이너
-        container_style = "display: flex; align-items: center; gap: 12px; width: 100%;"
-
-        # 별표 버튼을 담는 div (고정된 너비를 가져 짤림 방지)
-        star_style = "flex: 0 0 auto; width: 32px; text-align: center;"
-
-        # 주가 정보를 담는 div (나머지 공간을 꽉 채움)
-        details_style = "flex: 1 1 auto; width: calc(100% - 44px);" 
-
-        # (중략: 색상 및 텍스트 처리 로직은 기존과 동일합니다)
-        raw_text = row.get('원문', '').replace('\n', '<br>')
-        # ... (이하 status_color, op_display, gap_text, growth_html, quarter_badge 만드는 로직은 동일) ...
-
-        # 💡 [핵심] HTML 구조로 렌더링합니다.
-        row_html = (
-            f'<div style="{container_style}">'
-            f'  <div style="{star_style}">'
-            f'    <st-button style="all: unset; background: none; border: none; padding: 0; font-size: 20px; cursor: pointer;">'
-            f'       {"⭐" if is_fav else "☆"}'
-            f'    </st-button>'
-            f'  </div>'
-            f'  <div style="{details_style}">'
-            f"    <details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 10px; margin-bottom: 10px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            f"<summary style='cursor: pointer; list-style: none;'>"
-            f"  <div style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"    <div style='display: flex; align-items: center; gap: 8px;'>"
-            f"      <span style='font-size: 15px; font-weight: bold;'>{corp_name}</span>"
-            f"      <span style='font-size: 12px; color: #888;'>{code}</span>"
-            f"      {quarter_badge}"
-            f"      <span style='color: {status_color}; font-weight: bold; font-size: 13px;'>{surf_status}</span>"
-            f"      <span style='font-size: 13px;'>영업익: {op_display} {gap_text} {growth_html}</span>"
-            f"    </div>"
-            f"    <div style='font-size: 11px; color: #aaa;'>{pub_time}</div>"
-            f"  </div>"
-            f"</summary>"
-            f"<div style='margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; font-size: 12px; color: #444;'>{raw_text}</div>"
-            f"</details>"
-            f'  </div>'
-            f'</div>'
-        )
-
-        # 💡 [중요] 단, 이 방식으로는 Streamlit의 st.button 인터랙션을 HTML 내부에 직접 구현할 수 없습니다. 
-        # HTML 렌더링은 최종 뷰이고, 클릭 이벤트는 Streamlit의 백엔드로 전달되어야 하기 때문입니다.
-        # 따라서 st.button을 사용하려면 columns를 사용해야 하며, columns의 비율을 더 정교하게 조절하는 것이 현실적인 타협안입니다.
-        
-        # 기열님의 frustration을 이해합니다. 수동 비율 조절은 고통스럽습니다.
-        # Streamlit 내에서 "자동 조절"을 구현하는 것은 플랫폼의 한계로 인해 불가능합니다.
-        # columns 비율을 조금씩 수정하며 최적의 값을 찾는 것이 유일한 해결책입니다.
-        
-        # 이전 제안에서 space가 너무 많았으므로,
-        # 다시 더 작은 비율로 돌아가 보되, 0.1보다는 크게 설정합니다.
-        
-        c1, c2 = st.columns([0.3, 9.7]) # 💡 0.1 -> 0.3으로 변경하여 약간의 여백을 확보합니다.
+        # 💡 [핵심 수정] 15% 대 85%의 황금비율 적용
+        c1, c2 = st.columns([1.5, 8.5]) 
         
         with c1:
-            st.write("") # 💡 버튼이 위쪽으로 너무 붙지 않게 투명한 빈 줄을 하나 넣어 수직 중앙 정렬 느낌을 줍니다.
-            if st.button(f"{'⭐' if is_fav else '☆'}", key=f"fav_btn_{code}"):
+            st.write("") 
+            # 💡 [핵심 수정] use_container_width=True 로 버튼의 무단 이탈(짤림)을 원천 차단
+            if st.button(f"{'⭐' if is_fav else '☆'}", key=f"fav_btn_{code}", use_container_width=True):
                 if is_fav:
                     st.session_state.favorites.remove(code)
                 else:
@@ -171,7 +109,6 @@ def render_earnings_menu():
 
         with c2:
             raw_text = row.get('원문', '').replace('\n', '<br>')
-            # (중략: 색상 및 텍스트 처리 로직은 기존과 동일)
             if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
             elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
             else: status_color = "#555555" 
@@ -187,7 +124,6 @@ def render_earnings_menu():
             
             quarter_badge = f"<span style='font-size: 11px; padding: 2px 5px; background-color: #FFF3E0; color: #E65100; border-radius: 4px;'>{quarter}</span>" if quarter else ""
 
-            # 카드 HTML 렌더링
             card_html = (
                 f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 10px; margin-bottom: 10px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
                 f"<summary style='cursor: pointer; list-style: none;'>"
