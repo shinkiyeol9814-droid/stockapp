@@ -50,12 +50,13 @@ menu = option_menu(
             "border": "1px solid #eee",
             "margin-bottom": "20px"
         },
-        "icon": {"color": "#FF4B4B", "font-size": "15px"},
+        "icon": {"color": "#FF4B4B", "font-size": "14px"}, # 아이콘 살짝 축소
         "nav-link": {
-            "font-size": "13px", 
+            "font-size": "12px",  # 💡 글자 크기 축소
             "text-align": "center", 
             "margin": "0px", 
-            "padding": "10px 5px", 
+            "padding": "10px 2px", # 💡 좌우 여백 축소
+            "white-space": "nowrap", # 💡 [핵심] 글자 두 줄 쪼개짐 절대 방지!
             "--hover-color": "#f0f2f6"
         },
         "nav-link-selected": {
