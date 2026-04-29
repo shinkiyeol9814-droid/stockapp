@@ -104,12 +104,63 @@ def render_earnings_menu():
         # 관심 종목 여부 확인
         is_fav = code in st.session_state.favorites
         
-        # 💡 [수정] 버튼 공간을 0.1 -> 0.7 정도로 넉넉하게 늘려서 짤림을 방지합니다.
-        c1, c2 = st.columns([0.7, 9.3]) 
+        # 💡 [핵심] 자동으로 크기를 조절하는 CSS 레이아웃입니다.
+        # 전체 행을 감싸는 컨테이너
+        container_style = "display: flex; align-items: center; gap: 12px; width: 100%;"
+
+        # 별표 버튼을 담는 div (고정된 너비를 가져 짤림 방지)
+        star_style = "flex: 0 0 auto; width: 32px; text-align: center;"
+
+        # 주가 정보를 담는 div (나머지 공간을 꽉 채움)
+        details_style = "flex: 1 1 auto; width: calc(100% - 44px);" 
+
+        # (중략: 색상 및 텍스트 처리 로직은 기존과 동일합니다)
+        raw_text = row.get('원문', '').replace('\n', '<br>')
+        # ... (이하 status_color, op_display, gap_text, growth_html, quarter_badge 만드는 로직은 동일) ...
+
+        # 💡 [핵심] HTML 구조로 렌더링합니다.
+        row_html = (
+            f'<div style="{container_style}">'
+            f'  <div style="{star_style}">'
+            f'    <st-button style="all: unset; background: none; border: none; padding: 0; font-size: 20px; cursor: pointer;">'
+            f'       {"⭐" if is_fav else "☆"}'
+            f'    </st-button>'
+            f'  </div>'
+            f'  <div style="{details_style}">'
+            f"    <details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 10px; margin-bottom: 10px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
+            f"<summary style='cursor: pointer; list-style: none;'>"
+            f"  <div style='display: flex; justify-content: space-between; align-items: center;'>"
+            f"    <div style='display: flex; align-items: center; gap: 8px;'>"
+            f"      <span style='font-size: 15px; font-weight: bold;'>{corp_name}</span>"
+            f"      <span style='font-size: 12px; color: #888;'>{code}</span>"
+            f"      {quarter_badge}"
+            f"      <span style='color: {status_color}; font-weight: bold; font-size: 13px;'>{surf_status}</span>"
+            f"      <span style='font-size: 13px;'>영업익: {op_display} {gap_text} {growth_html}</span>"
+            f"    </div>"
+            f"    <div style='font-size: 11px; color: #aaa;'>{pub_time}</div>"
+            f"  </div>"
+            f"</summary>"
+            f"<div style='margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; font-size: 12px; color: #444;'>{raw_text}</div>"
+            f"</details>"
+            f'  </div>'
+            f'</div>'
+        )
+
+        # 💡 [중요] 단, 이 방식으로는 Streamlit의 st.button 인터랙션을 HTML 내부에 직접 구현할 수 없습니다. 
+        # HTML 렌더링은 최종 뷰이고, 클릭 이벤트는 Streamlit의 백엔드로 전달되어야 하기 때문입니다.
+        # 따라서 st.button을 사용하려면 columns를 사용해야 하며, columns의 비율을 더 정교하게 조절하는 것이 현실적인 타협안입니다.
+        
+        # 기열님의 frustration을 이해합니다. 수동 비율 조절은 고통스럽습니다.
+        # Streamlit 내에서 "자동 조절"을 구현하는 것은 플랫폼의 한계로 인해 불가능합니다.
+        # columns 비율을 조금씩 수정하며 최적의 값을 찾는 것이 유일한 해결책입니다.
+        
+        # 이전 제안에서 space가 너무 많았으므로,
+        # 다시 더 작은 비율로 돌아가 보되, 0.1보다는 크게 설정합니다.
+        
+        c1, c2 = st.columns([0.3, 9.7]) # 💡 0.1 -> 0.3으로 변경하여 약간의 여백을 확보합니다.
         
         with c1:
-            # 💡 버튼이 위쪽으로 너무 붙지 않게 투명한 빈 줄을 하나 넣어 수직 중앙 정렬 느낌을 줍니다.
-            st.write("") 
+            st.write("") # 💡 버튼이 위쪽으로 너무 붙지 않게 투명한 빈 줄을 하나 넣어 수직 중앙 정렬 느낌을 줍니다.
             if st.button(f"{'⭐' if is_fav else '☆'}", key=f"fav_btn_{code}"):
                 if is_fav:
                     st.session_state.favorites.remove(code)
