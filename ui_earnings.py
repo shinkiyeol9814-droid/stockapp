@@ -122,21 +122,33 @@ def render_earnings_menu():
         
         quarter_badge = f"<span style='font-size: 11px; padding: 2px 5px; background-color: #FFF3E0; color: #E65100; border-radius: 4px;'>{quarter}</span>" if quarter else ""
 
+        # 💡 [핵심] 2줄 레이아웃으로 분리 (Flex Column 적용)
         card_html = (
-            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 10px; margin-bottom: 20px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            f"<summary style='cursor: pointer; list-style: none;'>"
-            f"  <div style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"    <div style='display: flex; align-items: center; gap: 8px; flex-wrap: wrap;'>" # 💡 모바일에서 내용이 길면 자연스럽게 줄바꿈되도록 flex-wrap 추가
-            f"      <span style='font-size: 15px; font-weight: bold;'>{corp_name}</span>"
-            f"      <span style='font-size: 12px; color: #888;'>{code}</span>"
-            f"      {quarter_badge}"
-            f"      <span style='color: {status_color}; font-weight: bold; font-size: 13px;'>{surf_status}</span>"
-            f"      <span style='font-size: 13px;'>영업익: {op_display} {gap_text} {growth_html}</span>"
+            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
+            f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
+            f"  <div style='display: flex; flex-direction: column; gap: 8px; width: 100%;'>" # 전체를 위아래 2줄로 쪼개는 컨테이너
+            
+            # --- 윗줄 (종목명, 배지, 서프상태 + 오른쪽 시간) ---
+            f"    <div style='display: flex; justify-content: space-between; align-items: flex-start; width: 100%;'>"
+            f"      <div style='display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>"
+            f"        <span style='font-size: 15px; font-weight: bold; color: #222;'>{corp_name}</span>"
+            f"        <span style='font-size: 12px; color: #888;'>{code}</span>"
+            f"        {quarter_badge}"
+            f"        <span style='color: {status_color}; font-weight: 900; font-size: 13px;'>{surf_status}</span>"
+            f"      </div>"
+            f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px; margin-top: 2px;'>{pub_time}</div>" # 💡 시간 우측 고정 (짤림 방지)
             f"    </div>"
-            f"    <div style='font-size: 11px; color: #aaa; min-width: 100px; text-align: right;'>{pub_time}</div>"
+            
+            # --- 아랫줄 (영업익 + 증감률 데이터) ---
+            f"    <div style='font-size: 14px; color: #333; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>"
+            f"      영업익: {op_display} {gap_text} {growth_html}"
+            f"    </div>"
+            
             f"  </div>"
             f"</summary>"
-            f"<div style='margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; font-size: 12px; color: #444;'>{raw_text}</div>"
+            f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
+            f"{raw_text}"
+            f"</div>"
             f"</details>"
         )
         st.markdown(card_html, unsafe_allow_html=True)
