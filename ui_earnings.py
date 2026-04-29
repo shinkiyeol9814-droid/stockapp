@@ -93,52 +93,51 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 💡 [핵심 수정] 15% 대 85%의 황금비율 적용
-        c1, c2 = st.columns([1.5, 8.5]) 
+        # ==================================================
+        # 💡 [모바일 최적화] 컬럼 스태킹 문제 해결!
+        # 거대한 버튼을 버리고, 작고 직관적인 순정 체크박스로 변경합니다.
+        # ==================================================
+        new_fav = st.checkbox(f"⭐ 관심종목 ({corp_name})", value=is_fav, key=f"fav_btn_{code}")
+        if new_fav != is_fav:
+            if new_fav:
+                st.session_state.favorites.add(code)
+            else:
+                st.session_state.favorites.remove(code)
+            save_favorites(st.session_state.favorites)
+            st.rerun()
+
+        # 아래부터는 기존 코드와 동일합니다.
+        raw_text = row.get('원문', '').replace('\n', '<br>')
+        if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
+        elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
+        else: status_color = "#555555" 
+
+        op_display = f"<b>{op}억</b>" if op != "-" else "<b>-</b>"
+        if str(op).startswith('-'): op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
         
-        with c1:
-            st.write("") 
-            # 💡 [핵심 수정] use_container_width=True 로 버튼의 무단 이탈(짤림)을 원천 차단
-            if st.button(f"{'⭐' if is_fav else '☆'}", key=f"fav_btn_{code}", use_container_width=True):
-                if is_fav:
-                    st.session_state.favorites.remove(code)
-                else:
-                    st.session_state.favorites.add(code)
-                save_favorites(st.session_state.favorites)
-                st.rerun()
+        gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
+        
+        growth_html = ""
+        if yoy or qoq:
+            growth_html = f"<span style='font-size: 11px; color: #666;'>[YoY {yoy} | QoQ {qoq}]</span>"
+        
+        quarter_badge = f"<span style='font-size: 11px; padding: 2px 5px; background-color: #FFF3E0; color: #E65100; border-radius: 4px;'>{quarter}</span>" if quarter else ""
 
-        with c2:
-            raw_text = row.get('원문', '').replace('\n', '<br>')
-            if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
-            elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
-            else: status_color = "#555555" 
-
-            op_display = f"<b>{op}억</b>" if op != "-" else "<b>-</b>"
-            if str(op).startswith('-'): op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
-            
-            gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
-            
-            growth_html = ""
-            if yoy or qoq:
-                growth_html = f"<span style='font-size: 11px; color: #666;'>[YoY {yoy} | QoQ {qoq}]</span>"
-            
-            quarter_badge = f"<span style='font-size: 11px; padding: 2px 5px; background-color: #FFF3E0; color: #E65100; border-radius: 4px;'>{quarter}</span>" if quarter else ""
-
-            card_html = (
-                f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 10px; margin-bottom: 10px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-                f"<summary style='cursor: pointer; list-style: none;'>"
-                f"  <div style='display: flex; justify-content: space-between; align-items: center;'>"
-                f"    <div style='display: flex; align-items: center; gap: 8px;'>"
-                f"      <span style='font-size: 15px; font-weight: bold;'>{corp_name}</span>"
-                f"      <span style='font-size: 12px; color: #888;'>{code}</span>"
-                f"      {quarter_badge}"
-                f"      <span style='color: {status_color}; font-weight: bold; font-size: 13px;'>{surf_status}</span>"
-                f"      <span style='font-size: 13px;'>영업익: {op_display} {gap_text} {growth_html}</span>"
-                f"    </div>"
-                f"    <div style='font-size: 11px; color: #aaa;'>{pub_time}</div>"
-                f"  </div>"
-                f"</summary>"
-                f"<div style='margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; font-size: 12px; color: #444;'>{raw_text}</div>"
-                f"</details>"
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
+        card_html = (
+            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 10px; margin-bottom: 20px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
+            f"<summary style='cursor: pointer; list-style: none;'>"
+            f"  <div style='display: flex; justify-content: space-between; align-items: center;'>"
+            f"    <div style='display: flex; align-items: center; gap: 8px; flex-wrap: wrap;'>" # 💡 모바일에서 내용이 길면 자연스럽게 줄바꿈되도록 flex-wrap 추가
+            f"      <span style='font-size: 15px; font-weight: bold;'>{corp_name}</span>"
+            f"      <span style='font-size: 12px; color: #888;'>{code}</span>"
+            f"      {quarter_badge}"
+            f"      <span style='color: {status_color}; font-weight: bold; font-size: 13px;'>{surf_status}</span>"
+            f"      <span style='font-size: 13px;'>영업익: {op_display} {gap_text} {growth_html}</span>"
+            f"    </div>"
+            f"    <div style='font-size: 11px; color: #aaa; min-width: 100px; text-align: right;'>{pub_time}</div>"
+            f"  </div>"
+            f"</summary>"
+            f"<div style='margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; font-size: 12px; color: #444;'>{raw_text}</div>"
+            f"</details>"
+        )
+        st.markdown(card_html, unsafe_allow_html=True)
