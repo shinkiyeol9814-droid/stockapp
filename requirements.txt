@@ -14,3 +14,4 @@ google-genai
 aiohttp
 PyMuPDF
 streamlit-autorefresh
+streamlit-option-menu
