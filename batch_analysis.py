@@ -60,10 +60,10 @@ def get_high_stocks():
             today_close = int(hist['Close'].iloc[-1])
             
             period_flag = ""
-            # 오늘 종가가 과거 고점의 98% 이상이면 안착으로 간주
-            if today_close >= past_max_1y * 0.98: period_flag = "1년(52주) 신고가"
-            elif today_close >= past_max_6m * 0.98: period_flag = "6개월 신고가"
-            elif today_close >= past_max_3m * 0.98: period_flag = "3개월 신고가"
+            # 💡 [핵심 수정] 0.98(98%) 버퍼를 삭제하고, 과거 최고 종가를 '완벽하게' 넘은 녀석만 인정
+            if today_close >= past_max_1y: period_flag = "1년(52주) 신고가"
+            elif today_close >= past_max_6m: period_flag = "6개월 신고가"
+            elif today_close >= past_max_3m: period_flag = "3개월 신고가"
             
             if period_flag:
                 results.append({
@@ -106,7 +106,6 @@ async def get_google_news(session, stock_name):
             news_markdown = []
             first_link = "" 
             
-            # 💡 [최적화] Tier 1의 넉넉한 토큰을 활용해 상위 5개 기사 제목을 긁어옵니다!
             for i, item in enumerate(root.findall('.//item')[:5]): 
                 title = item.find('title').text
                 link = item.find('link').text
@@ -273,7 +272,6 @@ async def main():
                 print(f"      ❌ [통째로 실패] 해당 구간 API 에러. 패자부활전으로 통째로 넘깁니다.")
                 failed_queue.extend(chunk)
             else:
-                # 성공했지만 빼먹은 놈들이 있는지 체크
                 for item in chunk:
                     stock_name = item['name']
                     if stock_name in result_dict:
@@ -283,27 +281,20 @@ async def main():
                         print(f"      ⚠️ AI 요약 누락: [{stock_name}] -> 패자부활전 대기열 추가")
                         failed_queue.append(item)
             
-            # 💡 [최적화] 10초 대기 -> 1~2초 매너 쿨타임으로 축소
-            # API 제한 회피를 위한 짧은 휴식 (Tier 1이므로 2초면 충분)
             time.sleep(2)
 
-        # 💡 1바퀴 끝날 때마다 JSON 실시간 덮어쓰기!
         save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, pass_num)
 
-        # 실패한 종목들을 다음 바퀴의 대상으로 설정
         current_queue = failed_queue
         
         if current_queue and pass_num < MAX_PASSES:
-            # 💡 [최적화] 20초 대기 -> 5초로 축소
             print(f"\n⏳ {pass_num}차 분석 종료. 누락된 {len(current_queue)}개 종목 재도전을 위해 5초 대기합니다...")
             time.sleep(5)
 
-    # 5바퀴 다 돌았는데도 남은 녀석들은 최종 수동 확인 처리
     if current_queue:
         print(f"\n💀 [최종 종료] 최대 {MAX_PASSES}회 시도했으나 {len(current_queue)}개 종목은 AI가 추출하지 못했습니다.")
         for item in current_queue:
             item['ref']['추정 사유'] = "추출 누락 (수동 확인 필요)"
-        # 마지막 마무리를 위해 한 번 더 저장
         save_incremental_json(stocks, save_dir, file_name, analysis_time, start_time, "최종")
 
     m, sec = divmod(time.time() - start_time, 60)
