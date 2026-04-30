@@ -1,21 +1,44 @@
 import streamlit as st
 import pandas as pd
+
+# --- 💡 [필수] 페이지 기본 설정은 무조건 코드 최상단에 위치해야 합니다! ---
+st.set_page_config(page_title="StkPro 통합 보드", page_icon="📊", layout="wide")
+
+# ==========================================
+# 💡 [핵심 마법] 스켈레톤(회색 깜빡임) 제거 & 여백 최적화 CSS
+# ==========================================
+st.markdown("""
+    <style>
+        /* 1. 촌스러운 회색 로딩 박스 아예 안 보이게 투명 처리! (깜빡임 완벽 해결) */
+        div[data-testid="stSkeleton"] {
+            display: none !important;
+            opacity: 0 !important;
+        }
+        
+        /* 2. 스마트폰에서 상하좌우 여백 쫙 줄여서 앱처럼 쫀쫀하게 만들기 */
+        .block-container { 
+            padding-top: 1.5rem !important; 
+            padding-bottom: 1rem !important; 
+            padding-left: 0.8rem !important; 
+            padding-right: 0.8rem !important; 
+        }
+        
+        /* 3. 메인 타이틀 여백 조정 */
+        .main-title { 
+            font-size: 1.4rem !important; 
+            font-weight: bold; 
+            margin-top: 0.5rem !important; 
+            margin-bottom: 1rem !important; 
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# CSS 세팅 후 나머지 모듈 불러오기
 from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
 from ui_report import render_report_summary  
 from ui_earnings import render_earnings_menu
 from streamlit_option_menu import option_menu # 💡 상단 가로형 메뉴 라이브러리
-
-# --- 페이지 기본 설정 ---
-st.set_page_config(page_title="StkPro 통합 보드", page_icon="📊", layout="wide")
-
-# UI 디테일 튜닝 CSS
-st.markdown("""
-    <style>
-        .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
-        .main-title { font-size: 1.4rem !important; font-weight: bold; margin-top: 1rem; margin-bottom: 1rem; }
-    </style>
-""", unsafe_allow_html=True)
 
 # 세션 상태 초기화 (전역)
 if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
@@ -48,15 +71,15 @@ menu = option_menu(
             "background-color": "#ffffff", 
             "border-radius": "10px", 
             "border": "1px solid #eee",
-            "margin-bottom": "20px"
+            "margin-bottom": "15px" /* 메뉴 아래 여백 살짝 축소 */
         },
-        "icon": {"color": "#FF4B4B", "font-size": "14px"}, # 아이콘 살짝 축소
+        "icon": {"color": "#FF4B4B", "font-size": "14px"}, 
         "nav-link": {
-            "font-size": "12px",  # 💡 글자 크기 축소
+            "font-size": "12px",  
             "text-align": "center", 
             "margin": "0px", 
-            "padding": "10px 2px", # 💡 좌우 여백 축소
-            "white-space": "nowrap", # 💡 [핵심] 글자 두 줄 쪼개짐 절대 방지!
+            "padding": "10px 2px", 
+            "white-space": "nowrap", 
             "--hover-color": "#f0f2f6"
         },
         "nav-link-selected": {
@@ -72,7 +95,9 @@ menu = option_menu(
 if menu != "가치평가":
     st.query_params.clear()
     
-# --- 메뉴 라우팅 ---
+# ==========================================
+# --- 메뉴 라우팅 (if-elif로 완벽 분기) ---
+# ==========================================
 if menu == "가치평가":
     render_valuation_menu()
 
@@ -84,4 +109,3 @@ elif menu == "레포트":
 
 elif menu == "실적":
     render_earnings_menu()
-    
