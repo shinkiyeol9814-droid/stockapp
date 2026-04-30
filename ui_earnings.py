@@ -24,16 +24,21 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [핵심 마법] 라벨(텍스트)이 완전히 사라진 순정 체크박스를 종목명 왼쪽으로 정밀 타격하여 겹칩니다.
+    # 💡 [핵심 마법] 체크박스 위치 고정 + 토글 글자 찢어짐 방지 CSS
     st.markdown("""
     <style>
+    /* 1. 체크박스를 종목명 왼쪽으로 정밀 타격 */
     div[data-testid="stCheckbox"] {
         position: relative;
-        top: 28px;              /* 카드 상단 테두리를 지나 종목명 높이에 딱 맞게 하강 */
-        left: 16px;             /* 카드 왼쪽 테두리에서 약간 띄움 */
-        z-index: 99;            /* 클릭 가능하게 맨 앞으로 띄움 */
-        margin-bottom: -32px;   /* 자신이 차지하는 높이 공간을 없애서 아래 카드를 위로 끌어올림 */
-        width: 30px;            /* 체크박스 너비 고정 */
+        top: 28px;              
+        left: 16px;             
+        z-index: 99;            
+        margin-bottom: -32px;   
+        width: 30px;            
+    }
+    /* 2. 💡 [추가] 토글 스위치 글자가 세로로 찢어지는 현상 완벽 방지 */
+    div[data-testid="stToggle"] p {
+        white-space: nowrap !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -67,12 +72,14 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    f_col1, f_col2, f_col3 = st.columns([1, 1, 1])
+    # 💡 [핵심 추가] 1:1:1 이었던 비율을 3:4:2.5 로 변경하여 토글이 숨쉴 공간을 확보합니다!
+    f_col1, f_col2, f_col3 = st.columns([3, 4, 2.5])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
         search_keyword = st.text_input("🔍 종목 검색", placeholder="종목명/코드")
     with f_col3:
+        # 공간이 좁아도 글자가 1줄로 유지됩니다.
         show_only_favs = st.toggle("⭐ 관심종목만", value=False)
 
     filtered_results = []
@@ -106,7 +113,6 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 💡 [핵심 개선] "⭐" 텍스트를 아예 비우고, label_visibility="collapsed" 옵션으로 공간을 완벽히 압축!
         new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
@@ -140,21 +146,17 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [카드 레이아웃 마무리]
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            # 💡 padding-left: 32px 를 추가해서, 카드 안쪽 텍스트들이 체크박스에 가려지지 않게 우측으로 밀어줍니다.
             f"<summary style='cursor: pointer; list-style: none; outline: none; padding-left: 32px;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
-            # --- 윗줄 (종목명, 서프상태, 시간까지 따닥따닥 왼쪽으로!) ---
             f"    <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>"
             f"      <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
             f"      <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>"
             f"      <span style='font-size: 11px; color: #aaa;'>{short_time}</span>" 
             f"    </div>"
             
-            # --- 아랫줄 (말씀하신 Concept 그대로, 완벽하게 왼쪽 나란히 정렬!) ---
             f"    <div style='font-size: 14px; color: #333; text-align: left; width: 100%; white-space: normal; line-height: 1.4;'>"
             f"      <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
             f"      {growth_html}"
