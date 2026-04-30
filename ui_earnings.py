@@ -24,6 +24,22 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
+    # 💡 [핵심 마법] 체크박스를 왼쪽으로 보내고, 크기를 줄여 종목명 옆에 쏙 들어갈 수 있게 설정
+    st.markdown("""
+    <style>
+    div[data-testid="stCheckbox"] {
+        display: flex;
+        justify-content: flex-start;     /* 좌측 정렬 */
+        margin-bottom: -43px !important; /* 아래 카드를 위로 끌어올림 */
+        padding-top: 14px !important;    /* 텍스트와 높이 줄맞춤 */
+        padding-left: 14px !important;   /* 좌측 여백 */
+        position: relative;
+        z-index: 99;                     /* 클릭 가능하도록 띄움 */
+        width: fit-content;              /* 차지하는 너비를 최소화 */
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     col1, col2 = st.columns([8, 2])
     with col1:
         st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
@@ -92,6 +108,7 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
+        # 💡 [1] 체크박스 렌더링 (CSS에 의해 왼쪽 끝으로 이동)
         new_fav = st.checkbox("⭐", value=is_fav, key=f"fav_btn_{code}")
         
         if new_fav != is_fav:
@@ -102,6 +119,7 @@ def render_earnings_menu():
             save_favorites(st.session_state.favorites)
             st.rerun()
 
+        # 💡 [2] 데이터 및 색상 처리
         raw_text = row.get('원문', '').replace('\n', '<br>')
         if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
         elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
@@ -117,32 +135,30 @@ def render_earnings_menu():
             if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" 
             return "#555555" 
 
-# 💡 깔끔한 텍스트 폼 유지 (margin-left를 추가해 OP와 살짝 띄워줍니다)
         growth_html = ""
         if yoy or qoq:
             yoy_colored = f"<span style='color: {get_growth_color(yoy)}; font-weight: 600;'>{yoy}</span>" if yoy else "-"
             qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
-            growth_html = f"<span style='font-size: 12px; color: #888; margin-left: 12px;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
+            growth_html = f"<span style='font-size: 12px; color: #888; margin-left: 10px;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
 
-        # 💡 시간 포맷 압축
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [핵심] 아랫줄의 flex 속성을 모조리 빼버리고, 순수 text-align: left 로 박아버림!
+        # 💡 [3] 카드 HTML 렌더링 
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
+            # 💡 [핵심] padding-left: 45px 를 추가하여, 카드 텍스트 시작점을 우측으로 밀어냅니다. 
+            # 그 비워진 왼쪽 공간에 위에서 그린 체크박스가 쏙! 들어가게 됩니다.
+            f"<summary style='cursor: pointer; list-style: none; outline: none; padding-left: 45px;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
-            # --- 윗줄 (종목명, 서프상태 + 오른쪽 끝 시간) ---
-            f"    <div style='display: flex; justify-content: space-between; align-items: baseline; width: 100%;'>"
-            f"      <div style='display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;'>"
-            f"        <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
-            f"        <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>"
-            f"      </div>"
-            f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px;'>{short_time}</div>" 
+            # --- 윗줄 (종목명, 서프상태, 시간) ---
+            f"    <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>"
+            f"      <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
+            f"      <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>"
+            f"      <span style='font-size: 11px; color: #aaa;'>{short_time}</span>" 
             f"    </div>"
             
-            # --- 아랫줄 (Flex 제거! 무조건 왼쪽 정렬 텍스트 흐름) ---
+            # --- 아랫줄 (완벽한 왼쪽 정렬) ---
             f"    <div style='font-size: 14px; color: #333; text-align: left; width: 100%; white-space: normal; line-height: 1.4;'>"
             f"      <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
             f"      {growth_html}"
