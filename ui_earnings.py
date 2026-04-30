@@ -24,18 +24,16 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [핵심 마법] 체크박스를 왼쪽으로 보내고, 크기를 줄여 종목명 옆에 쏙 들어갈 수 있게 설정
+    # 💡 [핵심 마법] 라벨(텍스트)이 완전히 사라진 순정 체크박스를 종목명 왼쪽으로 정밀 타격하여 겹칩니다.
     st.markdown("""
     <style>
     div[data-testid="stCheckbox"] {
-        display: flex;
-        justify-content: flex-start;     /* 좌측 정렬 */
-        margin-bottom: -43px !important; /* 아래 카드를 위로 끌어올림 */
-        padding-top: 14px !important;    /* 텍스트와 높이 줄맞춤 */
-        padding-left: 14px !important;   /* 좌측 여백 */
         position: relative;
-        z-index: 99;                     /* 클릭 가능하도록 띄움 */
-        width: fit-content;              /* 차지하는 너비를 최소화 */
+        top: 28px;              /* 카드 상단 테두리를 지나 종목명 높이에 딱 맞게 하강 */
+        left: 16px;             /* 카드 왼쪽 테두리에서 약간 띄움 */
+        z-index: 99;            /* 클릭 가능하게 맨 앞으로 띄움 */
+        margin-bottom: -32px;   /* 자신이 차지하는 높이 공간을 없애서 아래 카드를 위로 끌어올림 */
+        width: 30px;            /* 체크박스 너비 고정 */
     }
     </style>
     """, unsafe_allow_html=True)
@@ -108,8 +106,8 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 💡 [1] 체크박스 렌더링 (CSS에 의해 왼쪽 끝으로 이동)
-        new_fav = st.checkbox("⭐", value=is_fav, key=f"fav_btn_{code}")
+        # 💡 [핵심 개선] "⭐" 텍스트를 아예 비우고, label_visibility="collapsed" 옵션으로 공간을 완벽히 압축!
+        new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
             if new_fav:
@@ -119,7 +117,6 @@ def render_earnings_menu():
             save_favorites(st.session_state.favorites)
             st.rerun()
 
-        # 💡 [2] 데이터 및 색상 처리
         raw_text = row.get('원문', '').replace('\n', '<br>')
         if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
         elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
@@ -143,22 +140,21 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [3] 카드 HTML 렌더링 
+        # 💡 [카드 레이아웃 마무리]
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            # 💡 [핵심] padding-left: 45px 를 추가하여, 카드 텍스트 시작점을 우측으로 밀어냅니다. 
-            # 그 비워진 왼쪽 공간에 위에서 그린 체크박스가 쏙! 들어가게 됩니다.
-            f"<summary style='cursor: pointer; list-style: none; outline: none; padding-left: 45px;'>"
+            # 💡 padding-left: 32px 를 추가해서, 카드 안쪽 텍스트들이 체크박스에 가려지지 않게 우측으로 밀어줍니다.
+            f"<summary style='cursor: pointer; list-style: none; outline: none; padding-left: 32px;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
-            # --- 윗줄 (종목명, 서프상태, 시간) ---
+            # --- 윗줄 (종목명, 서프상태, 시간까지 따닥따닥 왼쪽으로!) ---
             f"    <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>"
             f"      <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
             f"      <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>"
             f"      <span style='font-size: 11px; color: #aaa;'>{short_time}</span>" 
             f"    </div>"
             
-            # --- 아랫줄 (완벽한 왼쪽 정렬) ---
+            # --- 아랫줄 (말씀하신 Concept 그대로, 완벽하게 왼쪽 나란히 정렬!) ---
             f"    <div style='font-size: 14px; color: #333; text-align: left; width: 100%; white-space: normal; line-height: 1.4;'>"
             f"      <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
             f"      {growth_html}"
