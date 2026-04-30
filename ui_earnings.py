@@ -94,7 +94,6 @@ def render_earnings_menu():
         is_fav = code in st.session_state.favorites
         
         # 💡 [수정] 텍스트 싹 날리고 아주 깔끔하게 체크박스와 별표만 남깁니다.
-        # (별표마저 없애고 싶으시면 "⭐" 대신 "" 빈 문자열을 넣으시면 됩니다!)
         new_fav = st.checkbox("⭐", value=is_fav, key=f"fav_btn_{code}")
         
         if new_fav != is_fav:
@@ -105,20 +104,29 @@ def render_earnings_menu():
             save_favorites(st.session_state.favorites)
             st.rerun()
 
-        # 아래부터는 기존 코드와 동일합니다.
         raw_text = row.get('원문', '').replace('\n', '<br>')
         if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
         elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
         else: status_color = "#555555" 
 
         op_display = f"<b>{op}억</b>" if op != "-" else "<b>-</b>"
-        if str(op).startswith('-'): op_display = f"<b style='color: #5A9BD4;'>{op}억</b>"
+        if str(op).startswith('-'): op_display = f"<b style='color: #1E90FF;'>{op}억</b>"
         
         gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
         
+        # ==========================================
+        # 💡 [핵심 추가] YoY, QoQ 텍스트 분석 후 색상 입히기
+        def get_growth_color(val):
+            if "+" in val or "흑전" in val: return "#FF0000" # 상승/흑전은 빨간색
+            if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" # 하락/적자는 파란색
+            return "#555555" # 그 외(0% 등)는 기본 회색
+
         growth_html = ""
         if yoy or qoq:
-            growth_html = f"<span style='font-size: 11px; color: #666;'>[YoY {yoy} | QoQ {qoq}]</span>"
+            yoy_colored = f"<span style='color: {get_growth_color(yoy)}; font-weight: 600;'>{yoy}</span>" if yoy else "-"
+            qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
+            growth_html = f"<span style='font-size: 13px; color: #888; margin-left: 4px;'>[YoY {yoy_colored} | QoQ {qoq_colored}]</span>"
+        # ==========================================
         
         quarter_badge = f"<span style='font-size: 11px; padding: 2px 5px; background-color: #FFF3E0; color: #E65100; border-radius: 4px;'>{quarter}</span>" if quarter else ""
 
