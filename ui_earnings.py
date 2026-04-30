@@ -24,11 +24,23 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [롤백] 문제를 일으키던 체크박스 관련 CSS를 싹 지우고, 토글 글자 줄바꿈만 안전하게 막습니다.
+    # 💡 [핵심 마법] 유체이탈, 빈 공간 모두 차단하는 완벽한 CSS
     st.markdown("""
     <style>
+    /* 1. 체크박스를 끌어올려진 카드 내부 '안전지대'로 정밀 안착시킴 */
+    div[data-testid="stCheckbox"] {
+        position: relative;
+        z-index: 99;         /* 카드를 뚫고 클릭될 수 있게 맨 위로 띄움 */
+        left: 14px;          /* 카드 테두리에서 14px 띄움 */
+        top: 14px;           /* 종목명 텍스트 높이와 수평을 맞춤 */
+        width: 30px;         /* 글자를 침범하지 않게 너비 고정 */
+    }
+
+    /* 2. 토글 스위치(관심종목만) 찢어짐 방지 - 무조건 가로 유지 */
     div[data-testid="stToggle"] label p {
+        min-width: 120px !important;
         white-space: nowrap !important;
+        word-break: keep-all !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -62,7 +74,7 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 💡 토글 스위치가 충분한 공간을 갖도록 2:3:2 비율로 넉넉하게 세팅
+    # 여유로운 2:3:2 비율 유지
     f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
@@ -102,7 +114,7 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 💡 [롤백] CSS 조작 없이 가장 순정 상태로 렌더링합니다. (카드 바로 위쪽에 배치됨)
+        # 💡 [1] 체크박스 렌더링 (이놈이 공간을 살짝 차지합니다)
         new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
@@ -136,10 +148,11 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [롤백] 기열님이 원하셨던 왼쪽 나란히 정렬 포맷은 유지하되, 모든 왜곡 여백(padding/margin)을 삭제했습니다.
+        # 💡 [2] 카드 렌더링 (margin-top: -36px 로 위의 체크박스를 집어삼킵니다!)
         card_html = (
-            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
+            f"<details style='margin-top: -36px; margin-bottom: 12px; border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; background-color: {'#FFFDF0' if is_fav else '#ffffff'}; position: relative; z-index: 1;'>"
+            # 패딩 왼쪽에 42px를 주어 체크박스가 앉을 자리를 마련합니다.
+            f"<summary style='cursor: pointer; list-style: none; outline: none; padding: 12px 12px 12px 42px; box-sizing: border-box;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
             f"    <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>"
@@ -155,7 +168,7 @@ def render_earnings_menu():
             
             f"  </div>"
             f"</summary>"
-            f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
+            f"<div style='padding: 0px 12px 12px 42px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
             f"{raw_text}"
             f"</div>"
             f"</details>"
