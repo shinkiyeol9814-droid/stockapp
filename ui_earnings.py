@@ -117,17 +117,17 @@ def render_earnings_menu():
             if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" 
             return "#555555" 
 
-        # 💡 [개선 1] 대괄호 삭제 및 간결한 디자인
+        # 💡 깔끔한 텍스트 폼 유지
         growth_html = ""
         if yoy or qoq:
             yoy_colored = f"<span style='color: {get_growth_color(yoy)}; font-weight: 600;'>{yoy}</span>" if yoy else "-"
             qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
             growth_html = f"<span style='font-size: 12px; color: #888;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
 
-        # 💡 [개선 2] 시간 포맷 압축 (2026.04.30 09:45:24 -> 04.30 09:45)
+        # 💡 시간 포맷 압축
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [개선 3] 완벽한 2줄 레이아웃 (Space-between 활용)
+        # 💡 [핵심] 아랫줄 양극단 정렬(space-between) 삭제 -> 왼쪽으로 나란히 정렬
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
@@ -142,14 +142,12 @@ def render_earnings_menu():
             f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px;'>{short_time}</div>" 
             f"    </div>"
             
-            # --- 아랫줄 (왼쪽 OP 데이터 + 오른쪽 YoY/QoQ 데이터) ---
-            f"    <div style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>"
+            # --- 아랫줄 (왼쪽으로 나란히 정렬) ---
+            f"    <div style='display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%;'>"
             f"      <div style='font-size: 14px; color: #333;'>"
             f"        <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
             f"      </div>"
-            f"      <div style='text-align: right; flex-shrink: 0;'>"
-            f"        {growth_html}"
-            f"      </div>"
+            f"      <div>{growth_html}</div>"
             f"    </div>"
             
             f"  </div>"
