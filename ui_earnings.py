@@ -24,22 +24,16 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
+    # 💡 [완전 정화] 문제의 토글 CSS 싹 다 날렸습니다! (카드 체크박스만 안전하게 유지)
     st.markdown("""
     <style>
-    /* 1. 하단 체크박스를 카드 내부로 예쁘게 안착 (나머지 절대 건드리지 않음) */
+    /* 하단 카드 체크박스 위치 고정 (절대 건드리지 않음) */
     div[data-testid="stCheckbox"] {
         position: relative;
         z-index: 99;         
         left: 14px;          
         top: 14px;           
         width: 30px;         
-    }
-
-    /* 2. 토글 버튼 글자(관심종목만) 탑 쌓기 절대 방어 (기열님 코드 100% 복구!) */
-    div[data-testid="stToggle"] label p {
-        min-width: 120px !important;    /* 공간이 아무리 좁아져도 120px은 무조건 사수! */
-        white-space: nowrap !important; /* 줄바꿈 절대 금지 */
-        word-break: keep-all !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -73,14 +67,16 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 토글 공간 넉넉히 확보
     f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
         search_keyword = st.text_input("🔍 종목 검색", placeholder="종목명/코드")
     with f_col3:
-        show_only_favs = st.toggle("⭐ 관심종목만", value=False)
+        # 💡 [핵심 해결책] 기열님 아이디어 적용! 종목 검색처럼 위에 라벨, 아래에 토글 배치
+        st.markdown("<div style='font-size: 14px; color: #31333F; margin-bottom: 8px;'>⭐ 관심종목만</div>", unsafe_allow_html=True)
+        # 토글 자체의 텍스트는 완전히 숨김(collapsed) 처리하여 절대 세로로 찢어지지 않음
+        show_only_favs = st.toggle("hidden_fav_toggle", value=False, label_visibility="collapsed")
 
     filtered_results = []
     for row in results:
@@ -97,12 +93,9 @@ def render_earnings_menu():
             
         filtered_results.append(row)
 
-    # 💡 하단 캡션 글자와 카드가 겹치지 않도록 방어
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     st.caption(f"📊 **{selected_quarter}** 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
     st.divider()
-    
-    # 첫 번째 카드가 위로 당겨질 때 구분선을 침범하지 않도록 투명한 안전 공간 추가
     st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
     
     for row in filtered_results:
@@ -151,7 +144,6 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [유지] 체크박스를 감싸안는 완벽한 카드 레이아웃
         card_html = (
             f"<details style='margin-top: -36px; margin-bottom: 12px; border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; background-color: {'#FFFDF0' if is_fav else '#ffffff'}; position: relative; z-index: 1;'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none; padding: 12px 12px 12px 42px; box-sizing: border-box;'>"
