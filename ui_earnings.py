@@ -24,22 +24,25 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [핵심 마법] 유체이탈, 빈 공간 모두 차단하는 완벽한 CSS
+    # 💡 [수정된 마법] 토글 세로 찢어짐 완벽 방어 및 하단 겹침 방지
+    # (체크박스 관련 설정은 절대 건드리지 않았습니다)
     st.markdown("""
     <style>
-    /* 1. 체크박스를 끌어올려진 카드 내부 '안전지대'로 정밀 안착시킴 */
+    /* 1. 체크박스를 끌어올려진 카드 내부 '안전지대'로 정밀 안착시킴 (유지) */
     div[data-testid="stCheckbox"] {
         position: relative;
-        z-index: 99;         /* 카드를 뚫고 클릭될 수 있게 맨 위로 띄움 */
-        left: 14px;          /* 카드 테두리에서 14px 띄움 */
-        top: 14px;           /* 종목명 텍스트 높이와 수평을 맞춤 */
-        width: 30px;         /* 글자를 침범하지 않게 너비 고정 */
+        z-index: 99;         
+        left: 14px;          
+        top: 14px;           
+        width: 30px;         
     }
 
-    /* 2. 토글 스위치(관심종목만) 찢어짐 방지 - 무조건 가로 유지 */
-    div[data-testid="stToggle"] label p {
-        min-width: 120px !important;
-        white-space: nowrap !important;
+    /* 2. 💡 [핵심 수정] 토글 스위치 강제 가로 유지 및 하단 여백 확보 */
+    div[data-testid="stToggle"] {
+        margin-bottom: 20px !important; /* 하단 캡션(실적 공시 개수 텍스트)과 절대 겹치지 않도록 안전 거리 추가 */
+    }
+    div[data-testid="stToggle"] * {
+        white-space: nowrap !important; /* 내부의 어떤 태그(p, span 등)든 절대 줄바꿈 금지 */
         word-break: keep-all !important;
     }
     </style>
@@ -74,7 +77,6 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 여유로운 2:3:2 비율 유지
     f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
@@ -114,7 +116,6 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 💡 [1] 체크박스 렌더링 (이놈이 공간을 살짝 차지합니다)
         new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
@@ -148,10 +149,8 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [2] 카드 렌더링 (margin-top: -36px 로 위의 체크박스를 집어삼킵니다!)
         card_html = (
             f"<details style='margin-top: -36px; margin-bottom: 12px; border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; background-color: {'#FFFDF0' if is_fav else '#ffffff'}; position: relative; z-index: 1;'>"
-            # 패딩 왼쪽에 42px를 주어 체크박스가 앉을 자리를 마련합니다.
             f"<summary style='cursor: pointer; list-style: none; outline: none; padding: 12px 12px 12px 42px; box-sizing: border-box;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
