@@ -84,8 +84,6 @@ def render_earnings_menu():
         code = row.get('코드', '')
         pub_time = row.get('발표시간', '')
         is_provisional = row.get('잠정여부', '')
-        # 분기 표시(quarter)는 내부 로직엔 남겨두지만 화면엔 안 뿌립니다.
-        quarter = row.get('해당분기', '') 
         op = row.get('영업익', '-')
         gap = row.get('괴리율', '')
         surf_status = row.get('서프_상태', '')
@@ -119,30 +117,39 @@ def render_earnings_menu():
             if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" 
             return "#555555" 
 
+        # 💡 [개선 1] 대괄호 삭제 및 간결한 디자인
         growth_html = ""
         if yoy or qoq:
             yoy_colored = f"<span style='color: {get_growth_color(yoy)}; font-weight: 600;'>{yoy}</span>" if yoy else "-"
             qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
-            growth_html = f"<span style='font-size: 13px; color: #888; margin-left: 4px;'>[YoY {yoy_colored} | QoQ {qoq_colored}]</span>"
+            growth_html = f"<span style='font-size: 12px; color: #888;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
 
-        # 💡 [핵심] 코드와 분기 배지 렌더링 삭제
+        # 💡 [개선 2] 시간 포맷 압축 (2026.04.30 09:45:24 -> 04.30 09:45)
+        short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
+
+        # 💡 [개선 3] 완벽한 2줄 레이아웃 (Space-between 활용)
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
-            f"  <div style='display: flex; flex-direction: column; gap: 8px; width: 100%;'>" 
+            f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
             # --- 윗줄 (종목명, 서프상태 + 오른쪽 시간) ---
-            f"    <div style='display: flex; justify-content: space-between; align-items: flex-start; width: 100%;'>"
-            f"      <div style='display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>"
-            f"        <span style='font-size: 15px; font-weight: bold; color: #222;'>{corp_name}</span>"
-            f"        <span style='color: {status_color}; font-weight: 900; font-size: 13px;'>{surf_status}</span>"
+            f"    <div style='display: flex; justify-content: space-between; align-items: baseline; width: 100%;'>"
+            f"      <div style='display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;'>"
+            f"        <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
+            f"        <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>"
             f"      </div>"
-            f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px; margin-top: 2px;'>{pub_time}</div>" 
+            f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px;'>{short_time}</div>" 
             f"    </div>"
             
-            # --- 아랫줄 (영업익 + 증감률 데이터) ---
-            f"    <div style='font-size: 14px; color: #333; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>"
-            f"      영업익: {op_display} {gap_text} {growth_html}"
+            # --- 아랫줄 (왼쪽 OP 데이터 + 오른쪽 YoY/QoQ 데이터) ---
+            f"    <div style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>"
+            f"      <div style='font-size: 14px; color: #333;'>"
+            f"        <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
+            f"      </div>"
+            f"      <div style='text-align: right; flex-shrink: 0;'>"
+            f"        {growth_html}"
+            f"      </div>"
             f"    </div>"
             
             f"  </div>"
