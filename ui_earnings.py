@@ -84,6 +84,7 @@ def render_earnings_menu():
         code = row.get('코드', '')
         pub_time = row.get('발표시간', '')
         is_provisional = row.get('잠정여부', '')
+        # 분기 표시(quarter)는 내부 로직엔 남겨두지만 화면엔 안 뿌립니다.
         quarter = row.get('해당분기', '') 
         op = row.get('영업익', '-')
         gap = row.get('괴리율', '')
@@ -93,7 +94,6 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 💡 [수정] 텍스트 싹 날리고 아주 깔끔하게 체크박스와 별표만 남깁니다.
         new_fav = st.checkbox("⭐", value=is_fav, key=f"fav_btn_{code}")
         
         if new_fav != is_fav:
@@ -114,37 +114,30 @@ def render_earnings_menu():
         
         gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
         
-        # ==========================================
-        # 💡 [핵심 추가] YoY, QoQ 텍스트 분석 후 색상 입히기
         def get_growth_color(val):
-            if "+" in val or "흑전" in val: return "#FF0000" # 상승/흑전은 빨간색
-            if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" # 하락/적자는 파란색
-            return "#555555" # 그 외(0% 등)는 기본 회색
+            if "+" in val or "흑전" in val: return "#FF0000" 
+            if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" 
+            return "#555555" 
 
         growth_html = ""
         if yoy or qoq:
             yoy_colored = f"<span style='color: {get_growth_color(yoy)}; font-weight: 600;'>{yoy}</span>" if yoy else "-"
             qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
             growth_html = f"<span style='font-size: 13px; color: #888; margin-left: 4px;'>[YoY {yoy_colored} | QoQ {qoq_colored}]</span>"
-        # ==========================================
-        
-        quarter_badge = f"<span style='font-size: 11px; padding: 2px 5px; background-color: #FFF3E0; color: #E65100; border-radius: 4px;'>{quarter}</span>" if quarter else ""
 
-        # 💡 [핵심] 2줄 레이아웃으로 분리 (Flex Column 적용)
+        # 💡 [핵심] 코드와 분기 배지 렌더링 삭제
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
-            f"  <div style='display: flex; flex-direction: column; gap: 8px; width: 100%;'>" # 전체를 위아래 2줄로 쪼개는 컨테이너
+            f"  <div style='display: flex; flex-direction: column; gap: 8px; width: 100%;'>" 
             
-            # --- 윗줄 (종목명, 배지, 서프상태 + 오른쪽 시간) ---
+            # --- 윗줄 (종목명, 서프상태 + 오른쪽 시간) ---
             f"    <div style='display: flex; justify-content: space-between; align-items: flex-start; width: 100%;'>"
             f"      <div style='display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>"
             f"        <span style='font-size: 15px; font-weight: bold; color: #222;'>{corp_name}</span>"
-            f"        <span style='font-size: 12px; color: #888;'>{code}</span>"
-            f"        {quarter_badge}"
             f"        <span style='color: {status_color}; font-weight: 900; font-size: 13px;'>{surf_status}</span>"
             f"      </div>"
-            f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px; margin-top: 2px;'>{pub_time}</div>" # 💡 시간 우측 고정 (짤림 방지)
+            f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px; margin-top: 2px;'>{pub_time}</div>" 
             f"    </div>"
             
             # --- 아랫줄 (영업익 + 증감률 데이터) ---
