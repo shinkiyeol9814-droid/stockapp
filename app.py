@@ -5,7 +5,7 @@ import pandas as pd
 st.set_page_config(page_title="StkPro 통합 보드", page_icon="📊", layout="wide")
 
 # ==========================================
-# 💡 [핵심 마법] 스켈레톤(회색 깜빡임) 제거 & 여백 최적화 CSS
+# 💡 [핵심 마법] 스켈레톤 제거 & 상단 잘림 방지 CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -15,9 +15,9 @@ st.markdown("""
             opacity: 0 !important;
         }
         
-        /* 2. 스마트폰에서 상하좌우 여백 쫙 줄여서 앱처럼 쫀쫀하게 만들기 */
+        /* 2. 💡 상단 여백 넉넉하게 확보 (메뉴 잘림 현상 해결!) */
         .block-container { 
-            padding-top: 1.5rem !important; 
+            padding-top: 3.5rem !important; /* 👈 너무 바짝 당겼던 여백을 정상화했습니다 */
             padding-bottom: 1rem !important; 
             padding-left: 0.8rem !important; 
             padding-right: 0.8rem !important; 
@@ -38,7 +38,7 @@ from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
 from ui_report import render_report_summary  
 from ui_earnings import render_earnings_menu
-from streamlit_option_menu import option_menu # 💡 상단 가로형 메뉴 라이브러리
+from streamlit_option_menu import option_menu 
 
 # 세션 상태 초기화 (전역)
 if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
@@ -71,7 +71,7 @@ menu = option_menu(
             "background-color": "#ffffff", 
             "border-radius": "10px", 
             "border": "1px solid #eee",
-            "margin-bottom": "15px" # 💡 여기에 있던 /* ... */ 주석을 파이썬에 맞게 # 으로 수정했습니다!
+            "margin-bottom": "15px" # 메뉴 아래 여백
         },
         "icon": {"color": "#FF4B4B", "font-size": "14px"}, 
         "nav-link": {
@@ -90,12 +90,13 @@ menu = option_menu(
         },
     }
 )
-# 💡 가치평가 화면이 아닐 때만 파라미터를 지워서 메뉴 꼬임을 방지합니다.
+
+# 가치평가 화면이 아닐 때만 파라미터를 지워서 메뉴 꼬임을 방지합니다.
 if menu != "가치평가":
     st.query_params.clear()
     
 # ==========================================
-# --- 메뉴 라우팅 (if-elif로 완벽 분기) ---
+# --- 메뉴 라우팅 ---
 # ==========================================
 if menu == "가치평가":
     render_valuation_menu()
