@@ -24,26 +24,29 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [수정된 마법] 토글 세로 찢어짐 완벽 방어 및 하단 겹침 방지
-    # (체크박스 관련 설정은 절대 건드리지 않았습니다)
+    # 💡 [원인 해결] 카드 체크박스 설정은 유지하되, 상단 토글만 감옥에서 해방시킵니다!
     st.markdown("""
     <style>
-    /* 1. 체크박스를 끌어올려진 카드 내부 '안전지대'로 정밀 안착시킴 (유지) */
+    /* 1. 하단 카드들에 들어가는 체크박스 (기존 그대로 완벽 유지) */
     div[data-testid="stCheckbox"] {
         position: relative;
         z-index: 99;         
         left: 14px;          
         top: 14px;           
-        width: 30px;         
+        width: 30px; /* <--- 이 30px 제한이 토글까지 괴롭히고 있었습니다! */
     }
 
-    /* 2. 💡 [핵심 수정] 토글 스위치 강제 가로 유지 및 하단 여백 확보 */
-    div[data-testid="stToggle"] {
-        margin-bottom: 20px !important; /* 하단 캡션(실적 공시 개수 텍스트)과 절대 겹치지 않도록 안전 거리 추가 */
+    /* 2. 💡 [핵심] 상단 필터(컬럼) 안에 있는 토글은 30px 제한을 풀고 넉넉하게 가로로 폅니다! */
+    div[data-testid="column"] div[data-testid="stCheckbox"],
+    div[data-testid="column"] div[data-testid="stToggle"] {
+        width: auto !important;         /* 30px 감옥 해제! */
+        position: static !important;    /* 위치 강제 이동 해제! */
+        margin-bottom: 24px !important; /* 하단 캡션 글씨와 겹치지 않게 여백 넉넉히 추가! */
     }
-    div[data-testid="stToggle"] * {
-        white-space: nowrap !important; /* 내부의 어떤 태그(p, span 등)든 절대 줄바꿈 금지 */
-        word-break: keep-all !important;
+    
+    div[data-testid="column"] label p {
+        white-space: nowrap !important; /* 무조건 가로로 한 줄 유지 */
+        min-width: max-content !important;
     }
     </style>
     """, unsafe_allow_html=True)
