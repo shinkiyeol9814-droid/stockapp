@@ -64,7 +64,7 @@ def increment_api_usage():
 # 💡 데이터 수집 함수 (Fix된 시간 구간 적용)
 async def get_all_reports_from_telegram(client, start_time, end_time):
     print(f"\n📥 텔레그램 레포트 수집 시작")
-    print(f"   ⏱️ 수집 타겟 구간: {start_time.strftime('%Y-%m-%d %H:%M')} ~ {end_time.strftime('%Y-%m-%d %H:%M')}")
+    print(f"  ⏱️ 수집 타겟 구간: {start_time.strftime('%Y-%m-%d %H:%M')} ~ {end_time.strftime('%Y-%m-%d %H:%M')}")
     
     docs_to_process = []
     doc_id_counter = 1
@@ -222,9 +222,9 @@ def analyze_chunk_with_gemini(chunk_docs):
             print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
             return None
 
-# 💡 4. JSON 파일 누적 저장 & 3중 키 중복 제거 (종목명+증권사+제목)
+# 💡 4. JSON 파일 누적 저장 & 중복 제거 (종목명+제목)
 def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_name, analysis_time):
-    # [1] 기존 데이터 로드 (파일이 있으면 읽어옴)
+    # [1] 기존 데이터 로드
     existing_results = []
     if os.path.exists(file_name):
         try:
@@ -234,36 +234,35 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
         except Exception as e:
             print(f"      ⚠️ 기존 파일 로드 에러 (무시하고 새로 생성): {e}")
 
-    # [2] 중복 판별용 딕셔너리 구성 (기존 데이터 세팅)
+    # [2] 💡 핵심 수정: 중복 판별용 딕셔너리 (증권사 제외, 종목명+제목만 사용)
     unique_results = {}
     for item in existing_results:
-        # 💡 [핵심 수정] 기존에 저장된 데이터에도 철벽 방어막을 씌워줍니다!
         raw_name = item.get('종목명') or ''
         clean_name = str(raw_name).split('(')[0].strip()
         
-        raw_broker = item.get('증권사') or '정보없음'
-        broker = str(raw_broker).strip()
-        
         raw_title = item.get('레포트 제목') or '제목없음'
-        title = str(raw_title).strip()
+        # 띄어쓰기가 달라서 중복 처리되는 것을 막기 위해 모든 공백 제거
+        title_nospace = str(raw_title).replace(" ", "").strip()
         
-        dup_key = f"{clean_name}_{broker}_{title}"
+        # 증권사를 키에서 완전히 배제합니다.
+        dup_key = f"{clean_name}_{title_nospace}"
         unique_results[dup_key] = item
 
-    # [3] 신규 데이터 매칭 및 3중 키 병합
+    # [3] 신규 데이터 매칭 및 병합
     new_matched_count = 0
     for item in analyzed_data:
-        # 💡 AI가 null(None)을 뱉어도 안전하게 문자열로 처리
         raw_name = item.get('종목명') or ''
         clean_name = str(raw_name).split('(')[0].strip() 
         
+        # 증권사는 저장용으로 파싱만 해둡니다
         raw_broker = item.get('증권사') or '정보없음'
         broker = str(raw_broker).strip()
         
         raw_title = item.get('레포트 제목') or '제목없음'
-        title = str(raw_title).strip()
+        title_nospace = str(raw_title).replace(" ", "").strip()
         
-        dup_key = f"{clean_name}_{broker}_{title}"
+        # 여기서도 증권사를 빼고 2중 키로만 판별!
+        dup_key = f"{clean_name}_{title_nospace}"
         matched = df_listing[df_listing['Name'] == clean_name]
         
         if not matched.empty:
