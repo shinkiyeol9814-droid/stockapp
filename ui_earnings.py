@@ -24,25 +24,27 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [핵심 마법] 체크박스 위치 고정 + 토글 강제 방어
+    # 💡 [마법의 CSS] 유령 공간 삭제 & 토글 절대 방어
     st.markdown("""
     <style>
-    /* 1. 체크박스를 종목명 왼쪽으로 정밀 타격 */
+    /* 1. 카드 사이의 넓은 빈 공간 완벽 삭제 */
     div[data-testid="stCheckbox"] {
-        position: relative;
-        top: 28px;              
-        left: 16px;             
-        z-index: 99;            
-        margin-bottom: -32px;   
-        width: 30px;            
+        height: 0px !important;        /* 컨테이너 높이를 0으로 압축해서 유령 공간 삭제 */
+        min-height: 0px !important;
+        margin: 0px !important;
+        padding: 0px !important;
     }
-    
-    /* 2. 토글 스위치 텍스트 세로 찢어짐 "물리적" 완벽 방어 */
-    div[data-testid="stToggle"] {
-        min-width: 150px !important; /* 강제로 넉넉한 너비를 줘버립니다 */
+    /* 실제 체크박스를 하단 카드의 종목명 옆으로 이동 */
+    div[data-testid="stCheckbox"] > label {
+        transform: translate(14px, 22px); /* 아래쪽 카드 내부로 쏙 들어가게 좌표 이동 */
+        z-index: 99;
+        cursor: pointer;
     }
-    div[data-testid="stToggle"] * {
-        white-space: nowrap !important; /* 내부 요소 줄바꿈 전면 금지 */
+
+    /* 2. 토글 버튼 글자(관심종목만) 탑 쌓기 절대 방어 */
+    div[data-testid="stToggle"] label p {
+        min-width: 120px !important;    /* 공간이 아무리 좁아져도 120px은 무조건 사수! */
+        white-space: nowrap !important; /* 줄바꿈 절대 금지 */
         word-break: keep-all !important;
     }
     </style>
@@ -77,14 +79,14 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 💡 [비율 재조정] 토글이 들어가는 3번째 컬럼 공간을 더 넓게(3) 확보했습니다.
-    f_col1, f_col2, f_col3 = st.columns([3, 4, 3])
+    # 💡 [컬럼 비율 수정] 세 컬럼이 골고루 공간을 나눠 가지도록 2:3:2 비율 적용
+    f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
         search_keyword = st.text_input("🔍 종목 검색", placeholder="종목명/코드")
     with f_col3:
-        # 이제 CSS로 강제 너비 150px을 줬으니 절대 찢어지지 않습니다!
+        # 이제 CSS로 방패를 씌웠으니 절대 세로로 찢어지지 않습니다!
         show_only_favs = st.toggle("⭐ 관심종목만", value=False)
 
     filtered_results = []
@@ -151,8 +153,9 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
+        # 💡 [간격 좁히기] margin-bottom을 8px로 줄여서 카드 사이를 더 쫀쫀하게 밀착시켰습니다.
         card_html = (
-            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
+            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 8px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none; padding-left: 32px;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
