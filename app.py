@@ -71,7 +71,7 @@ menu = option_menu(
             "background-color": "#ffffff", 
             "border-radius": "10px", 
             "border": "1px solid #eee",
-            "margin-bottom": "15px" /* 메뉴 아래 여백 살짝 축소 */
+            "margin-bottom": "15px" # 💡 여기에 있던 /* ... */ 주석을 파이썬에 맞게 # 으로 수정했습니다!
         },
         "icon": {"color": "#FF4B4B", "font-size": "14px"}, 
         "nav-link": {
@@ -90,7 +90,6 @@ menu = option_menu(
         },
     }
 )
-
 # 💡 가치평가 화면이 아닐 때만 파라미터를 지워서 메뉴 꼬임을 방지합니다.
 if menu != "가치평가":
     st.query_params.clear()
