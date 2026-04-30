@@ -117,23 +117,23 @@ def render_earnings_menu():
             if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" 
             return "#555555" 
 
-        # 💡 깔끔한 텍스트 폼 유지
+# 💡 깔끔한 텍스트 폼 유지 (margin-left를 추가해 OP와 살짝 띄워줍니다)
         growth_html = ""
         if yoy or qoq:
             yoy_colored = f"<span style='color: {get_growth_color(yoy)}; font-weight: 600;'>{yoy}</span>" if yoy else "-"
             qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
-            growth_html = f"<span style='font-size: 12px; color: #888;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
+            growth_html = f"<span style='font-size: 12px; color: #888; margin-left: 12px;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
 
         # 💡 시간 포맷 압축
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [핵심] 아랫줄 양극단 정렬(space-between) 삭제 -> 왼쪽으로 나란히 정렬
+        # 💡 [핵심] 아랫줄의 flex 속성을 모조리 빼버리고, 순수 text-align: left 로 박아버림!
         card_html = (
             f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 16px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
             f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
             f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
             
-            # --- 윗줄 (종목명, 서프상태 + 오른쪽 시간) ---
+            # --- 윗줄 (종목명, 서프상태 + 오른쪽 끝 시간) ---
             f"    <div style='display: flex; justify-content: space-between; align-items: baseline; width: 100%;'>"
             f"      <div style='display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;'>"
             f"        <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
@@ -142,12 +142,10 @@ def render_earnings_menu():
             f"      <div style='font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-left: 10px;'>{short_time}</div>" 
             f"    </div>"
             
-            # --- 아랫줄 (왼쪽으로 나란히 정렬) ---
-            f"    <div style='display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%;'>"
-            f"      <div style='font-size: 14px; color: #333;'>"
-            f"        <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
-            f"      </div>"
-            f"      <div>{growth_html}</div>"
+            # --- 아랫줄 (Flex 제거! 무조건 왼쪽 정렬 텍스트 흐름) ---
+            f"    <div style='font-size: 14px; color: #333; text-align: left; width: 100%; white-space: normal; line-height: 1.4;'>"
+            f"      <span style='color: #888; font-size: 12px;'>OP:</span> {op_display} {gap_text}"
+            f"      {growth_html}"
             f"    </div>"
             
             f"  </div>"
