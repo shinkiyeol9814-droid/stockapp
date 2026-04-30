@@ -24,32 +24,23 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [원인 해결] 카드 체크박스 설정은 유지하되, 상단 토글만 감옥에서 해방시킵니다!
     st.markdown("""
     <style>
-    /* 1. 하단 카드들에 들어가는 체크박스 (기존 그대로 완벽 유지) */
+    /* 1. 하단 체크박스를 카드 내부로 예쁘게 안착 */
     div[data-testid="stCheckbox"] {
         position: relative;
         z-index: 99;         
         left: 14px;          
         top: 14px;           
-        width: 30px; /* <--- 이 30px 제한이 토글까지 괴롭히고 있었습니다! */
+        width: 30px;         
     }
 
-    /* 2. 💡 [핵심] 상단 필터(컬럼) 안에 있는 토글은 30px 제한을 풀고 넉넉하게 가로로 폅니다! */
-    div[data-testid="column"] div[data-testid="stCheckbox"],
-    div[data-testid="column"] div[data-testid="stToggle"] {
-        width: auto !important;         /* 30px 감옥 해제! */
-        position: static !important;    /* 위치 강제 이동 해제! */
-        margin-bottom: 24px !important; /* 하단 캡션 글씨와 겹치지 않게 여백 넉넉히 추가! */
+    /* 2. 토글 버튼 글자(관심종목만) 탑 쌓기 절대 방어 (기열님이 말씀하신 정상 코드 100% 복구!) */
+    div[data-testid="stToggle"] label p {
+        min-width: 120px !important;    /* 공간이 아무리 좁아져도 120px은 무조건 사수! */
+        white-space: nowrap !important; /* 줄바꿈 절대 금지 */
+        word-break: keep-all !important;
     }
-    
-    div[data-testid="column"] label p {
-        white-space: nowrap !important; /* 무조건 가로로 한 줄 유지 */
-        min-width: 140px !important;
-        overflow: visible !important;
-    }
-    
     </style>
     """, unsafe_allow_html=True)
 
@@ -82,7 +73,7 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    f_col1, f_col2, f_col3 = st.columns([2, 3, 3])
+    f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
