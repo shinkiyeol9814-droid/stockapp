@@ -133,7 +133,7 @@ def render_earnings_menu():
         
         def get_growth_color(val):
             if "+" in val or "흑전" in val: return "#FF0000" 
-            if "-" in val or "적전" in val or "적지" in val: return "#1E90FF" 
+            if "-" in val or "적전" in val or "적자" in val: return "#1E90FF" 
             return "#555555" 
 
         growth_html = ""
