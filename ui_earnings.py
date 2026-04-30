@@ -48,6 +48,11 @@ def render_earnings_menu():
         white-space: nowrap !important; /* 무조건 가로로 한 줄 유지 */
         min-width: max-content !important;
     }
+    
+    div[data-testid="column"]:last-child {
+        min-width: 140px !important;
+        overflow: visible !important;
+    }    
     </style>
     """, unsafe_allow_html=True)
 
