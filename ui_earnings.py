@@ -24,19 +24,20 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [마법의 CSS] 유체이탈 체크박스 복귀 & 빈 줄 삼키기
+    # 💡 [핵심 마법] 절대 깨지지 않는 정밀 CSS
     st.markdown("""
     <style>
-    /* 1. 체크박스 정상화 및 카드 사이 빈 공간 완벽 삭제 */
+    /* 1. 체크박스를 카드 내부 '안전지대'로 완벽하게 이동 (유체이탈 차단) */
     div[data-testid="stCheckbox"] {
+        margin-bottom: -38px !important; /* 💡 체크박스가 차지하는 공간을 정확히 상쇄하여 아래 카드를 끌어올림 */
         position: relative;
+        top: 16px !important;            /* 💡 끌어올려진 카드 내부에서 텍스트 높이에 맞게 하강 */
+        left: 14px !important;           /* 💡 카드 테두리 안쪽으로 살포시 이동 */
         z-index: 99;
-        margin-bottom: -35px !important; /* 💡 텅 빈 공간을 삼키며 아래쪽 카드를 위로 바짝 당겨옵니다 */
-        top: 15px;                       /* 💡 바짝 당겨진 카드 안쪽(종목명 왼쪽)으로 체크박스를 예쁘게 하강시킵니다 */
-        left: 14px;                      /* 오른쪽으로 살짝 밀어 여백 확보 */
+        width: 30px !important;          /* 체크박스 클릭 범위가 텍스트를 침범하지 않게 고정 */
     }
 
-    /* 2. 성공적으로 방어한 토글 버튼 (관심종목만) 세로 찢어짐 방지 - 그대로 유지 */
+    /* 2. 토글 스위치 (관심종목만) 세로 찢어짐 철통 방어 */
     div[data-testid="stToggle"] label p {
         min-width: 120px !important;
         white-space: nowrap !important;
@@ -74,7 +75,6 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 공간을 넉넉하게 쓰는 2:3:2 비율 유지
     f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
@@ -114,7 +114,7 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 라벨 영역을 삭제해 체크박스 부피를 최소화
+        # 라벨 숨김 처리 유지
         new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
@@ -148,11 +148,14 @@ def render_earnings_menu():
 
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
 
-        # 💡 [카드 자체 여백 제거] margin-bottom을 0px로 주어, 카드가 스스로 만드는 추가 여백도 차단했습니다.
+        # 💡 [카드 골조 완전 개조]
         card_html = (
-            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; padding: 12px; margin-bottom: 0px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
-            f"<summary style='cursor: pointer; list-style: none; outline: none; padding-left: 32px;'>"
-            f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>" 
+            # 카드의 바깥 여백을 margin-bottom: 12px 로 일정하게 통일
+            f"<details style='border: 1px solid {'#FFD700' if is_fav else '#e0e0e0'}; border-radius: 8px; margin-bottom: 12px; background-color: {'#FFFDF0' if is_fav else '#ffffff'};'>"
+            f"<summary style='cursor: pointer; list-style: none; outline: none; padding: 12px; box-sizing: border-box;'>"
+            
+            # 💡 [핵심 방어선] padding-left: 32px 를 주어 체크박스가 들어갈 자리를 아예 "물리적으로" 비워둡니다.
+            f"  <div style='display: flex; flex-direction: column; gap: 6px; width: 100%; padding-left: 32px; box-sizing: border-box;'>" 
             
             f"    <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>"
             f"      <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>"
@@ -167,7 +170,7 @@ def render_earnings_menu():
             
             f"  </div>"
             f"</summary>"
-            f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
+            f"<div style='margin-top: 4px; padding: 12px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
             f"{raw_text}"
             f"</div>"
             f"</details>"
