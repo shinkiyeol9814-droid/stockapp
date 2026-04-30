@@ -55,9 +55,8 @@ if query_stock_code:
     if not matched.empty:
         st.session_state.search_corp_name = matched['Name'].values[0]
     default_menu_idx = 0 
-
 # ==========================================
-# 🚀 상단 가로형 메뉴 생성 (모바일 최적화)
+# 🚀 상단 가로형 메뉴 생성 (모바일 최적화 & 아이콘 색상 동적 전환)
 # ==========================================
 menu = option_menu(
     menu_title=None, 
@@ -71,10 +70,16 @@ menu = option_menu(
             "background-color": "#ffffff", 
             "border-radius": "10px", 
             "border": "1px solid #eee",
-            "margin-bottom": "15px" # 메뉴 아래 여백
+            "margin-bottom": "15px"
         },
-        "icon": {"color": "#FF4B4B", "font-size": "14px"}, 
+        # 💡 [핵심 1] 아이콘 색상을 고정(#FF4B4B)하지 않고, 동적 변수인 var(--icon-color)로 받습니다!
+        "icon": {
+            "color": "var(--icon-color)", 
+            "font-size": "14px"
+        }, 
         "nav-link": {
+            # 💡 [핵심 2] 평소(선택 안 됨) 상태일 때는 변수값을 '빨간색'으로 줍니다.
+            "--icon-color": "#FF4B4B", 
             "font-size": "12px",  
             "text-align": "center", 
             "margin": "0px", 
@@ -83,6 +88,8 @@ menu = option_menu(
             "--hover-color": "#f0f2f6"
         },
         "nav-link-selected": {
+            # 💡 [핵심 3] 메뉴가 선택되면 변수값을 '하얀색'으로 덮어씌웁니다! (위장술 타파)
+            "--icon-color": "white", 
             "background-color": "#FF4B4B", 
             "color": "white", 
             "font-weight": "bold", 
