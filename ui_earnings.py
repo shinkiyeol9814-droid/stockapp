@@ -80,7 +80,7 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    f_col1, f_col2, f_col3 = st.columns([2, 3, 2])
+    f_col1, f_col2, f_col3 = st.columns([2, 3, 3])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
