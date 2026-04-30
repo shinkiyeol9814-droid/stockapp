@@ -24,7 +24,7 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [핵심 마법] 체크박스 위치 고정 + "토글 텍스트 세로 찢어짐 절대 방어" CSS
+    # 💡 [핵심 마법] 체크박스 위치 고정 + 토글 강제 방어
     st.markdown("""
     <style>
     /* 1. 체크박스를 종목명 왼쪽으로 정밀 타격 */
@@ -37,14 +37,13 @@ def render_earnings_menu():
         width: 30px;            
     }
     
-    /* 2. 토글 스위치와 내부 글자가 좁은 공간에서도 가로를 유지하도록 강제 고정 */
-    div[data-testid="stToggle"], 
-    div[data-testid="stToggle"] label,
-    div[data-testid="stToggle"] p {
-        white-space: nowrap !important;
+    /* 2. 토글 스위치 텍스트 세로 찢어짐 "물리적" 완벽 방어 */
+    div[data-testid="stToggle"] {
+        min-width: 150px !important; /* 강제로 넉넉한 너비를 줘버립니다 */
+    }
+    div[data-testid="stToggle"] * {
+        white-space: nowrap !important; /* 내부 요소 줄바꿈 전면 금지 */
         word-break: keep-all !important;
-        min-width: max-content !important;
-        overflow: visible !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -78,14 +77,14 @@ def render_earnings_menu():
         st.warning("표시할 분기 데이터가 없습니다.")
         return
     
-    # 💡 [핵심 수정] 3번째 토글 컬럼의 비율을 높여서 넉넉한 공간을 줍니다. (기존 2.5를 과감히 늘림)
-    f_col1, f_col2, f_col3 = st.columns([1.2, 1.5, 1.3])
+    # 💡 [비율 재조정] 토글이 들어가는 3번째 컬럼 공간을 더 넓게(3) 확보했습니다.
+    f_col1, f_col2, f_col3 = st.columns([3, 4, 3])
     with f_col1:
         selected_quarter = st.selectbox("📌 분기 필터", available_quarters, index=0)
     with f_col2:
         search_keyword = st.text_input("🔍 종목 검색", placeholder="종목명/코드")
     with f_col3:
-        # 공간이 넉넉해지고 CSS 방패까지 있어서 절대 찢어지지 않습니다!
+        # 이제 CSS로 강제 너비 150px을 줬으니 절대 찢어지지 않습니다!
         show_only_favs = st.toggle("⭐ 관심종목만", value=False)
 
     filtered_results = []
