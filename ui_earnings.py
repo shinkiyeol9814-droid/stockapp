@@ -142,19 +142,16 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        # 체크박스 버그 수정 + 깃허브 저장 시 스피너
-        fav_key = f"fav_btn_{code}"
-        if fav_key not in st.session_state:
-            st.session_state[fav_key] = is_fav
-        
-        new_fav = st.checkbox("", key=fav_key, label_visibility="collapsed")  # value= 제거
+        # 💡 복잡한 세션 주입 없이 value=is_fav 로 깔끔하게 통제
+        new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
             if new_fav:
                 st.session_state.favorites.add(code)
             else:
-                st.session_state.favorites.discard(code)  # remove → discard
-            with st.spinner("저장 중..."):
+                st.session_state.favorites.discard(code)  # 기열님의 굿 아이디어 유지!
+            
+            with st.spinner("저장 중..."): # 기열님의 디테일 유지!
                 save_favorites(st.session_state.favorites)
             st.rerun()
 
