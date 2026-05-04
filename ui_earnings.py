@@ -5,8 +5,10 @@ import re
 from github import Github  # 💡 [필수] 깃허브 연동 라이브러리 추가
 from streamlit_autorefresh import st_autorefresh
 
-DATA_FILE = "data/earnings/earnings_data.json"
-FAVORITES_FILE = "data/earnings/favorites.json"
+BASE_DIR = Path(__file__).parent
+DATA_FILE = BASE_DIR / "data" / "earnings" / "earnings_data.json"
+FAVORITES_FILE = "data/earnings/favorites.json"  # 깃허브 경로는 그대로 유지
+LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 
 # 💡 [핵심 추가] 깃허브 레포지토리 연결 헬퍼 함수
 def get_github_repo():
@@ -17,40 +19,32 @@ def get_github_repo():
         return g.get_repo(repo_name)
     return None
 
-# 💡 [핵심 수정] 깃허브에서 직접 json을 읽어옵니다. (안 되면 로컬 폴백)
 def load_favorites():
     repo = get_github_repo()
     if repo:
         try:
-            file_content = repo.get_contents(FAVORITES_FILE)
-            decoded = file_content.decoded_content.decode('utf-8')
-            return set(json.loads(decoded))
+            file_content = repo.get_contents(str(FAVORITES_FILE))
+            return set(json.loads(file_content.decoded_content.decode('utf-8')))
         except:
-            return set() # 파일이 없으면 빈 셋 반환
+            return set()
     else:
-        # PC에서 테스트할 때를 위한 기존 로직 (로컬)
-        if os.path.exists(FAVORITES_FILE):
-            with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
+        if LOCAL_FAVORITES_FILE.exists():
+            with open(LOCAL_FAVORITES_FILE, "r", encoding="utf-8") as f:
                 return set(json.load(f))
         return set()
 
-# 💡 [핵심 수정] 별표를 누르면 깃허브에 직접 Commit(저장)을 날립니다!
 def save_favorites(favorites_set):
     repo = get_github_repo()
     content_str = json.dumps(list(favorites_set), ensure_ascii=False)
-    
     if repo:
         try:
-            # 깃허브에 이미 파일이 있으면 덮어쓰기 (Update Commit)
-            file = repo.get_contents(FAVORITES_FILE)
-            repo.update_file(FAVORITES_FILE, "Update favorites via Streamlit App", content_str, file.sha)
-        except:
-            # 깃허브에 파일이 없으면 새로 생성 (Create Commit)
-            repo.create_file(FAVORITES_FILE, "Create favorites via Streamlit App", content_str)
+            file = repo.get_contents(str(FAVORITES_FILE))
+            repo.update_file(str(FAVORITES_FILE), "Update favorites", content_str, file.sha)
+        except Exception:
+            repo.create_file(str(FAVORITES_FILE), "Create favorites", content_str)
     else:
-        # PC에서 테스트할 때를 위한 기존 로직 (로컬)
-        os.makedirs(os.path.dirname(FAVORITES_FILE), exist_ok=True)
-        with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
+        LOCAL_FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOCAL_FAVORITES_FILE, "w", encoding="utf-8") as f:
             json.dump(list(favorites_set), f, ensure_ascii=False)
 
 def render_earnings_menu():
@@ -80,10 +74,11 @@ def render_earnings_menu():
         if st.button("🔄 새로고침", use_container_width=True):
             st.rerun()
             
-    if not os.path.exists(DATA_FILE):
-        st.info("📂 수집된 실적 데이터가 없습니다. 배치를 먼저 실행해주세요.")
+    # earnings 데이터 읽기도 절대경로로
+    if not DATA_FILE.exists():
+        st.info("📂 수집된 실적 데이터가 없습니다.")
         return
-        
+    
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         results = json.load(f)
         
@@ -146,14 +141,20 @@ def render_earnings_menu():
         
         is_fav = code in st.session_state.favorites
         
-        new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
+        # 체크박스 버그 수정 + 깃허브 저장 시 스피너
+        fav_key = f"fav_btn_{code}"
+        if fav_key not in st.session_state:
+            st.session_state[fav_key] = is_fav
+        
+        new_fav = st.checkbox("", key=fav_key, label_visibility="collapsed")  # value= 제거
         
         if new_fav != is_fav:
             if new_fav:
                 st.session_state.favorites.add(code)
             else:
-                st.session_state.favorites.remove(code)
-            save_favorites(st.session_state.favorites)
+                st.session_state.favorites.discard(code)  # remove → discard
+            with st.spinner("저장 중..."):
+                save_favorites(st.session_state.favorites)
             st.rerun()
 
         raw_text = row.get('원문', '').replace('\n', '<br>')
