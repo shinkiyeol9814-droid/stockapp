@@ -169,7 +169,7 @@ def render_new_high_menu():
                 st.error(f"❌ 저장 실패: {error_msg}")
 
     st.markdown("---")
-    st.markdown("### 🔍 주요 뉴스 모니터링 (최대 3개)")
+    st.markdown("### 🔍 주요 뉴스 모니터링")
     for _, row in edited_df.iterrows():
         original_row = next((item for item in report_data['results'] if item['코드'] == row['코드']), {})
         corp_name_clean = original_row.get('종목명', '알 수 없음')
