@@ -76,8 +76,8 @@ def get_ticker_listing():
 def get_stocks_count(ticker_row, ticker):
     try:
         if 'Stocks' in ticker_row.columns:
-            sc = pd.to_numeric(ticker_row['Stocks'], errors='coerce').fillna(0).values[0]
-            if sc > 0: return sc
+            sc = pd.to_numeric(ticker_row['Stocks'].values[0], errors='coerce')
+            if pd.notna(sc) and sc > 0: return sc
     except: pass
     try:
         url = f"https://m.stock.naver.com/api/stock/{ticker}/integration"
@@ -92,9 +92,10 @@ def get_stocks_count(ticker_row, ticker):
     except: pass
     try:
         if 'Marcap' in ticker_row.columns and 'Close' in ticker_row.columns:
-            marcap = pd.to_numeric(ticker_row['Marcap'], errors='coerce').fillna(0).values[0]
-            close_p = pd.to_numeric(ticker_row['Close'], errors='coerce').fillna(0).values[0]
-            if marcap > 0 and close_p > 0: return int(marcap / close_p)
+            marcap  = pd.to_numeric(ticker_row['Marcap'].values[0], errors='coerce')
+            close_p = pd.to_numeric(ticker_row['Close'].values[0],  errors='coerce')
+            if pd.notna(marcap) and pd.notna(close_p) and marcap > 0 and close_p > 0:
+                return int(marcap / close_p)
     except: pass
     return 1
 
@@ -118,18 +119,28 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    master_dict = {y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan, '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan} for y in target_years}
+    # 💡 [수정 2] '_dep' 필드를 master_dict 초기화에 추가 (타이밍 꼬임 방지)
+    master_dict = {
+        y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
+            '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan, '_dep': np.nan}
+        for y in target_years
+    }
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
         main_res = requests.get(main_url, headers=HEADERS, timeout=7)
         encparam = ""
         match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
         if match: encparam = match.group(1)
-        ajax_headers = HEADERS.copy(); ajax_headers["Referer"] = main_url
+        ajax_headers = HEADERS.copy()
+        ajax_headers["Referer"] = main_url
+        
         urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ]
+        
         for url in urls:
             res = requests.get(url, headers=ajax_headers, timeout=7)
             df_parsed = parse_and_filter_html(res.text)
@@ -146,23 +157,39 @@ def get_hybrid_financials(ticker):
                                     try: return float(re.sub(r'[^\d\.-]', '', str(val)))
                                     except: pass
                                 return np.nan
-                            r = get_v(r'^(매출액|영업수익)')
-                            o = get_v(r'^영업이익$')
+                            
+                            r        = get_v(r'^(매출액|영업수익)')
+                            o        = get_v(r'^영업이익$')
                             if pd.isna(o): o = get_v(r'^영업이익\(발표기준\)')
-                            n = get_v(r'^(당기순이익|지배주주순이익)')
-                            cap = get_v(r'^(자본총계|지배주주지분)')
-                            ebitda = get_v(r'^EBITDA$')
+                            n        = get_v(r'^(당기순이익|지배주주순이익)')
+                            cap      = get_v(r'^(자본총계|지배주주지분)')
+                            
+                            # 💡 [수정 1] 정규식 앵커 처리 완료
+                            ebitda   = get_v(r'EBITDA$')
                             net_debt = get_v(r'^순차입금$')
-                            if pd.isna(master_dict[y]['매출액']) and pd.notna(r): master_dict[y]['매출액'] = r
-                            if pd.isna(master_dict[y]['영업이익']) and pd.notna(o): master_dict[y]['영업이익'] = o
-                            if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n): master_dict[y]['당기순이익'] = n
-                            if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap): master_dict[y]['자본총계'] = cap
-                            if pd.isna(master_dict[y]['EBITDA']) and pd.notna(ebitda): master_dict[y]['EBITDA'] = ebitda
+                            dep      = get_v(r'^(감가상각비|감가상각및상각비)$')
+                            
+                            if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
+                            if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
+                            if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):      master_dict[y]['당기순이익'] = n
+                            if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap):      master_dict[y]['자본총계'] = cap
+                            if pd.isna(master_dict[y]['EBITDA'])   and pd.notna(ebitda):  master_dict[y]['EBITDA']   = ebitda
                             if pd.isna(master_dict[y]['순차입금']) and pd.notna(net_debt): master_dict[y]['순차입금'] = net_debt
+                            if pd.isna(master_dict[y]['_dep'])     and pd.notna(dep):      master_dict[y]['_dep']     = dep
+                            
+        # 💡 [수정 2] 통신 루프가 완전히 종료된 후 마지막에 폴백(EBITDA 계산) 일괄 적용
+        for y in target_years:
+            d = master_dict[y]
+            if pd.isna(d['EBITDA']) and pd.notna(d['영업이익']) and pd.notna(d['_dep']):
+                d['EBITDA'] = d['영업이익'] + d['_dep']
+                
     except: pass
     rows = []
     for y in target_years:
-        row = master_dict[y].copy(); row['Year'] = y; row['Plot_Date'] = pd.to_datetime(f"{y}-12-28"); row['Label'] = f"{y}년"
+        row = master_dict[y].copy()
+        row['Year']      = y
+        row['Plot_Date'] = pd.to_datetime(f"{y}-12-28")
+        row['Label']     = f"{y}년"
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -178,7 +205,6 @@ def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
     </div>
     """
 
-# 💡 기열님의 단일 함수화: 빈 칸/에러는 np.nan으로 처리해 원본 DataFrame 덮어쓰기 방어 완벽 수행
 def extract_number(val):
     if pd.isna(val) or str(val).strip() == "": return np.nan
     s = str(val).replace(',', '').replace('✅', '').strip()
@@ -363,16 +389,15 @@ def render_valuation_menu():
                                 st.rerun()
                             else: st.error(f"❌ 저장 실패: {msg}")
 
-                    # 💡 친구분의 피드백 반영: 버튼 클릭 이벤트 안에서만 데이터프레임 덮어쓰기 허용
                     if fin_update_clicked or fin_save_clicked:
                         for col in cols_to_edit:
                             fin_df[col] = edited_df[col].apply(extract_number).values
 
                     col_p     = '당기순이익'
                     band_name = "PER"
-                    if "POR" in val_type:   col_p = '영업이익';  band_name = "POR"
-                    elif "PBR" in val_type: col_p = '자본총계';  band_name = "PBR"
-                    elif "EBITDA" in val_type: col_p = 'EBITDA'; band_name = "EV/EBITDA"
+                    if "POR" in val_type:      col_p = '영업이익';  band_name = "POR"
+                    elif "PBR" in val_type:    col_p = '자본총계';  band_name = "PBR"
+                    elif "EBITDA" in val_type: col_p = 'EBITDA';    band_name = "EV/EBITDA"
 
                     def get_t(y):
                         row = fin_df[fin_df['Year'] == y]
@@ -514,14 +539,8 @@ def render_valuation_menu():
                     if today_m > 0 and today_m < 300:
                         fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
 
-                    def _fmt_metric(v):
-                        try:
-                            f = float(v)
-                            return "N/A" if (np.isnan(f) or f == 0) else f"{f:,.0f}억"
-                        except: return "N/A"
-
-                    bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{_fmt_metric(row[col_p])}" for _, row in fin_df.iterrows()]
-                    fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
+                    # 💡 [수정 3] fig1 레이블은 연도만 깔끔하게 나오도록 원복
+                    fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                     fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
 
@@ -557,6 +576,13 @@ def render_valuation_menu():
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
                         fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderpad=3, borderwidth=1)
 
+                    def _fmt_metric(v):
+                        try:
+                            f = float(v)
+                            return "N/A" if (np.isnan(f) or f == 0) else f"{f:,.0f}억"
+                        except: return "N/A"
+
+                    bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{_fmt_metric(row[col_p])}" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
                     fig2.update_layout(height=300, margin=dict(l=0, r=20, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
