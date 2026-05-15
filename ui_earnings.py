@@ -152,10 +152,8 @@ def render_earnings_menu():
         if st.session_state.ea_favs and code not in st.session_state.favorites: continue
         filtered_results.append(row)
 
-    st.markdown("<div style='margin-top: 15px;'></div>")
     st.caption(f"📊 **{st.session_state.ea_quarter}** 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
     st.divider()
-    st.markdown("<div style='height: 24px;'></div>")
     
     for row in filtered_results:
         corp_name = row.get('종목명', '')
@@ -189,7 +187,7 @@ def render_earnings_menu():
                     elif "부합" in gap: surf_status = "부합"
             
             if not surf_status or "없음" in surf_status:
-                surf_status = "데이터 분석중"
+                surf_status = "컨센 없음"
 
         is_fav = code in st.session_state.favorites
         new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
