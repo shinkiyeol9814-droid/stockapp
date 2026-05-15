@@ -3,15 +3,14 @@ import json
 import os
 import re
 from pathlib import Path
-from github import Github  # 💡 [필수] 깃허브 연동 라이브러리 추가
+from github import Github
 from streamlit_autorefresh import st_autorefresh
 
 BASE_DIR = Path(__file__).parent
 DATA_FILE = BASE_DIR / "data" / "earnings" / "earnings_data.json"
-FAVORITES_FILE = "data/earnings/favorites.json"  # 깃허브 경로는 그대로 유지
+FAVORITES_FILE = "data/earnings/favorites.json"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 
-# 💡 [핵심 추가] 깃허브 레포지토리 연결 헬퍼 함수
 def get_github_repo():
     token = st.secrets.get("GITHUB_TOKEN", "")
     repo_name = st.secrets.get("GITHUB_REPO", "")
@@ -56,8 +55,65 @@ def render_earnings_menu():
 
     st.markdown("""
     <style>
-    /* 하단 카드 체크박스 위치 고정 (절대 건드리지 않음) */
     div[data-testid="stCheckbox"] {
         position: relative;
         z-index: 99;         
-        left: 14px;
+        left: 14px;          
+        top: 14px;           
+        width: 30px;         
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([8, 2])
+    with col1:
+        st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
+    with col2:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.rerun()
+            
+    if not DATA_FILE.exists():
+        st.info("📂 수집된 실적 데이터가 없습니다.")
+        return
+    
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        results = json.load(f)
+        
+    if not results:
+        st.warning("분석된 실적 데이터가 없습니다.")
+        return
+
+    results = sorted(results, key=lambda x: x['발표시간'], reverse=True)
+    
+    available_quarters = sorted(list(set([
+        row.get('해당분기') for row in results 
+        if row.get('해당분기') and "미상" not in row.get('해당분기')
+    ])), reverse=True)
+    
+    if not available_quarters:
+        st.warning("표시할 분기 데이터가 없습니다.")
+        return
+    
+    if 'ea_quarter' not in st.session_state:
+        st.session_state.ea_quarter = available_quarters[0]
+    if 'ea_keyword' not in st.session_state:
+        st.session_state.ea_keyword = ""
+    if 'ea_favs' not in st.session_state:
+        st.session_state.ea_favs = False
+
+    with st.form("earnings_search_form", border=False):
+        f_col1, f_col2, f_col3, f_col4 = st.columns([2, 3, 1.2, 1.8])
+        with f_col1:
+            idx = available_quarters.index(st.session_state.ea_quarter) if st.session_state.ea_quarter in available_quarters else 0
+            ui_quarter = st.selectbox("📌 분기 필터", available_quarters, index=idx)
+        with f_col2:
+            ui_keyword = st.text_input("🔍 종목 검색", value=st.session_state.ea_keyword, placeholder="종목명/코드")
+        with f_col3:
+            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+            search_btn = st.form_submit_button("검색", type="primary", use_container_width=True)
+        with f_col4:
+            st.markdown("<div style='font-size: 14px; color: #31333F; margin-bottom: 8px;'>⭐ 관심종목만</div>", unsafe_allow_html=True)
+            ui_show_favs = st.toggle("hidden_fav_toggle", value=st.session_state.ea_favs, label_visibility="collapsed")
+
+    if search_btn:
+        st.session_state.ea_quarter = ui
