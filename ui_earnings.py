@@ -54,7 +54,6 @@ def render_earnings_menu():
     if 'favorites' not in st.session_state:
         st.session_state.favorites = load_favorites()
 
-    # 💡 [완전 정화] 문제의 토글 CSS 싹 다 날렸습니다! (카드 체크박스만 안전하게 유지)
     st.markdown("""
     <style>
     /* 하단 카드 체크박스 위치 고정 (절대 건드리지 않음) */
@@ -75,7 +74,6 @@ def render_earnings_menu():
         if st.button("🔄 새로고침", use_container_width=True):
             st.rerun()
             
-    # earnings 데이터 읽기도 절대경로로
     if not DATA_FILE.exists():
         st.info("📂 수집된 실적 데이터가 없습니다.")
         return
@@ -104,9 +102,7 @@ def render_earnings_menu():
     with f_col2:
         search_keyword = st.text_input("🔍 종목 검색", placeholder="종목명/코드")
     with f_col3:
-        # 💡 [핵심 해결책] 기열님 아이디어 적용! 종목 검색처럼 위에 라벨, 아래에 토글 배치
         st.markdown("<div style='font-size: 14px; color: #31333F; margin-bottom: 8px;'>⭐ 관심종목만</div>", unsafe_allow_html=True)
-        # 토글 자체의 텍스트는 완전히 숨김(collapsed) 처리하여 절대 세로로 찢어지지 않음
         show_only_favs = st.toggle("hidden_fav_toggle", value=False, label_visibility="collapsed")
 
     filtered_results = []
@@ -139,23 +135,50 @@ def render_earnings_menu():
         surf_status = row.get('서프_상태', '')
         yoy = row.get('YoY', '')
         qoq = row.get('QoQ', '')
-        
+        raw_text = row.get('원문', '')
+
+        # 💡 [핵심 추가 1] 백엔드 데이터 누락 보정 (컨센없음 구출 작전)
+        if "없음" in surf_status or not surf_status:
+            # 패턴 1: 퍼센트(%) 괴리율 추출 -> 예) 영업익 : 38억(예상치 : -3억, +1368.8%)
+            op_match_pct = re.search(r'영업익.*?\(\s*예상치.*?[,]\s*([+-]?\d+\.?\d*)%\s*\)', raw_text)
+            if op_match_pct:
+                gap = op_match_pct.group(1)
+                try:
+                    gap_f = float(gap)
+                    if gap_f >= 10: surf_status = "서프라이즈"
+                    elif gap_f <= -10: surf_status = "쇼크"
+                    elif gap_f > 0: surf_status = "상회"
+                    else: surf_status = "하회"
+                except:
+                    pass
+            else:
+                # 패턴 2: 텍스트(흑전/적전) 추출 -> 예) 영업익 : 38억(예상치 : -3억, 흑전)
+                op_match_txt = re.search(r'영업익.*?\(\s*예상치.*?[,]\s*(흑전|적전|부합)\s*\)', raw_text)
+                if op_match_txt:
+                    gap = op_match_txt.group(1)
+                    if "흑전" in gap: surf_status = "서프라이즈"
+                    elif "적전" in gap: surf_status = "쇼크"
+                    elif "부합" in gap: surf_status = "부합"
+
         is_fav = code in st.session_state.favorites
         
-        # 💡 복잡한 세션 주입 없이 value=is_fav 로 깔끔하게 통제
         new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
             if new_fav:
                 st.session_state.favorites.add(code)
             else:
-                st.session_state.favorites.discard(code)  # 기열님의 굿 아이디어 유지!
+                st.session_state.favorites.discard(code)
             
-            with st.spinner("저장 중..."): # 기열님의 디테일 유지!
+            with st.spinner("저장 중..."):
                 save_favorites(st.session_state.favorites)
             st.rerun()
 
-        raw_text = row.get('원문', '').replace('\n', '<br>')
+        # 💡 [핵심 추가 2] 원문의 공시 URL을 찾아 하이퍼링크 <a> 태그로 완벽 변환
+        raw_text_html = raw_text.replace('\n', '<br>')
+        url_pattern = re.compile(r'(https?://[^\s<]+)')
+        raw_text_html = url_pattern.sub(r'<a href="\1" target="_blank" style="color: #1E90FF; font-weight: bold; text-decoration: underline;">\1</a>', raw_text_html)
+
         if "서프라이즈" in surf_status or "상회" in surf_status: status_color = "#FF0000" 
         elif "쇼크" in surf_status or "하회" in surf_status: status_color = "#1E90FF" 
         else: status_color = "#555555" 
@@ -163,7 +186,9 @@ def render_earnings_menu():
         op_display = f"<b>{op}억</b>" if op != "-" else "<b>-</b>"
         if str(op).startswith('-'): op_display = f"<b style='color: #1E90FF;'>{op}억</b>"
         
-        gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap else ""
+        gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap}%)</span>" if gap and gap not in ("흑전", "적전", "부합") else ""
+        if gap in ("흑전", "적전", "부합"):
+            gap_text = f"<span style='color: {status_color}; font-weight: bold;'>({gap})</span>"
         
         def get_growth_color(val):
             if "+" in val or "흑전" in val: return "#FF0000" 
@@ -197,7 +222,7 @@ def render_earnings_menu():
             f"  </div>"
             f"</summary>"
             f"<div style='padding: 0px 12px 12px 42px; border-top: 1px dashed #eee; font-size: 13px; color: #444; line-height: 1.6;'>"
-            f"{raw_text}"
+            f"{raw_text_html}"  # 💡 변환된 HTML 데이터 삽입
             f"</div>"
             f"</details>"
         )
