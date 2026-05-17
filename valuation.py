@@ -104,32 +104,20 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-# 💡 [핵심 해결 1] 강제 회전(Transpose)의 저주를 풀고 스마트하게 회전시키는 로직
+# MultiIndex 구조 평탄화 (Transpose 버그 제거버전)
 def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
         parsed_tables = []
         for df in dfs:
             try:
-                # 1. 멀티인덱스 완벽하게 평탄화
                 if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = ["_".join([str(x) for x in col if pd.notna(x) and str(x)!='nan']) for col in df.columns]
+                    df.columns = ["_".join([str(x) for x in col if str(x) != 'nan']) for col in df.columns]
 
                 df = df.copy()
                 first_col = df.columns[0]
                 df[first_col] = df[first_col].astype(str).str.replace(" ", "").str.strip()
                 df = df.set_index(first_col)
-
-                # 2. [가장 중요] 가로/세로 어느 쪽에 연도(2024 등)가 더 많은지 세어보고 똑똑하게 회전
-                idx_str = " ".join(df.index.astype(str))
-                col_str = " ".join(df.columns.astype(str))
-                idx_years = len(re.findall(r'20\d{2}', idx_str))
-                col_years = len(re.findall(r'20\d{2}', col_str))
-                
-                # 세로(Index)에 연도가 더 많다면? 컨센서스 표처럼 뒤집힌 것이므로 90도 원상복구!
-                if idx_years > col_years and idx_years > 0:
-                    df = df.T
-
                 parsed_tables.append(df)
             except:
                 continue
@@ -155,15 +143,15 @@ def get_hybrid_financials(ticker):
         ajax_headers["Referer"] = main_url
         
         htmls = [main_res.text]
-        
-        # 💡 [핵심 해결 2] 데이터 밭인 컨센서스(c1050001)와 투자지표(c1030001) 집중 타격
         urls = [
-            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}", # 컨센서스 탭
-            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}", # 투자지표 탭
+            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}",
+            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1050001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1030001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ]
         
         for url in urls:
@@ -178,25 +166,45 @@ def get_hybrid_financials(ticker):
             for df_parsed in dfs_parsed:
                 for c in df_parsed.columns:
                     c_str = str(c)
-                    # 💡 연도(202X) 추출 정규식
                     match_yr = re.search(r'(20\d{2})', c_str)
                     if match_yr:
                         y = int(match_yr.group(1))
                         if y in target_years:
+                            # 십자포화(Cross-search) 파싱 로직
                             def get_v(p):
                                 for k in df_parsed.index:
                                     k_str = str(k).replace(" ", "").upper()
                                     if re.search(p, k_str, re.I):
-                                        val = df_parsed.loc[k, c]
-                                        if isinstance(val, pd.Series): 
-                                            val = val.dropna()
-                                            if len(val) == 0: continue
-                                            val = val.iloc[0]
                                         try:
+                                            val = df_parsed.loc[k, c]
+                                            if isinstance(val, pd.Series): 
+                                                val = val.dropna()
+                                                if len(val) == 0: continue
+                                                val = val.iloc[0]
                                             cleaned = re.sub(r'[^\d\.-]', '', str(val))
-                                            if cleaned in ["", "-", ".", "-.", "NaN", "nan"]: continue
-                                            return float(cleaned)
-                                        except: continue
+                                            if cleaned not in ["", "-", ".", "-.", "NaN", "nan"]:
+                                                return float(cleaned)
+                                        except: pass
+                                
+                                for col in df_parsed.columns:
+                                    col_str = str(col).replace(" ", "").upper()
+                                    if re.search(p, col_str, re.I):
+                                        try:
+                                            if c in df_parsed.index: val = df_parsed.loc[c, col]
+                                            else:
+                                                y_str = str(y)
+                                                matched_idx = [i for i in df_parsed.index if y_str in str(i)]
+                                                if matched_idx: val = df_parsed.loc[matched_idx[0], col]
+                                                else: val = df_parsed.iloc[0][col]
+                                            
+                                            if isinstance(val, pd.Series): 
+                                                val = val.dropna()
+                                                if len(val) == 0: continue
+                                                val = val.iloc[0]
+                                            cleaned = re.sub(r'[^\d\.-]', '', str(val))
+                                            if cleaned not in ["", "-", ".", "-.", "NaN", "nan"]:
+                                                return float(cleaned)
+                                        except: pass
                                 return np.nan
                             
                             r        = get_v(r'^(매출액|영업수익)')
@@ -204,18 +212,13 @@ def get_hybrid_financials(ticker):
                             if pd.isna(o): o = get_v(r'^영업이익\(발표기준\)')
                             n        = get_v(r'^(당기순이익|지배주주순이익)')
                             cap      = get_v(r'^(자본총계|지배주주지분)')
-                            
-                            # 💡 [핵심 해결 3] 무적의 EV/EBITDA 정규식
-                            ev_ebitda_mult = get_v(r'EV.*EBITDA')
+                            ev_ebitda_mult = get_v(r'EV\s*/?\s*EBITDA')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
                             if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):      master_dict[y]['당기순이익'] = n
                             if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap):      master_dict[y]['자본총계'] = cap
-                            
-                            # 컨센서스 배수가 발견되면 지체 없이 저장!
-                            if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev_ebitda_mult): 
-                                master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
+                            if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev_ebitda_mult): master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
     except: pass
     rows = []
     for y in target_years:
@@ -348,7 +351,7 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 밴드 차트는 역산된 데이터가 아닌 표에 노출된 '네이버 제공 EV/EBITDA 배수' 원본을 바탕으로 정밀하게 그려집니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 화면의 밴드 차트는 표의 'EV/EBITDA 배수' 원본을 바탕으로 비례 계산되어 그려집니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
@@ -458,20 +461,23 @@ def render_valuation_menu():
                     elif "PBR" in val_type:    col_p = '자본총계';  band_name = "PBR"
                     elif "EBITDA" in val_type: col_p = 'EV/EBITDA'; band_name = "EV/EBITDA"
 
-                    # 💡 [핵심 해결 4] 목표가 및 차트 수식 전면 재작성 (오직 EV/EBITDA 비율만 사용)
+                    # 💡 [핵심 버그 수정 1] 우주로 날아간 27조 원 목표가 수식 완벽 픽스!
                     def get_t(y):
                         row = fin_df[fin_df['Year'] == y]
                         if len(row) > 0 and pd.notna(row[col_p].values[0]) and row[col_p].values[0] > 0:
                             if "EBITDA" in val_type:
+                                # EV/EBITDA는 깔끔하게 "현재가 * (목표배수 / 현재배수)" 로 역산
                                 curr_mult = float(row[col_p].values[0])
-                                # 목표 시가총액 = 현재 시가총액 * (목표 배수 / 현재 배수)
                                 target_marcap = curr_marcap * (target_mult / curr_mult)
                                 tp = curr_p * (target_mult / curr_mult)
                                 return float(tp), float(((tp / curr_p) - 1) * 100), float(target_marcap)
                             else:
+                                # 일반 재무지표 (POR, PER, PBR)
                                 val = float(row[col_p].values[0]) * UNIT
                                 target_marcap = val * target_mult
-                                tp = float((target_marcap * UNIT) / stocks_count) if stocks_count > 0 else 0
+                                # [수정 전] tp = float((target_marcap * UNIT) / stocks_count) -> 1억 배 뻥튀기 원흉!
+                                # [수정 후] 이미 target_marcap이 원 단위이므로 바로 나눔
+                                tp = float(target_marcap / stocks_count) if stocks_count > 0 else 0
                                 return float(tp), float(((tp / curr_p) - 1) * 100), float(target_marcap / UNIT)
                         return 0.0, 0.0, 0.0
 
@@ -506,13 +512,11 @@ def render_valuation_menu():
                     future_dates   = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
 
+                    # 💡 [핵심 버그 수정 2] EV/EBITDA 차트 붕괴 해결 (배수를 그대로 활용)
                     raw_metrics   = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics   = pd.Series(raw_metrics).ffill().bfill().values 
                     
-                    if "EBITDA" in val_type:
-                        # 💡 EV/EBITDA 차트는 다르게 그려야 함 (배수를 직접 이용)
-                        cur_metrics = np.where(cur_metrics > 0, (curr_p * stocks_count) / cur_metrics, 0.1)
-                    else:
+                    if not "EBITDA" in val_type: 
                         cur_metrics = cur_metrics * UNIT
                         
                     cur_metrics   = np.nan_to_num(cur_metrics, nan=0.1)
@@ -532,7 +536,11 @@ def render_valuation_menu():
                     interp_history  = ext_interp[:len(df_price)]
                     hist_marcap     = df_price['Close'].values * stocks_count
                     
-                    all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
+                    if "EBITDA" in val_type:
+                        # 당일Val 차트를 그릴 때, 억지로 역산하지 않고 배수 그 자체를 띄움
+                        all_daily_val = np.where(interp_history > 0, interp_history, np.nan)
+                    else: 
+                        all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
 
                     valid_mask      = date_mask & (interp_history > 0)
                     valid_hist_mult = all_daily_val[valid_mask]
@@ -555,7 +563,12 @@ def render_valuation_menu():
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn + (stp * i) > 0])))
 
                     def get_band_y(m_val):
-                        return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
+                        if "EBITDA" in val_type:
+                            # 밴드 주가 = 현재가 * (목표배수 / 현재 보간된 배수)
+                            y_arr = np.where(ext_interp > 0, curr_p * (float(m_val) / ext_interp), np.nan)
+                            return np.where(y_arr > 0, y_arr, np.nan)
+                        else: 
+                            return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
 
                     target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
                     x_range         = [start_date_chart, target_year_end]
