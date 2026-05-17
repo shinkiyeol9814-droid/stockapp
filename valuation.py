@@ -120,9 +120,10 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+    # 💡 [핵심 반영 2] 'EV/EBITDA' 항목을 수집 항목에 추가
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
-            '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan}
+            '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan, 'EV/EBITDA': np.nan}
         for y in target_years
     }
     try:
@@ -133,12 +134,14 @@ def get_hybrid_financials(ticker):
         if match: encparam = match.group(1)
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
+        
         urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ]
+        
         for url in urls:
             res = requests.get(url, headers=ajax_headers, timeout=7)
             df_parsed = parse_and_filter_html(res.text)
@@ -155,6 +158,7 @@ def get_hybrid_financials(ticker):
                                     try: return float(re.sub(r'[^\d\.-]', '', str(val)))
                                     except: pass
                                 return np.nan
+                            
                             r        = get_v(r'^(매출액|영업수익)')
                             o        = get_v(r'^영업이익$')
                             if pd.isna(o): o = get_v(r'^영업이익\(발표기준\)')
@@ -162,12 +166,17 @@ def get_hybrid_financials(ticker):
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
                             net_debt = get_v(r'^순차입금(?!비율|/)')
+                            
+                            # 💡 네이버의 EV/EBITDA 배수 데이터 수집
+                            ev_ebitda_mult = get_v(r'^EV/EBITDA')
+                            
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
                             if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):      master_dict[y]['당기순이익'] = n
                             if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap):      master_dict[y]['자본총계'] = cap
                             if pd.isna(master_dict[y]['EBITDA'])   and pd.notna(ebitda):   master_dict[y]['EBITDA']   = ebitda
                             if pd.isna(master_dict[y]['순차입금']) and pd.notna(net_debt): master_dict[y]['순차입금'] = net_debt
+                            if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev_ebitda_mult): master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
     except: pass
     rows = []
     for y in target_years:
@@ -212,7 +221,6 @@ def apply_search():
 
     new_is_float = "PBR" in new_val_type or "EBITDA" in new_val_type
 
-    # 타입이 바뀌면 해당 위젯 키가 없으므로 get() 기본값이 적용됨
     if new_is_float:
         st.session_state.active_target_mult = float(
             st.session_state.get("ui_target_mult_float", 1.0))
@@ -239,7 +247,6 @@ def render_valuation_menu():
                 if q_mult:
                     mult = float(q_mult)
                     st.session_state.active_target_mult = mult
-                    # 💡 URL 복원 시에도 EBITDA 소수점 허용
                     if q_val and ("PBR" in q_val or "EBITDA" in q_val):
                         st.session_state.ui_target_mult_float = mult
                         st.session_state.ui_target_mult_int   = 10
@@ -252,18 +259,15 @@ def render_valuation_menu():
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
     is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
-        
-    # 이전 렌더와 타입이 달라졌으면 위젯 키 초기화
+    
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
         st.session_state.pop('ui_target_mult_float', None)
         st.session_state.pop('ui_target_mult_int', None)
         st.session_state.active_target_mult = 1.0 if is_float_type else 10.0
     
-    # 현재 타입 저장 (위젯 key 아니므로 언제든 안전하게 세팅 가능)
     st.session_state['_prev_is_float'] = is_float_type
     
-    # 위젯 key 초기화 (없을 때만)
     if is_float_type and 'ui_target_mult_float' not in st.session_state:
         st.session_state['ui_target_mult_float'] = float(st.session_state.active_target_mult)
     elif not is_float_type and 'ui_target_mult_int' not in st.session_state:
@@ -291,28 +295,31 @@ def render_valuation_menu():
             idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
             st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
         with col3:
+            # 💡 [핵심 반영 1] PBR과 EV/EBITDA 모두 소수점 첫째 자리까지만 입력 관리
             if is_float_type:
-                st.number_input("목표배수", step=0.1, format="%.2f", key="ui_target_mult_float")
+                st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
             else:
                 st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
         with col4:
             st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
             submitted = st.form_submit_button("갱신", type="primary", use_container_width=True)
 
-    # 💡 [Oracle Point 6] 이중 새로고침 제거
     if submitted:
         apply_search()
+        st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 증권사 추정치가 없는 미래 연도는 N/A로 표시됩니다. 수기 입력 시 밴드가 정상 출력됩니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 소수주주지분은 제외된 약식 EV입니다. 표의 'EV/EBITDA'는 네이버 제공 지표이며 계산에 쓰이는 직접 입력값이 아닙니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
     
-    # 💡 [Oracle Point 3] 텍스트 소수점 출력 포맷 수정
-    display_mult_str = f"{target_mult:.2f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
-    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EBITDA', '순차입금']
+    # 💡 [핵심 반영 1] 출력 텍스트도 소수점 첫째 자리까지만 표시
+    display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
+    
+    # 💡 [핵심 반영 2] UI 편집 테이블에 네이버 'EV/EBITDA' 열 추가
+    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EBITDA', '순차입금', 'EV/EBITDA']
 
     if corp_name:
         listing = get_ticker_listing()
@@ -358,11 +365,22 @@ def render_valuation_menu():
                     with st.form(f"fin_form_{ticker}"):
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정)</span></div>", unsafe_allow_html=True)
                         display_df = fin_df[['Label'] + cols_to_edit].copy()
+                        
+                        # 💡 [핵심 반영 2] 표 출력 시 EV/EBITDA 배수는 소수점 첫째 자리 포맷팅
                         for col in cols_to_edit:
-                            display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
+                            if col == 'EV/EBITDA':
+                                display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{float(x):.1f}")
+                            else:
+                                display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
+                                
                         for r, c in manual_indices:
                             val = fin_df.at[r, c]
-                            if pd.notna(val) and val != 0: display_df.at[r, c] = f"{int(val):,} ✅"
+                            if pd.notna(val) and val != 0: 
+                                if c == 'EV/EBITDA':
+                                    display_df.at[r, c] = f"{float(val):.1f} ✅"
+                                else:
+                                    display_df.at[r, c] = f"{int(val):,} ✅"
+                                    
                         edited_df = st.data_editor(display_df, disabled=["Label"], hide_index=True, use_container_width=True, key=f"editor_{ticker}")
                         btn_col1, btn_col2 = st.columns(2)
                         with btn_col1: fin_update_clicked = st.form_submit_button("갱신", type="primary", use_container_width=True)
@@ -495,7 +513,6 @@ def render_valuation_menu():
                     valid_hist_mult = all_daily_val[valid_mask]
                     valid_hist_mult = valid_hist_mult[~np.isnan(valid_hist_mult)]
 
-                    # 💡 [Oracle Point 4] Fallback Step 분기 처리 (소수점은 1.0, 정수는 5.0)
                     bands     = []
                     avg_m_val = 0
                     if len(valid_hist_mult) > 0:
