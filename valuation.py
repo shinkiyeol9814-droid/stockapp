@@ -166,20 +166,36 @@ def get_hybrid_financials(ticker):
             return None
 
         def parse_ratio_table(html):
-            """주요재무지표 테이블 파싱 — IFRS 헤더 없이도 동작"""
+            """주요재무지표 테이블 파싱 — MultiIndex 처리 + 올바른 테이블 선택"""
             try:
                 dfs = pd.read_html(io.StringIO(html))
+                candidates = []
                 for df in dfs:
+                    # ① MultiIndex 컬럼 평탄화
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = [
+                            re.sub(r'(Unnamed[^/]*/?\s*)', '', "_".join([str(x) for x in col])).strip('_ ')
+                            for col in df.columns
+                        ]
+        
                     cols_str = " ".join([str(c) for c in df.columns])
-                    # 연도가 컬럼에 있는 테이블을 대상으로
                     if not re.search(r'20\d{2}', cols_str):
                         continue
+        
                     df = df.copy()
                     df.index = df.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
                     date_cols = [c for c in df.columns if re.search(r'20\d{2}', str(c))]
                     if not date_cols:
                         continue
-                    return df[date_cols]
+        
+                    # ② 비율 지표 행(PER/PBR/EV/ROE)이 있는 테이블을 우선 반환
+                    index_joined = " ".join(df.index.astype(str).tolist())
+                    if re.search(r'(EV|PER|PBR|ROE)', index_joined, re.I):
+                        return df[date_cols]
+        
+                    candidates.append(df[date_cols])
+        
+                return candidates[0] if candidates else None
             except:
                 pass
             return None
