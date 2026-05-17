@@ -104,18 +104,20 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-def parse_and_filter_html(html):
+# 💡 [핵심 해결 1] 'IFRS' 조건 없이 연도가 적힌 모든 표를 싹 다 파싱하도록 강화
+def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
-        target_df = None
+        res = []
         for df in dfs:
-            if 'IFRS' in " ".join([str(c) for c in df.columns]): target_df = df.copy(); break
-        if target_df is None: return None
-        target_df.index = target_df.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
-        date_cols = [c for c in target_df.columns if re.search(r'\d{4}', str(c))]
-        target_df = target_df[date_cols]
-        return target_df
-    except: return None
+            cols_str = " ".join([str(c) for c in df.columns])
+            if re.search(r'20\d\d', cols_str):  # 연도 텍스트가 있는 표만 추출
+                df_copy = df.copy()
+                df_copy.index = df_copy.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
+                date_cols = [c for c in df_copy.columns if re.search(r'\d{4}', str(c))]
+                res.append(df_copy[date_cols])
+        return res
+    except: return []
 
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
@@ -133,6 +135,7 @@ def get_hybrid_financials(ticker):
         if match: encparam = match.group(1)
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
+        
         urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
@@ -142,8 +145,9 @@ def get_hybrid_financials(ticker):
         
         for url in urls:
             res = requests.get(url, headers=ajax_headers, timeout=7)
-            df_parsed = parse_and_filter_html(res.text)
-            if df_parsed is not None:
+            dfs_parsed = parse_all_tables(res.text)  # 💡 4개 엔드포인트의 모든 표 스크래핑
+            
+            for df_parsed in dfs_parsed:
                 for c in df_parsed.columns:
                     match_yr = re.search(r'(\d{4})', str(c))
                     if match_yr:
@@ -164,7 +168,9 @@ def get_hybrid_financials(ticker):
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
                             net_debt = get_v(r'^순차입금(?!비율|/)')
-                            ev_ebitda_mult = get_v(r'^EV/EBITDA')
+                            
+                            # 💡 EV/EBITDA 배수만 쏙 뽑아오기
+                            ev_ebitda_mult = get_v(r'EV/EBITDA')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
@@ -213,17 +219,24 @@ def apply_search():
         st.session_state.active_corp_name = new_name
 
     new_val_type = st.session_state.get("ui_val_type", "POR(영업익)")
+    prev_val_type = st.session_state.get("active_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
 
-    # 💡 [핵심 수정 1] 오직 PBR만 소수점 배수로 취급
+    # 💡 오직 PBR만 소수점 배수
     new_is_float = "PBR" in new_val_type
+    prev_is_float = "PBR" in prev_val_type
+    type_changed = new_is_float != prev_is_float
 
     if new_is_float:
-        st.session_state.active_target_mult = float(
-            st.session_state.get("ui_target_mult_float", 1.0))
+        if type_changed:
+            st.session_state.active_target_mult = 1.0
+        else:
+            st.session_state.active_target_mult = float(st.session_state.get("ui_target_mult_float", 1.0))
     else:
-        st.session_state.active_target_mult = float(int(
-            st.session_state.get("ui_target_mult_int", 10)))
+        if type_changed:
+            st.session_state.active_target_mult = 10.0
+        else:
+            st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
 
 def render_valuation_menu():
     if 'app_init_done' not in st.session_state:
@@ -244,7 +257,6 @@ def render_valuation_menu():
                 if q_mult:
                     mult = float(q_mult)
                     st.session_state.active_target_mult = mult
-                    # 💡 URL 파라미터 복원 시에도 오직 PBR만 소수점
                     if q_val and "PBR" in q_val:
                         st.session_state.ui_target_mult_float = mult
                         st.session_state.ui_target_mult_int   = 10
@@ -256,9 +268,8 @@ def render_valuation_menu():
     if 'active_val_type'    not in st.session_state: st.session_state.active_val_type    = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
-    # 💡 오직 PBR만 소수점 취급
     is_float_type = "PBR" in st.session_state.active_val_type
-        
+    
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
         st.session_state.pop('ui_target_mult_float', None)
@@ -294,7 +305,6 @@ def render_valuation_menu():
             idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
             st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
         with col3:
-            # 💡 [핵심 수정 1] PBR만 소수점 배수로 관리 (첫째 자리)
             if is_float_type:
                 st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
             else:
@@ -308,16 +318,15 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 소수주주지분은 제외된 약식 EV입니다. 표의 'EV/EBITDA'는 네이버 제공 지표이며 계산에 쓰이는 직접 입력값이 아닙니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 표의 'EV/EBITDA' 배수는 참고용 네이버 지표입니다. 백엔드 차트 계산을 위해 과거 원본 EBITDA 및 순차입금 데이터가 활용됩니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
     
-    # 💡 PBR만 소수점 텍스트 출력
     display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type) else f"{int(target_mult)}"
     
-    # 💡 [핵심 수정 2] EBITDA 절대값과 순차입금 제외, EV/EBITDA 배수만 표기
+    # 💡 [핵심 해결 2] 테이블에서 EBITDA, 순차입금을 빼고 EV/EBITDA만 표시
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
     if corp_name:
@@ -365,7 +374,6 @@ def render_valuation_menu():
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정)</span></div>", unsafe_allow_html=True)
                         display_df = fin_df[['Label'] + cols_to_edit].copy()
                         
-                        # 💡 [핵심 수정 3] 표 출력 시 EV/EBITDA는 소수점, 나머지는 정수로 포맷팅 분기 처리
                         for col in cols_to_edit:
                             if col == 'EV/EBITDA':
                                 display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{float(x):.1f}")
