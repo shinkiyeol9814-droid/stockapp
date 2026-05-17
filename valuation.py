@@ -104,33 +104,30 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-# 💡 [핵심 구출 작전] 표 뒤집힘(Transpose) 감지 및 MultiIndex 박살내기
+# 💡 [핵심 해결 1] MultiIndex 파싱 버그 완벽 차단 및 Transpose 감지
 def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
         parsed_tables = []
         for df in dfs:
             try:
-                # 1. MultiIndex 무자비하게 펴버리기 (튜플 깨짐 방지)
+                # 1. 멀티인덱스 파괴 (튜플 깨짐 방지)
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = ["_".join([str(x) for x in col if str(x) != 'nan']) for col in df.columns]
 
                 if df.empty: continue
-
                 df = df.copy()
 
-                # 2. [가장 중요] 컨센서스 탭의 가로/세로 뒤집힘(Transpose) 감지
-                # 첫 번째 열의 데이터들에 연도(2022.12 등)가 세로로 박혀있다면 90도 회전!
+                # 2. 컨센서스 탭의 가로세로 뒤집힌 표 자동 감지 후 90도 회전
                 first_col = df.columns[0]
                 first_col_vals = " ".join([str(x) for x in df[first_col].head(10).values])
                 if re.search(r'20\d{2}\.\d{2}', first_col_vals) or re.search(r'20\d{2}년', first_col_vals):
                     df = df.set_index(first_col).T.reset_index()
+                    first_col = df.columns[0] # 회전 후 첫 컬럼 갱신
 
-                # 3. 다시 첫 번째 열을 정상적인 인덱스로 강제 고정
-                first_col = df.columns[0]
+                # 3. 안전하게 인덱스 고정
                 df[first_col] = df[first_col].astype(str).str.replace(" ", "").str.strip()
                 df = df.set_index(first_col)
-                
                 parsed_tables.append(df)
             except:
                 continue
@@ -143,7 +140,7 @@ def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
-            '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan, 'EV/EBITDA': np.nan}
+            '자본총계': np.nan, 'EV/EBITDA': np.nan}
         for y in target_years
     }
     try:
@@ -157,14 +154,15 @@ def get_hybrid_financials(ticker):
         
         htmls = [main_res.text]
         
-        # 💡 [핵심 2] 컨센서스 탭(c1050001) 명시적 포함!
+        # 💡 [핵심 해결 2] 컨센서스 탭 명시적 전체 순회 (Ajax 포함)
         urls = [
-            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}", # 👈 이게 기열님이 원하시는 핵심 탭!
-            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
+            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}&encparam={encparam}", # 투자지표 탭
+            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}&encparam={encparam}", # 컨센서스 메인 탭
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1050001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}" # 컨센서스 Ajax 탭
         ]
         
         for url in urls:
@@ -179,7 +177,7 @@ def get_hybrid_financials(ticker):
             for df_parsed in dfs_parsed:
                 for c in df_parsed.columns:
                     c_str = str(c)
-                    # 💡 열 이름에 연도(202X)가 포함되어 있는지 무적 매칭
+                    # 💡 연도 추출 정규식
                     match_yr = re.search(r'(20\d{2})', c_str)
                     if match_yr:
                         y = int(match_yr.group(1))
@@ -205,21 +203,17 @@ def get_hybrid_financials(ticker):
                             if pd.isna(o): o = get_v(r'^영업이익\(발표기준\)')
                             n        = get_v(r'^(당기순이익|지배주주순이익)')
                             cap      = get_v(r'^(자본총계|지배주주지분)')
-                            ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
-                            net_debt = get_v(r'^순차입금(?!비율|/)')
                             
-                            # 💡 대망의 EV/EBITDA 추출 (무적 정규식)
+                            # 💡 [핵심 해결 3] 무적 정규식 매칭!
                             ev_ebitda_mult = get_v(r'EV.*EBITDA')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
                             if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):      master_dict[y]['당기순이익'] = n
                             if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap):      master_dict[y]['자본총계'] = cap
-                            if pd.isna(master_dict[y]['EBITDA'])   and pd.notna(ebitda):   master_dict[y]['EBITDA']   = ebitda
-                            if pd.isna(master_dict[y]['순차입금']) and pd.notna(net_debt): master_dict[y]['순차입금'] = net_debt
                             
-                            # 💡 긁어온 EV/EBITDA 값을 테이블 표시 및 밴드 차트 용도로 즉시 꽂아버림
-                            if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev_ebitda_mult): 
+                            # 💡 컨센서스 탭의 값이 발견되면 최우선으로 덮어씀 (is_na 조건 제거)
+                            if pd.notna(ev_ebitda_mult): 
                                 master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
     except: pass
     rows = []
@@ -360,7 +354,6 @@ def render_valuation_menu():
     target_mult  = float(st.session_state.active_target_mult)
     display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
     
-    # 💡 [핵심] 순차입금과 EBITDA 계산을 버렸으니, 테이블에는 깔끔하게 EV/EBITDA만 표시
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
     if corp_name:
@@ -468,7 +461,6 @@ def render_valuation_menu():
                         row = fin_df[fin_df['Year'] == y]
                         if len(row) > 0 and pd.notna(row[col_p].values[0]) and row[col_p].values[0] > 0:
                             if "EBITDA" in val_type:
-                                # 💡 [가장 직관적인 방법] 긁어온(또는 입력한) EV/EBITDA 배수로 현재 시가총액을 역산!
                                 curr_mult = float(row[col_p].values[0])
                                 if curr_mult > 0:
                                     target_marcap = curr_marcap * (target_mult / curr_mult)
@@ -514,7 +506,6 @@ def render_valuation_menu():
                     future_dates   = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
                     extended_dates = df_price.index.append(future_dates[1:])
 
-                    # 💡 EV/EBITDA는 단위환산(UNIT) 없이 배수 그대로 사용
                     raw_metrics   = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics   = pd.Series(raw_metrics).ffill().bfill().values 
                     if not "EBITDA" in val_type: cur_metrics *= UNIT
