@@ -104,30 +104,41 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-# MultiIndex 파싱 깨짐 방지 & Transpose 감지
+# 💡 [핵심 해결 1] GPT 추천: MultiIndex 구조 평탄화 및 확실한 인덱싱 로직 교체
 def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
-        res = []
-        for df in dfs:
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = ['_'.join(map(str, col)).strip() for col in df.columns]
-                
-            if not df.empty:
-                first_col = df.columns[0]
-                first_col_vals = " ".join([str(x) for x in df[first_col].head(10).values])
-                if re.search(r'20\d{2}\.\d{2}', first_col_vals) or re.search(r'20\d{2}년', first_col_vals):
-                    df = df.set_index(first_col).T.reset_index()
+        parsed_tables = []
 
-            cols_str = " ".join([str(c) for c in df.columns])
-            if re.search(r'20\d\d', cols_str): 
-                df_copy = df.copy()
-                first_col = df_copy.columns[0]
-                df_copy.index = df_copy[first_col].astype(str).str.replace(" ", "").str.strip()
-                date_cols = [c for c in df_copy.columns if re.search(r'\d{4}', str(c))]
-                res.append(df_copy[date_cols])
-        return res
-    except: return []
+        for df in dfs:
+            try:
+                # MultiIndex flatten
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = [
+                        "_".join([str(x) for x in col if str(x) != 'nan'])
+                        for col in df.columns
+                    ]
+
+                df = df.copy()
+
+                # 첫 컬럼 index 지정
+                first_col = df.columns[0]
+
+                df[first_col] = (
+                    df[first_col]
+                    .astype(str)
+                    .str.replace(" ", "")
+                    .str.strip()
+                )
+
+                df = df.set_index(first_col)
+                parsed_tables.append(df)
+            except:
+                continue
+
+        return parsed_tables
+    except:
+        return []
 
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
@@ -147,11 +158,9 @@ def get_hybrid_financials(ticker):
         ajax_headers["Referer"] = main_url
         
         htmls = [main_res.text]
-        
-        # 💡 [핵심 반영] 기열님 요청: 컨센서스(c1050001) 탭 명시적 추가!
         urls = [
-            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}", # 투자지표
-            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}", # 💡 컨센서스 탭!
+            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}", # 투자지표 탭
+            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}", # 컨센서스 탭
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
@@ -168,7 +177,9 @@ def get_hybrid_financials(ticker):
             dfs_parsed = parse_all_tables(html_text)
             for df_parsed in dfs_parsed:
                 for c in df_parsed.columns:
-                    match_yr = re.search(r'(\d{4})', str(c))
+                    # 💡 [핵심 해결 2] GPT 추천: 문자열 변환 및 정규식 '(20\d{2})' 적용
+                    c_str = str(c)
+                    match_yr = re.search(r'(20\d{2})', c_str)
                     if match_yr:
                         y = int(match_yr.group(1))
                         if y in target_years:
@@ -192,7 +203,9 @@ def get_hybrid_financials(ticker):
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
                             net_debt = get_v(r'^순차입금(?!비율|/)')
-                            ev_ebitda_mult = get_v(r'EV.*EBITDA') 
+                            
+                            # 정규식 무적 방어 (EV.*EBITDA)
+                            ev_ebitda_mult = get_v(r'EV.*EBITDA')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
@@ -333,14 +346,14 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 표의 'EV/EBITDA' 배수는 참고용 네이버 지표입니다. 백엔드 차트 역산을 위한 EBITDA 및 순차입금 데이터가 없는 미래 연도는 밴드가 끊길 수 있습니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 표의 'EV/EBITDA'는 네이버 제공 지표입니다. 차트 계산을 위한 EBITDA 및 순차입금 데이터가 듬성듬성한 경우 밴드가 끊겨 보일 수 있습니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
     display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type) else f"{int(target_mult)}"
     
-    # 💡 UI 테이블 편집에서 제외 (조회용으로만 노출)
+    # 💡 UI 테이블 편집에서 EBITDA/순차입금 제외, EV/EBITDA 배수만 표시
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
     if corp_name:
