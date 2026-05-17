@@ -120,7 +120,6 @@ def parse_and_filter_html(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    # 💡 [핵심 반영 2] 'EV/EBITDA' 항목을 수집 항목에 추가
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
             '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan, 'EV/EBITDA': np.nan}
@@ -134,7 +133,6 @@ def get_hybrid_financials(ticker):
         if match: encparam = match.group(1)
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
-        
         urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
@@ -166,8 +164,6 @@ def get_hybrid_financials(ticker):
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
                             net_debt = get_v(r'^순차입금(?!비율|/)')
-                            
-                            # 💡 네이버의 EV/EBITDA 배수 데이터 수집
                             ev_ebitda_mult = get_v(r'^EV/EBITDA')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
@@ -219,7 +215,8 @@ def apply_search():
     new_val_type = st.session_state.get("ui_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
 
-    new_is_float = "PBR" in new_val_type or "EBITDA" in new_val_type
+    # 💡 [핵심 수정 1] 오직 PBR만 소수점 배수로 취급
+    new_is_float = "PBR" in new_val_type
 
     if new_is_float:
         st.session_state.active_target_mult = float(
@@ -247,7 +244,8 @@ def render_valuation_menu():
                 if q_mult:
                     mult = float(q_mult)
                     st.session_state.active_target_mult = mult
-                    if q_val and ("PBR" in q_val or "EBITDA" in q_val):
+                    # 💡 URL 파라미터 복원 시에도 오직 PBR만 소수점
+                    if q_val and "PBR" in q_val:
                         st.session_state.ui_target_mult_float = mult
                         st.session_state.ui_target_mult_int   = 10
                     else:
@@ -258,8 +256,9 @@ def render_valuation_menu():
     if 'active_val_type'    not in st.session_state: st.session_state.active_val_type    = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
-    is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
-    
+    # 💡 오직 PBR만 소수점 취급
+    is_float_type = "PBR" in st.session_state.active_val_type
+        
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
         st.session_state.pop('ui_target_mult_float', None)
@@ -295,7 +294,7 @@ def render_valuation_menu():
             idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
             st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
         with col3:
-            # 💡 [핵심 반영 1] PBR과 EV/EBITDA 모두 소수점 첫째 자리까지만 입력 관리
+            # 💡 [핵심 수정 1] PBR만 소수점 배수로 관리 (첫째 자리)
             if is_float_type:
                 st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
             else:
@@ -315,11 +314,11 @@ def render_valuation_menu():
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
     
-    # 💡 [핵심 반영 1] 출력 텍스트도 소수점 첫째 자리까지만 표시
-    display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
+    # 💡 PBR만 소수점 텍스트 출력
+    display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type) else f"{int(target_mult)}"
     
-    # 💡 [핵심 반영 2] UI 편집 테이블에 네이버 'EV/EBITDA' 열 추가
-    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EBITDA', '순차입금', 'EV/EBITDA']
+    # 💡 [핵심 수정 2] EBITDA 절대값과 순차입금 제외, EV/EBITDA 배수만 표기
+    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
     if corp_name:
         listing = get_ticker_listing()
@@ -366,7 +365,7 @@ def render_valuation_menu():
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정)</span></div>", unsafe_allow_html=True)
                         display_df = fin_df[['Label'] + cols_to_edit].copy()
                         
-                        # 💡 [핵심 반영 2] 표 출력 시 EV/EBITDA 배수는 소수점 첫째 자리 포맷팅
+                        # 💡 [핵심 수정 3] 표 출력 시 EV/EBITDA는 소수점, 나머지는 정수로 포맷팅 분기 처리
                         for col in cols_to_edit:
                             if col == 'EV/EBITDA':
                                 display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{float(x):.1f}")
@@ -524,7 +523,7 @@ def render_valuation_menu():
                             if len(filtered_hist) > 0:
                                 avg_m_val     = np.mean(filtered_hist)
                                 mn, mx        = np.min(filtered_hist), np.max(filtered_hist)
-                                fallback_step = 1.0 if ("PBR" in val_type or "EBITDA" in val_type) else 5.0
+                                fallback_step = 1.0 if ("PBR" in val_type) else 5.0
                                 if mx <= mn: mx = mn + fallback_step
                                 stp   = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn + (stp * i) > 0])))
