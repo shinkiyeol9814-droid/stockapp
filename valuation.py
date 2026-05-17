@@ -104,16 +104,22 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-# 💡 [핵심 해결 1] MultiIndex 오류 방지: 컬럼 평탄화 및 안전한 인덱스 세팅
+# 💡 [핵심 해결] 컨센서스 탭의 가로세로 뒤집힌 표(Transpose)를 감지하여 똑바로 돌려놓는 마법
 def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
         res = []
         for df in dfs:
-            # 여러 겹의 표 머리글을 하나로 합쳐서 깨짐 방지
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = ['_'.join(map(str, col)).strip() for col in df.columns]
                 
+            if not df.empty:
+                first_col = df.columns[0]
+                first_col_vals = " ".join([str(x) for x in df[first_col].head(10).values])
+                # 첫 번째 열에 연도(2022.12 등)가 세로로 박혀있다면 표를 90도 회전시킴!
+                if re.search(r'20\d{2}\.\d{2}', first_col_vals) or re.search(r'20\d{2}년', first_col_vals):
+                    df = df.set_index(first_col).T.reset_index()
+
             cols_str = " ".join([str(c) for c in df.columns])
             if re.search(r'20\d\d', cols_str): 
                 df_copy = df.copy()
@@ -141,10 +147,9 @@ def get_hybrid_financials(ticker):
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
         
-        # 💡 [핵심 해결 2] 크롤러 타겟에 '컨센서스' 탭과 '메인' 요약본 명시적 추가!
         htmls = [main_res.text]
         urls = [
-            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}", # 컨센서스 서브탭
+            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}", # 💡 컨센서스 탭 추가
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
@@ -165,7 +170,6 @@ def get_hybrid_financials(ticker):
                     if match_yr:
                         y = int(match_yr.group(1))
                         if y in target_years:
-                            # 💡 [핵심 해결 3] 쓰레기값 방어 로직 (빈칸이면 포기하지 말고 다음 행 탐색)
                             def get_v(p):
                                 for k in df_parsed.index:
                                     k_str = str(k).replace(" ", "").upper()
@@ -186,9 +190,7 @@ def get_hybrid_financials(ticker):
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
                             net_debt = get_v(r'^순차입금(?!비율|/)')
-                            
-                            # EV.*EBITDA 정규식으로 유연하게 매칭
-                            ev_ebitda_mult = get_v(r'EV.*EBITDA')
+                            ev_ebitda_mult = get_v(r'EV.*EBITDA') # 💡 괄호/띄어쓰기 완전 방어 정규식
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
@@ -240,8 +242,9 @@ def apply_search():
     prev_val_type = st.session_state.get("active_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
 
-    new_is_float = "PBR" in new_val_type
-    prev_is_float = "PBR" in prev_val_type
+    # 💡 [핵심 요청] PBR과 EV/EBITDA 모두 소수점 첫째 자리 입력 지원
+    new_is_float = "PBR" in new_val_type or "EBITDA" in new_val_type
+    prev_is_float = "PBR" in prev_val_type or "EBITDA" in prev_val_type
     type_changed = new_is_float != prev_is_float
 
     if new_is_float:
@@ -270,7 +273,7 @@ def render_valuation_menu():
                 if q_mult:
                     mult = float(q_mult)
                     st.session_state.active_target_mult = mult
-                    if q_val and "PBR" in q_val:
+                    if q_val and ("PBR" in q_val or "EBITDA" in q_val):
                         st.session_state.ui_target_mult_float = mult
                         st.session_state.ui_target_mult_int   = 10
                     else:
@@ -281,7 +284,7 @@ def render_valuation_menu():
     if 'active_val_type'    not in st.session_state: st.session_state.active_val_type    = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
-    is_float_type = "PBR" in st.session_state.active_val_type
+    is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
     
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
@@ -318,6 +321,7 @@ def render_valuation_menu():
             idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
             st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
         with col3:
+            # 💡 [핵심 반영] PBR과 EV/EBITDA 모두 소수점 첫째 자리 입력
             if is_float_type: st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
             else: st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
         with col4:
@@ -334,7 +338,7 @@ def render_valuation_menu():
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
-    display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type) else f"{int(target_mult)}"
+    display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
     
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
@@ -533,7 +537,7 @@ def render_valuation_menu():
                             if len(filtered_hist) > 0:
                                 avg_m_val     = np.mean(filtered_hist)
                                 mn, mx        = np.min(filtered_hist), np.max(filtered_hist)
-                                fallback_step = 1.0 if ("PBR" in val_type) else 5.0
+                                fallback_step = 1.0 if ("PBR" in val_type or "EBITDA" in val_type) else 5.0
                                 if mx <= mn: mx = mn + fallback_step
                                 stp   = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn + (stp * i) > 0])))
