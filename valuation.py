@@ -104,16 +104,17 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-# 💡 [핵심 해결 1] 'IFRS' 조건 없이 연도가 적힌 모든 표를 싹 다 파싱하도록 강화
+# 💡 [Oracle Point] MultiIndex 파싱 깨짐 방지를 위한 인덱스 지정 방식 변경
 def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
         res = []
         for df in dfs:
             cols_str = " ".join([str(c) for c in df.columns])
-            if re.search(r'20\d\d', cols_str):  # 연도 텍스트가 있는 표만 추출
+            if re.search(r'20\d\d', cols_str): 
                 df_copy = df.copy()
-                df_copy.index = df_copy.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
+                first_col = df_copy.columns[0]
+                df_copy.index = df_copy[first_col].astype(str).str.replace(" ", "").str.strip()
                 date_cols = [c for c in df_copy.columns if re.search(r'\d{4}', str(c))]
                 res.append(df_copy[date_cols])
         return res
@@ -122,9 +123,11 @@ def parse_all_tables(html):
 @st.cache_data(ttl=3600)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+    # 💡 [Oracle Point] 원시 데이터 수집 재활성화 (정확도 향상 목적)
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
-            '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan, 'EV/EBITDA': np.nan}
+            '자본총계': np.nan, 'EBITDA': np.nan, '순차입금': np.nan, 'EV/EBITDA': np.nan,
+            '_dep': np.nan, '_amort': np.nan, '_debt': np.nan, '_cash': np.nan}
         for y in target_years
     }
     try:
@@ -135,7 +138,6 @@ def get_hybrid_financials(ticker):
         if match: encparam = match.group(1)
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
-        
         urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
@@ -145,7 +147,7 @@ def get_hybrid_financials(ticker):
         
         for url in urls:
             res = requests.get(url, headers=ajax_headers, timeout=7)
-            dfs_parsed = parse_all_tables(res.text)  # 💡 4개 엔드포인트의 모든 표 스크래핑
+            dfs_parsed = parse_all_tables(res.text)
             
             for df_parsed in dfs_parsed:
                 for c in df_parsed.columns:
@@ -153,12 +155,17 @@ def get_hybrid_financials(ticker):
                     if match_yr:
                         y = int(match_yr.group(1))
                         if y in target_years:
+                            # 💡 [Oracle Point 1] 무적의 get_v 함수 도입 (공백, 쓰레기값 완벽 제거)
                             def get_v(p):
-                                m = [k for k in df_parsed.index if re.search(p, k)]
-                                if m:
-                                    val = df_parsed.loc[m[0], c]
-                                    try: return float(re.sub(r'[^\d\.-]', '', str(val)))
-                                    except: pass
+                                for k in df_parsed.index:
+                                    k_str = str(k).replace(" ", "").upper()
+                                    if re.search(p, k_str):
+                                        val = df_parsed.loc[k, c]
+                                        try:
+                                            cleaned = re.sub(r'[^\d\.-]', '', str(val))
+                                            if cleaned in ["", "-", ".", "-."]: return np.nan
+                                            return float(cleaned)
+                                        except: return np.nan
                                 return np.nan
                             
                             r        = get_v(r'^(매출액|영업수익)')
@@ -168,9 +175,12 @@ def get_hybrid_financials(ticker):
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             ebitda   = get_v(r'^EBITDA(?!마진|비율|/)')
                             net_debt = get_v(r'^순차입금(?!비율|/)')
-                            
-                            # 💡 EV/EBITDA 배수만 쏙 뽑아오기
-                            ev_ebitda_mult = get_v(r'EV/EBITDA')
+                            ev_ebitda_mult = get_v(r'EV.*EBITDA') # 💡 정규식 완화
+
+                            dep      = get_v(r'감가상각비')
+                            amort    = get_v(r'무형자산상각비')
+                            debt     = get_v(r'(이자발생부채|총차입금)')
+                            cash     = get_v(r'현금및현금성자산')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
@@ -179,6 +189,28 @@ def get_hybrid_financials(ticker):
                             if pd.isna(master_dict[y]['EBITDA'])   and pd.notna(ebitda):   master_dict[y]['EBITDA']   = ebitda
                             if pd.isna(master_dict[y]['순차입금']) and pd.notna(net_debt): master_dict[y]['순차입금'] = net_debt
                             if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev_ebitda_mult): master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
+                            
+                            if pd.isna(master_dict[y]['_dep'])     and pd.notna(dep):   master_dict[y]['_dep']   = dep
+                            if pd.isna(master_dict[y]['_amort'])   and pd.notna(amort): master_dict[y]['_amort'] = amort
+                            if pd.isna(master_dict[y]['_debt'])    and pd.notna(debt):  master_dict[y]['_debt']  = debt
+                            if pd.isna(master_dict[y]['_cash'])    and pd.notna(cash):  master_dict[y]['_cash']  = cash
+
+        # 💡 [Oracle Point] 원시 데이터를 이용한 EBITDA 및 순차입금 안전 폴백(Fallback) 적용
+        last_nd = np.nan
+        for y in target_years:
+            d = master_dict[y]
+            if pd.isna(d['EBITDA']) and pd.notna(d['영업이익']):
+                dep_v   = d['_dep'] if pd.notna(d['_dep']) else 0.0
+                amort_v = d['_amort'] if pd.notna(d['_amort']) else 0.0
+                d['EBITDA'] = d['영업이익'] + dep_v + amort_v
+                
+            if pd.isna(d['순차입금']):
+                if pd.notna(d['_debt']) and pd.notna(d['_cash']):
+                    d['순차입금'] = d['_debt'] - d['_cash']
+                    
+            if pd.notna(d['순차입금']): last_nd = d['순차입금']
+            elif pd.notna(last_nd): d['순차입금'] = last_nd
+
     except: pass
     rows = []
     for y in target_years:
@@ -222,21 +254,16 @@ def apply_search():
     prev_val_type = st.session_state.get("active_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
 
-    # 💡 오직 PBR만 소수점 배수
     new_is_float = "PBR" in new_val_type
     prev_is_float = "PBR" in prev_val_type
     type_changed = new_is_float != prev_is_float
 
     if new_is_float:
-        if type_changed:
-            st.session_state.active_target_mult = 1.0
-        else:
-            st.session_state.active_target_mult = float(st.session_state.get("ui_target_mult_float", 1.0))
+        if type_changed: st.session_state.active_target_mult = 1.0
+        else: st.session_state.active_target_mult = float(st.session_state.get("ui_target_mult_float", 1.0))
     else:
-        if type_changed:
-            st.session_state.active_target_mult = 10.0
-        else:
-            st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
+        if type_changed: st.session_state.active_target_mult = 10.0
+        else: st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
 
 def render_valuation_menu():
     if 'app_init_done' not in st.session_state:
@@ -305,10 +332,8 @@ def render_valuation_menu():
             idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
             st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
         with col3:
-            if is_float_type:
-                st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
-            else:
-                st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
+            if is_float_type: st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
+            else: st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
         with col4:
             st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
             submitted = st.form_submit_button("갱신", type="primary", use_container_width=True)
@@ -318,16 +343,15 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 표의 'EV/EBITDA' 배수는 참고용 네이버 지표입니다. 백엔드 차트 계산을 위해 과거 원본 EBITDA 및 순차입금 데이터가 활용됩니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 소수주주지분은 제외된 약식 EV입니다. 표에는 EBITDA와 순차입금을 모두 수동 노출시켜 목표 시가총액 역산이 정밀하게 계산되도록 구성했습니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
-    
     display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type) else f"{int(target_mult)}"
     
-    # 💡 [핵심 해결 2] 테이블에서 EBITDA, 순차입금을 빼고 EV/EBITDA만 표시
-    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
+    # 💡 [핵심] 밴드 차트가 깨지지 않게 하려면 EBITDA와 순차입금 항목은 반드시 표에 노출시켜야 합니다.
+    cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EBITDA', '순차입금', 'EV/EBITDA']
 
     if corp_name:
         listing = get_ticker_listing()
@@ -383,10 +407,8 @@ def render_valuation_menu():
                         for r, c in manual_indices:
                             val = fin_df.at[r, c]
                             if pd.notna(val) and val != 0: 
-                                if c == 'EV/EBITDA':
-                                    display_df.at[r, c] = f"{float(val):.1f} ✅"
-                                else:
-                                    display_df.at[r, c] = f"{int(val):,} ✅"
+                                if c == 'EV/EBITDA': display_df.at[r, c] = f"{float(val):.1f} ✅"
+                                else: display_df.at[r, c] = f"{int(val):,} ✅"
                                     
                         edited_df = st.data_editor(display_df, disabled=["Label"], hide_index=True, use_container_width=True, key=f"editor_{ticker}")
                         btn_col1, btn_col2 = st.columns(2)
@@ -441,14 +463,12 @@ def render_valuation_menu():
                                 net_debt = float(nd_raw) * UNIT if pd.notna(nd_raw) else 0.0
                                 target_ev     = val * target_mult
                                 target_marcap = target_ev - net_debt
-                            else:
-                                target_marcap = val * target_mult
+                            else: target_marcap = val * target_mult
 
                             if target_marcap > 0:
                                 tp = float(target_marcap / stocks_count)
                                 return tp, float(((tp / curr_p) - 1) * 100), float(target_marcap / UNIT)
-                            else:
-                                return 0.0, -100.0, float(target_marcap / UNIT)
+                            else: return 0.0, -100.0, float(target_marcap / UNIT)
                         return 0.0, 0.0, 0.0
 
                     y1, y2        = datetime.today().year, datetime.today().year + 1
@@ -494,8 +514,7 @@ def render_valuation_menu():
                         cur_nd_series = pd.Series(raw_nd).interpolate(limit_direction='both')
                         cur_nd = cur_nd_series.fillna(0).values * UNIT
                         ext_interp_nd = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_nd)
-                    else:
-                        ext_interp_nd = np.zeros_like(ext_interp)
+                    else: ext_interp_nd = np.zeros_like(ext_interp)
 
                     today_marcap     = curr_p * stocks_count
                     today_metric_val = ext_interp[len(df_price) - 1]
@@ -503,8 +522,7 @@ def render_valuation_menu():
                     if "EBITDA" in val_type:
                         today_ev = today_marcap + ext_interp_nd[len(df_price) - 1]
                         today_m  = float(today_ev / today_metric_val) if today_metric_val > 0 else 0
-                    else:
-                        today_m  = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
+                    else: today_m  = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
 
                     date_mask       = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
                     interp_history  = ext_interp[:len(df_price)]
@@ -513,8 +531,7 @@ def render_valuation_menu():
                     if "EBITDA" in val_type:
                         hist_ev = hist_marcap + ext_interp_nd[:len(df_price)]
                         all_daily_val = np.where(interp_history > 0, hist_ev / interp_history, np.nan)
-                    else:
-                        all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
+                    else: all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
 
                     valid_mask      = date_mask & (interp_history > 0)
                     valid_hist_mult = all_daily_val[valid_mask]
@@ -542,8 +559,7 @@ def render_valuation_menu():
                             target_mc_arr = target_ev_arr - ext_interp_nd
                             y_arr = np.where(ext_interp > 0, target_mc_arr / stocks_count, np.nan)
                             return np.where(y_arr > 0, y_arr, np.nan)
-                        else:
-                            return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
+                        else: return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
 
                     target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
                     x_range         = [start_date_chart, target_year_end]
@@ -570,13 +586,10 @@ def render_valuation_menu():
 
                     fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
                     for i, b in enumerate(bands):
-                        if pd.notna(b):
-                            fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dot')))
+                        if pd.notna(b): fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dot')))
                     fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
-                    if avg_m_val > 0:
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
-                    if today_m > 0 and today_m < 300:
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
+                    if avg_m_val > 0: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
+                    if today_m > 0 and today_m < 300: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
 
                     def _fmt_metric(v):
                         try:
