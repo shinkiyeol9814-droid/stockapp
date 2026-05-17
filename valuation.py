@@ -104,29 +104,30 @@ def get_stock_price_data(ticker, start_date, end_date):
     try: return fdr.DataReader(ticker, start_date, end_date)
     except: return pd.DataFrame()
 
-# 💡 [핵심 해결 1] MultiIndex 파싱 버그 완벽 차단 및 Transpose 감지
+# 💡 [핵심 반영 1] Transpose 방해 공작 제거하고 안전하게 첫 컬럼만 인덱스로 박기
 def parse_all_tables(html):
     try:
         dfs = pd.read_html(io.StringIO(html))
         parsed_tables = []
         for df in dfs:
             try:
-                # 1. 멀티인덱스 파괴 (튜플 깨짐 방지)
+                # MultiIndex flatten
                 if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = ["_".join([str(x) for x in col if str(x) != 'nan']) for col in df.columns]
+                    df.columns = [
+                        "_".join([str(x) for x in col if str(x) != 'nan'])
+                        for col in df.columns
+                    ]
 
-                if df.empty: continue
                 df = df.copy()
 
-                # 2. 컨센서스 탭의 가로세로 뒤집힌 표 자동 감지 후 90도 회전
+                # 첫 컬럼 index 지정
                 first_col = df.columns[0]
-                first_col_vals = " ".join([str(x) for x in df[first_col].head(10).values])
-                if re.search(r'20\d{2}\.\d{2}', first_col_vals) or re.search(r'20\d{2}년', first_col_vals):
-                    df = df.set_index(first_col).T.reset_index()
-                    first_col = df.columns[0] # 회전 후 첫 컬럼 갱신
-
-                # 3. 안전하게 인덱스 고정
-                df[first_col] = df[first_col].astype(str).str.replace(" ", "").str.strip()
+                df[first_col] = (
+                    df[first_col]
+                    .astype(str)
+                    .str.replace(" ", "")
+                    .str.strip()
+                )
                 df = df.set_index(first_col)
                 parsed_tables.append(df)
             except:
@@ -153,16 +154,15 @@ def get_hybrid_financials(ticker):
         ajax_headers["Referer"] = main_url
         
         htmls = [main_res.text]
-        
-        # 💡 [핵심 해결 2] 컨센서스 탭 명시적 전체 순회 (Ajax 포함)
         urls = [
+            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}", # 컨센서스 탭
+            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}", # 투자지표 탭
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}&encparam={encparam}", # 투자지표 탭
-            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}&encparam={encparam}", # 컨센서스 메인 탭
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1050001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}" # 컨센서스 Ajax 탭
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1050001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1030001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ]
         
         for url in urls:
@@ -177,25 +177,53 @@ def get_hybrid_financials(ticker):
             for df_parsed in dfs_parsed:
                 for c in df_parsed.columns:
                     c_str = str(c)
-                    # 💡 연도 추출 정규식
                     match_yr = re.search(r'(20\d{2})', c_str)
                     if match_yr:
                         y = int(match_yr.group(1))
                         if y in target_years:
+                            # 💡 [핵심 반영 2] 무적의 양방향 탐색(Index/Column 십자포화) 적용
                             def get_v(p):
+                                # 1. index (세로) 탐색
                                 for k in df_parsed.index:
                                     k_str = str(k).replace(" ", "").upper()
-                                    if re.search(p, k_str):
-                                        val = df_parsed.loc[k, c]
-                                        if isinstance(val, pd.Series): 
-                                            val = val.dropna()
-                                            if len(val) == 0: continue
-                                            val = val.iloc[0]
+                                    if re.search(p, k_str, re.I):
                                         try:
+                                            val = df_parsed.loc[k, c]
+                                            if isinstance(val, pd.Series):
+                                                val = val.dropna()
+                                                if len(val) == 0: continue
+                                                val = val.iloc[0]
                                             cleaned = re.sub(r'[^\d\.-]', '', str(val))
-                                            if cleaned in ["", "-", ".", "-.", "NaN", "nan"]: continue
-                                            return float(cleaned)
-                                        except: continue
+                                            if cleaned not in ["", "-", ".", "-.", "NaN", "nan"]:
+                                                return float(cleaned)
+                                        except: pass
+
+                                # 2. column (가로) 탐색 (항목이 가로로 도망갔을 때 방어)
+                                for col in df_parsed.columns:
+                                    col_str = str(col).replace(" ", "").upper()
+                                    if re.search(p, col_str, re.I):
+                                        try:
+                                            # 매칭된 연도(c)가 인덱스에 있는지 확인
+                                            if c in df_parsed.index:
+                                                val = df_parsed.loc[c, col]
+                                            else:
+                                                # 없다면 연도 숫자만 다시 추출해서 매칭 시도
+                                                y_str = str(y)
+                                                matched_idx = [i for i in df_parsed.index if y_str in str(i)]
+                                                if matched_idx:
+                                                    val = df_parsed.loc[matched_idx[0], col]
+                                                else:
+                                                    val = df_parsed.iloc[0][col]
+                                            
+                                            if isinstance(val, pd.Series):
+                                                val = val.dropna()
+                                                if len(val) == 0: continue
+                                                val = val.iloc[0]
+                                                
+                                            cleaned = re.sub(r'[^\d\.-]', '', str(val))
+                                            if cleaned not in ["", "-", ".", "-.", "NaN", "nan"]:
+                                                return float(cleaned)
+                                        except: pass
                                 return np.nan
                             
                             r        = get_v(r'^(매출액|영업수익)')
@@ -204,15 +232,15 @@ def get_hybrid_financials(ticker):
                             n        = get_v(r'^(당기순이익|지배주주순이익)')
                             cap      = get_v(r'^(자본총계|지배주주지분)')
                             
-                            # 💡 [핵심 해결 3] 무적 정규식 매칭!
-                            ev_ebitda_mult = get_v(r'EV.*EBITDA')
+                            # 💡 [핵심 반영 3] 정규식 업그레이드
+                            ev_ebitda_mult = get_v(r'EV\s*/?\s*EBITDA')
                             
                             if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
                             if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
                             if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):      master_dict[y]['당기순이익'] = n
                             if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap):      master_dict[y]['자본총계'] = cap
                             
-                            # 💡 컨센서스 탭의 값이 발견되면 최우선으로 덮어씀 (is_na 조건 제거)
+                            # 발견된 배수 최우선 덮어쓰기
                             if pd.notna(ev_ebitda_mult): 
                                 master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
     except: pass
@@ -347,7 +375,7 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 화면의 밴드 차트는 역산이 아닌 '네이버가 계산한 EV/EBITDA 배수' 원본 값 그대로를 사용하여 그려집니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 화면의 밴드 차트는 역산이 아닌 '네이버가 제공하는 EV/EBITDA 배수' 원본을 사용하여 그려집니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
@@ -471,8 +499,8 @@ def render_valuation_menu():
 
                             if target_marcap > 0:
                                 tp = float((target_marcap * UNIT) / stocks_count)
-                                return tp, float(((tp / curr_p) - 1) * 100), float(target_marcap)
-                            else: return 0.0, -100.0, float(target_marcap)
+                                return tp, float(((tp / curr_p) - 1) * 100), float(target_marcap / UNIT)
+                            else: return 0.0, -100.0, float(target_marcap / UNIT)
                         return 0.0, 0.0, 0.0
 
                     y1, y2        = datetime.today().year, datetime.today().year + 1
