@@ -218,15 +218,17 @@ def apply_search():
     if new_is_float:
         if type_changed:
             st.session_state.active_target_mult = 1.0
-            st.session_state.ui_target_mult_float = 1.0
+            st.session_state._reset_mult_widget = True  # ← 플래그만 세움
         else:
-            st.session_state.active_target_mult = float(st.session_state.get("ui_target_mult_float", 1.0))
+            st.session_state.active_target_mult = float(
+                st.session_state.get("ui_target_mult_float", 1.0))
     else:
         if type_changed:
             st.session_state.active_target_mult = 10.0
-            st.session_state.ui_target_mult_int  = 10
+            st.session_state._reset_mult_widget = True  # ← 플래그만 세움
         else:
-            st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
+            st.session_state.active_target_mult = float(int(
+                st.session_state.get("ui_target_mult_int", 10)))
 
 def render_valuation_menu():
     if 'app_init_done' not in st.session_state:
@@ -259,13 +261,21 @@ def render_valuation_menu():
     if 'active_val_type'    not in st.session_state: st.session_state.active_val_type    = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
-    # 💡 [Oracle Point 5] 입력 값 날아감 방지 (최초 1회만 동기화)
     is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
-    if 'ui_corp_name'         not in st.session_state: st.session_state.ui_corp_name         = st.session_state.active_corp_name
-    if 'ui_val_type'          not in st.session_state: st.session_state.ui_val_type          = st.session_state.active_val_type
-    if 'ui_target_mult_float' not in st.session_state: st.session_state.ui_target_mult_float = float(st.session_state.active_target_mult) if is_float_type else 1.0
-    if 'ui_target_mult_int'   not in st.session_state: st.session_state.ui_target_mult_int   = int(st.session_state.active_target_mult) if not is_float_type else 10
-
+    
+    # 타입 변경 시: 다음 렌더링 사이클(지금)에 위젯 키 초기화
+    if st.session_state.pop('_reset_mult_widget', False):
+        st.session_state.pop('ui_target_mult_float', None)
+        st.session_state.pop('ui_target_mult_int', None)
+    
+    # 위젯 키가 없으면 active 값으로 초기화 (최초 진입 or 리셋 직후)
+    if is_float_type and 'ui_target_mult_float' not in st.session_state:
+        st.session_state['ui_target_mult_float'] = float(st.session_state.active_target_mult)
+    elif not is_float_type and 'ui_target_mult_int' not in st.session_state:
+        st.session_state['ui_target_mult_int'] = int(st.session_state.active_target_mult)
+    if 'ui_val_type' not in st.session_state:
+        st.session_state['ui_val_type'] = st.session_state.active_val_type
+    
     st.markdown("""
         <style>
         .stButton > button, [data-testid="stFormSubmitButton"] > button { background-color: #ffe6e6 !important; border-color: #ffcccc !important; }
@@ -285,8 +295,7 @@ def render_valuation_menu():
             idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
             st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
         with col3:
-            # 💡 [Oracle Point 1] 입력 폼 소수점 허용
-            if "PBR" in st.session_state.ui_val_type or "EBITDA" in st.session_state.ui_val_type:
+            if is_float_type:
                 st.number_input("목표배수", step=0.1, format="%.2f", key="ui_target_mult_float")
             else:
                 st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
