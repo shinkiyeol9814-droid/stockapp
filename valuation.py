@@ -106,11 +106,10 @@ def get_stock_price_data(ticker, start_date, end_date):
 
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 파서 함수 3종
+# 파서 / 헬퍼 함수
 # ────────────────────────────────────────────────────────────────────────────────
 def parse_fin_table(html):
-    """IFRS 포함 재무제표 테이블 파싱 (cF1001, cF2001)
-       행=지표, 열=연도(2022/12)"""
+    """IFRS 포함 재무제표 테이블 파싱 (cF1001 손익계산서, cF2001 재무상태표)"""
     try:
         dfs = pd.read_html(io.StringIO(html))
         for df in dfs:
@@ -124,76 +123,8 @@ def parse_fin_table(html):
     return None
 
 
-def parse_ratio_table(html):
-    """주요재무지표 테이블 파싱 (cF3002) — MultiIndex 처리 + 비율 행 우선 선택
-       행=지표, 열=연도"""
-    try:
-        dfs = pd.read_html(io.StringIO(html))
-        candidates = []
-        for df in dfs:
-            # MultiIndex 컬럼 평탄화
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [
-                    re.sub(r'(Unnamed[^/]*/?\s*)', '', "_".join([str(x) for x in col])).strip('_ ')
-                    for col in df.columns
-                ]
-
-            cols_str = " ".join([str(c) for c in df.columns])
-            if not re.search(r'20\d{2}', cols_str):
-                continue
-
-            df = df.copy()
-            df.index = df.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
-            date_cols = [c for c in df.columns if re.search(r'20\d{2}', str(c))]
-            if not date_cols:
-                continue
-
-            # 비율 지표 행(PER/PBR/EV/ROE)이 있는 테이블을 우선 반환
-            index_joined = " ".join(df.index.astype(str).tolist())
-            if re.search(r'(EV|PER|PBR|ROE)', index_joined, re.I):
-                return df[date_cols]
-
-            candidates.append(df[date_cols])
-
-        return candidates[0] if candidates else None
-    except:
-        pass
-    return None
-
-
-def parse_consensus_table(html):
-    """c1050001 컨센서스 페이지의 전치(transposed) 표 파싱
-       행=연도(2022.12(A)), 열=지표(매출액|...|EV/EBITDA(배))"""
-    try:
-        dfs = pd.read_html(io.StringIO(html))
-        for df in dfs:
-            # MultiIndex 컬럼 평탄화
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [
-                    re.sub(r'(Unnamed[^/]*/?\s*)', '', "_".join([str(x) for x in col])).strip('_ ')
-                    for col in df.columns
-                ]
-            else:
-                df.columns = [str(c).strip() for c in df.columns]
-
-            cols_joined = " ".join([str(c) for c in df.columns])
-            # EV/EBITDA 컬럼이 있는 표만 채택
-            if not re.search(r'EV.{0,3}EBITDA', cols_joined, re.I):
-                continue
-            # 첫 컬럼이 연도(2022.12 등)인지 확인
-            first_col_values = df.iloc[:, 0].astype(str)
-            if not first_col_values.str.contains(r'20\d{2}').any():
-                continue
-            df = df.copy()
-            df.index = first_col_values.str.strip()
-            return df
-    except:
-        pass
-    return None
-
-
 def get_val(df_parsed, row_pattern, col):
-    """행 이름 패턴으로 값 추출 (parse_fin_table / parse_ratio_table 용)"""
+    """행 이름 패턴으로 값 추출"""
     for k in df_parsed.index:
         if re.search(row_pattern, str(k), re.I):
             try:
@@ -207,6 +138,38 @@ def get_val(df_parsed, row_pattern, col):
             except:
                 pass
     return np.nan
+
+
+def parse_consensus_value(s):
+    """'38,872.9' → 38872.9 / '-50.90' → -50.90 / 'N/A' → np.nan"""
+    if s is None:
+        return np.nan
+    s_clean = str(s).replace(',', '').strip()
+    if s_clean in ['', '-', 'N/A', 'n/a']:
+        return np.nan
+    try:
+        return float(s_clean)
+    except:
+        return np.nan
+
+
+def fetch_consensus_data(ticker):
+    """c1050001_data.aspx flag=2 호출 — 컨센서스 + 실적 통합 JSON
+       반환: [{YYMM, SALES, OP, NP, EV, ...}, ...] 또는 None"""
+    try:
+        today_str = datetime.today().strftime('%Y%m%d')
+        url = (
+            f"https://comp.wisereport.co.kr/company/ajax/c1050001_data.aspx"
+            f"?flag=2&cmp_cd={ticker}&finGubun=MAIN&frq=0&sDT={today_str}&chartType=svg"
+        )
+        headers = HEADERS.copy()
+        headers["Referer"] = f"https://comp.wisereport.co.kr/company/c1050001.aspx?cmp_cd={ticker}"
+        res = requests.get(url, headers=headers, timeout=7)
+        if res.status_code != 200:
+            return None
+        return res.json().get('JsonData', [])
+    except:
+        return None
 
 
 @st.cache_data(ttl=3600)
@@ -227,13 +190,11 @@ def get_hybrid_financials(ticker):
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
 
+        # ── ① cF1001(손익계산서) + cF2001(재무상태표) — 2021년 실적 + 자본총계 ──
         fin_urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
         ]
-        ratio_url = f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
-
-        # ── ① 재무제표 파싱 (손익계산서, 재무상태표) ──
         for url in fin_urls:
             res = requests.get(url, headers=ajax_headers, timeout=7)
             df_parsed = parse_fin_table(res.text)
@@ -256,55 +217,30 @@ def get_hybrid_financials(ticker):
                 if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):   master_dict[y]['당기순이익'] = n
                 if pd.isna(master_dict[y]['자본총계'])   and pd.notna(cap): master_dict[y]['자본총계'] = cap
 
-        # ── ② 주요재무지표(cF3002) 파싱 — EV/EBITDA배수 ──
-        res = requests.get(ratio_url, headers=ajax_headers, timeout=7)
-        df_ratio = parse_ratio_table(res.text)
-        if df_ratio is not None:
-            for c in df_ratio.columns:
-                m = re.search(r'(20\d{2})', str(c))
+        # ── ② 컨센서스 API (c1050001_data.aspx?flag=2) ──
+        # JSON 구조: {YYMM:"2022.12(A)", SALES:"38,872.9", OP:"2,663.2",
+        #            NP:"2,699.7", EV:"23.52", ...}
+        # 미래 추정치(2026E~2028E)와 EV/EBITDA배수를 한 번에 가져옴
+        consensus_rows = fetch_consensus_data(ticker)
+        if consensus_rows:
+            for row_json in consensus_rows:
+                ym = row_json.get('YYMM', '')
+                m = re.search(r'(20\d{2})', ym)
                 if not m:
                     continue
                 y = int(m.group(1))
                 if y not in target_years:
                     continue
-                ev = get_val(df_ratio, r'EV.{0,3}EBITDA', c)
-                if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev):
+                sales = parse_consensus_value(row_json.get('SALES'))
+                op    = parse_consensus_value(row_json.get('OP'))
+                np_v  = parse_consensus_value(row_json.get('NP'))
+                ev    = parse_consensus_value(row_json.get('EV'))
+                if pd.isna(master_dict[y]['매출액'])     and pd.notna(sales): master_dict[y]['매출액']     = sales
+                if pd.isna(master_dict[y]['영업이익'])   and pd.notna(op):    master_dict[y]['영업이익']   = op
+                if pd.isna(master_dict[y]['당기순이익']) and pd.notna(np_v):  master_dict[y]['당기순이익'] = np_v
+                # EV/EBITDA는 음수면 의미 없음(적자 기업) → 양수만 채택
+                if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev) and ev > 0:
                     master_dict[y]['EV/EBITDA'] = ev
-
-        # ── ③ 컨센서스 페이지(c1050001) 추가 파싱 — EV/EBITDA 보완 ──
-        try:
-            cons_url = f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}"
-            res = requests.get(cons_url, headers=HEADERS, timeout=7)
-            res.encoding = 'utf-8'
-            df_cons = parse_consensus_table(res.text)
-            if df_cons is not None:
-                # EV/EBITDA 컬럼 식별
-                ev_col = next(
-                    (c for c in df_cons.columns if re.search(r'EV.{0,3}EBITDA', str(c), re.I)),
-                    None
-                )
-                if ev_col is not None:
-                    for idx_val in df_cons.index:
-                        m = re.search(r'(20\d{2})', str(idx_val))
-                        if not m:
-                            continue
-                        y = int(m.group(1))
-                        if y not in target_years:
-                            continue
-                        try:
-                            raw = df_cons.loc[idx_val, ev_col]
-                            if isinstance(raw, pd.Series):
-                                raw_clean = raw.dropna()
-                                raw = raw_clean.iloc[0] if len(raw_clean) > 0 else np.nan
-                            cleaned = re.sub(r'[^\d\.-]', '', str(raw))
-                            if cleaned and cleaned not in ['-', '.', '-.']:
-                                ev_val = float(cleaned)
-                                if pd.isna(master_dict[y]['EV/EBITDA']):
-                                    master_dict[y]['EV/EBITDA'] = ev_val
-                        except:
-                            pass
-        except:
-            pass
 
     except:
         pass
@@ -441,7 +377,7 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 화면의 밴드 차트는 표의 'EV/EBITDA 배수' 원본을 바탕으로 비례 계산되어 그려집니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** 화면의 밴드 차트는 표의 'EV/EBITDA 배수' 원본을 바탕으로 비례 계산되어 그려집니다. 적자 연도(음수 배수)는 자동 제외됩니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
@@ -555,7 +491,6 @@ def render_valuation_menu():
                         row = fin_df[fin_df['Year'] == y]
                         if len(row) > 0 and pd.notna(row[col_p].values[0]) and row[col_p].values[0] > 0:
                             if "EBITDA" in val_type:
-                                # EV/EBITDA는 "현재가 * (목표배수 / 현재배수)" 로 역산
                                 curr_mult = float(row[col_p].values[0])
                                 target_marcap = curr_marcap * (target_mult / curr_mult)
                                 tp = curr_p * (target_mult / curr_mult)
