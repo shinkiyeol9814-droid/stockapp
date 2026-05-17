@@ -204,31 +204,21 @@ def extract_number(val):
 
 def apply_search():
     new_name = st.session_state.get("ui_corp_name", "").strip()
-    if new_name: st.session_state.active_corp_name = new_name
-    
-    prev_val_type = st.session_state.get("active_val_type", "POR(영업익)")
-    new_val_type  = st.session_state.get("ui_val_type", "POR(영업익)")
+    if new_name:
+        st.session_state.active_corp_name = new_name
+
+    new_val_type = st.session_state.get("ui_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
-    
-    # 💡 [Oracle Point 2] EBITDA도 PBR처럼 소수점 처리
-    prev_is_float = "PBR" in prev_val_type or "EBITDA" in prev_val_type
-    new_is_float  = "PBR" in new_val_type  or "EBITDA" in new_val_type
-    type_changed  = prev_is_float != new_is_float
-    
+
+    new_is_float = "PBR" in new_val_type or "EBITDA" in new_val_type
+
+    # 타입이 바뀌면 해당 위젯 키가 없으므로 get() 기본값이 적용됨
     if new_is_float:
-        if type_changed:
-            st.session_state.active_target_mult = 1.0
-            st.session_state._reset_mult_widget = True  # ← 플래그만 세움
-        else:
-            st.session_state.active_target_mult = float(
-                st.session_state.get("ui_target_mult_float", 1.0))
+        st.session_state.active_target_mult = float(
+            st.session_state.get("ui_target_mult_float", 1.0))
     else:
-        if type_changed:
-            st.session_state.active_target_mult = 10.0
-            st.session_state._reset_mult_widget = True  # ← 플래그만 세움
-        else:
-            st.session_state.active_target_mult = float(int(
-                st.session_state.get("ui_target_mult_int", 10)))
+        st.session_state.active_target_mult = float(int(
+            st.session_state.get("ui_target_mult_int", 10)))
 
 def render_valuation_menu():
     if 'app_init_done' not in st.session_state:
@@ -262,17 +252,23 @@ def render_valuation_menu():
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
     is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
-    
-    # 타입 변경 시: 다음 렌더링 사이클(지금)에 위젯 키 초기화
-    if st.session_state.pop('_reset_mult_widget', False):
+        
+    # 이전 렌더와 타입이 달라졌으면 위젯 키 초기화
+    prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
+    if is_float_type != prev_is_float:
         st.session_state.pop('ui_target_mult_float', None)
         st.session_state.pop('ui_target_mult_int', None)
+        st.session_state.active_target_mult = 1.0 if is_float_type else 10.0
     
-    # 위젯 키가 없으면 active 값으로 초기화 (최초 진입 or 리셋 직후)
+    # 현재 타입 저장 (위젯 key 아니므로 언제든 안전하게 세팅 가능)
+    st.session_state['_prev_is_float'] = is_float_type
+    
+    # 위젯 key 초기화 (없을 때만)
     if is_float_type and 'ui_target_mult_float' not in st.session_state:
         st.session_state['ui_target_mult_float'] = float(st.session_state.active_target_mult)
     elif not is_float_type and 'ui_target_mult_int' not in st.session_state:
         st.session_state['ui_target_mult_int'] = int(st.session_state.active_target_mult)
+    
     if 'ui_val_type' not in st.session_state:
         st.session_state['ui_val_type'] = st.session_state.active_val_type
     
