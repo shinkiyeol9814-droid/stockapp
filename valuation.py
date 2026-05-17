@@ -138,88 +138,109 @@ def get_hybrid_financials(ticker):
         main_res = requests.get(main_url, headers=HEADERS, timeout=7)
         encparam = ""
         match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
-        if match: encparam = match.group(1)
+        if match:
+            encparam = match.group(1)
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
-        
-        htmls = [main_res.text]
-        urls = [
-            f"https://navercomp.wisereport.co.kr/v2/company/c1050001.aspx?cmp_cd={ticker}",
-            f"https://navercomp.wisereport.co.kr/v2/company/c1030001.aspx?cmp_cd={ticker}",
+
+        # 재무제표 URL: 손익계산서, 재무상태표
+        # 주요재무지표(cF3002)에 EV/EBITDA배수가 있음
+        fin_urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF4002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1050001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/c1030001_data.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
         ]
-        
-        for url in urls:
+        ratio_url = f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF3002.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+
+        def parse_fin_table(html):
+            """IFRS 포함 재무제표 테이블 파싱 (기존 방식)"""
             try:
-                res = requests.get(url, headers=ajax_headers, timeout=7)
-                res.encoding = 'utf-8'
-                htmls.append(res.text)
-            except: pass
-            
-        for html_text in htmls:
-            dfs_parsed = parse_all_tables(html_text)
-            for df_parsed in dfs_parsed:
-                for c in df_parsed.columns:
-                    c_str = str(c)
-                    match_yr = re.search(r'(20\d{2})', c_str)
-                    if match_yr:
-                        y = int(match_yr.group(1))
-                        if y in target_years:
-                            # 십자포화(Cross-search) 파싱 로직
-                            def get_v(p):
-                                for k in df_parsed.index:
-                                    k_str = str(k).replace(" ", "").upper()
-                                    if re.search(p, k_str, re.I):
-                                        try:
-                                            val = df_parsed.loc[k, c]
-                                            if isinstance(val, pd.Series): 
-                                                val = val.dropna()
-                                                if len(val) == 0: continue
-                                                val = val.iloc[0]
-                                            cleaned = re.sub(r'[^\d\.-]', '', str(val))
-                                            if cleaned not in ["", "-", ".", "-.", "NaN", "nan"]:
-                                                return float(cleaned)
-                                        except: pass
-                                
-                                for col in df_parsed.columns:
-                                    col_str = str(col).replace(" ", "").upper()
-                                    if re.search(p, col_str, re.I):
-                                        try:
-                                            if c in df_parsed.index: val = df_parsed.loc[c, col]
-                                            else:
-                                                y_str = str(y)
-                                                matched_idx = [i for i in df_parsed.index if y_str in str(i)]
-                                                if matched_idx: val = df_parsed.loc[matched_idx[0], col]
-                                                else: val = df_parsed.iloc[0][col]
-                                            
-                                            if isinstance(val, pd.Series): 
-                                                val = val.dropna()
-                                                if len(val) == 0: continue
-                                                val = val.iloc[0]
-                                            cleaned = re.sub(r'[^\d\.-]', '', str(val))
-                                            if cleaned not in ["", "-", ".", "-.", "NaN", "nan"]:
-                                                return float(cleaned)
-                                        except: pass
-                                return np.nan
-                            
-                            r        = get_v(r'^(매출액|영업수익)')
-                            o        = get_v(r'^영업이익$')
-                            if pd.isna(o): o = get_v(r'^영업이익\(발표기준\)')
-                            n        = get_v(r'^(당기순이익|지배주주순이익)')
-                            cap      = get_v(r'^(자본총계|지배주주지분)')
-                            ev_ebitda_mult = get_v(r'EV\s*/?\s*EBITDA')
-                            
-                            if pd.isna(master_dict[y]['매출액'])   and pd.notna(r):        master_dict[y]['매출액']   = r
-                            if pd.isna(master_dict[y]['영업이익']) and pd.notna(o):        master_dict[y]['영업이익'] = o
-                            if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):      master_dict[y]['당기순이익'] = n
-                            if pd.isna(master_dict[y]['자본총계']) and pd.notna(cap):      master_dict[y]['자본총계'] = cap
-                            if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev_ebitda_mult): master_dict[y]['EV/EBITDA'] = ev_ebitda_mult
-    except: pass
+                dfs = pd.read_html(io.StringIO(html))
+                for df in dfs:
+                    if 'IFRS' in " ".join([str(c) for c in df.columns]):
+                        df = df.copy()
+                        df.index = df.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
+                        date_cols = [c for c in df.columns if re.search(r'\d{4}', str(c))]
+                        return df[date_cols]
+            except:
+                pass
+            return None
+
+        def parse_ratio_table(html):
+            """주요재무지표 테이블 파싱 — IFRS 헤더 없이도 동작"""
+            try:
+                dfs = pd.read_html(io.StringIO(html))
+                for df in dfs:
+                    cols_str = " ".join([str(c) for c in df.columns])
+                    # 연도가 컬럼에 있는 테이블을 대상으로
+                    if not re.search(r'20\d{2}', cols_str):
+                        continue
+                    df = df.copy()
+                    df.index = df.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
+                    date_cols = [c for c in df.columns if re.search(r'20\d{2}', str(c))]
+                    if not date_cols:
+                        continue
+                    return df[date_cols]
+            except:
+                pass
+            return None
+
+        def get_val(df_parsed, row_pattern, col):
+            """행 이름 패턴으로 값 추출"""
+            for k in df_parsed.index:
+                if re.search(row_pattern, str(k), re.I):
+                    try:
+                        val = df_parsed.loc[k, col]
+                        if isinstance(val, pd.Series):
+                            val = val.dropna()
+                            val = val.iloc[0] if len(val) > 0 else np.nan
+                        cleaned = re.sub(r'[^\d\.-]', '', str(val))
+                        if cleaned and cleaned not in ['-', '.', '-.']:
+                            return float(cleaned)
+                    except:
+                        pass
+            return np.nan
+
+        # 재무제표 파싱 (손익계산서, 재무상태표)
+        for url in fin_urls:
+            res = requests.get(url, headers=ajax_headers, timeout=7)
+            df_parsed = parse_fin_table(res.text)
+            if df_parsed is None:
+                continue
+            for c in df_parsed.columns:
+                m = re.search(r'(20\d{2})', str(c))
+                if not m:
+                    continue
+                y = int(m.group(1))
+                if y not in target_years:
+                    continue
+                r   = get_val(df_parsed, r'^(매출액|영업수익)', c)
+                o   = get_val(df_parsed, r'^영업이익$', c)
+                if pd.isna(o): o = get_val(df_parsed, r'^영업이익\(발표기준\)', c)
+                n   = get_val(df_parsed, r'^(당기순이익|지배주주순이익)', c)
+                cap = get_val(df_parsed, r'^(자본총계|지배주주지분)', c)
+                if pd.isna(master_dict[y]['매출액'])     and pd.notna(r):   master_dict[y]['매출액']   = r
+                if pd.isna(master_dict[y]['영업이익'])   and pd.notna(o):   master_dict[y]['영업이익'] = o
+                if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):   master_dict[y]['당기순이익'] = n
+                if pd.isna(master_dict[y]['자본총계'])   and pd.notna(cap): master_dict[y]['자본총계'] = cap
+
+        # 주요재무지표 파싱 — EV/EBITDA배수 전용
+        res = requests.get(ratio_url, headers=ajax_headers, timeout=7)
+        df_ratio = parse_ratio_table(res.text)
+        if df_ratio is not None:
+            for c in df_ratio.columns:
+                m = re.search(r'(20\d{2})', str(c))
+                if not m:
+                    continue
+                y = int(m.group(1))
+                if y not in target_years:
+                    continue
+                ev = get_val(df_ratio, r'EV.{0,3}EBITDA', c)
+                if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev):
+                    master_dict[y]['EV/EBITDA'] = ev
+
+    except:
+        pass
+
     rows = []
     for y in target_years:
         row = master_dict[y].copy()
@@ -527,8 +548,9 @@ def render_valuation_menu():
                     today_marcap     = curr_p * stocks_count
                     today_metric_val = ext_interp[len(df_price) - 1]
                     
+                    # 수정 — 현재 보간된 EV/EBITDA배수 그대로 사용
                     if "EBITDA" in val_type:
-                        today_m = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
+                        today_m = float(today_metric_val) if today_metric_val > 0 else 0
                     else: 
                         today_m = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
 
