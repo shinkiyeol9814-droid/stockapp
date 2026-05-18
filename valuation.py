@@ -544,6 +544,16 @@ def render_valuation_menu():
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
                     ext_interp    = np.interp(extended_dates.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
 
+                    # 💡 [핵심 수정] 밴드 계산용 anchor 가격 배열
+                    # 과거 구간: 실제 historical price 사용
+                    # 미래 구간: curr_p로 채움 (미래 가격은 알 수 없음)
+                    n_past = len(df_price)
+                    n_future = len(extended_dates) - n_past
+                    anchor_prices = np.concatenate([
+                        df_price['Close'].values,
+                        np.full(n_future, curr_p)
+                    ])
+                    
                     today_marcap     = curr_p * stocks_count
                     today_metric_val = ext_interp[len(df_price) - 1]
                     
@@ -565,25 +575,32 @@ def render_valuation_menu():
                     valid_hist_mult = all_daily_val[valid_mask]
                     valid_hist_mult = valid_hist_mult[~np.isnan(valid_hist_mult)]
 
-                    bands     = []
+                    # 💡 [핵심 수정] 밴드 범위 결정 시 EV/EBITDA는 더 엄격한 필터링
+                    bands = []
                     avg_m_val = 0
                     if len(valid_hist_mult) > 0:
-                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < 300)]
+                        # EV/EBITDA는 30x 이하만 현실적
+                        upper_cap = 30 if "EBITDA" in val_type else 300
+                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < upper_cap)]
                         if len(realistic_mults) > 0:
-                            q_min         = np.percentile(realistic_mults, 5)
-                            q_max         = np.percentile(realistic_mults, 95)
+                            # EV/EBITDA는 10-90 백분위로 더 빡빡하게
+                            if "EBITDA" in val_type:
+                                q_min, q_max = np.percentile(realistic_mults, 10), np.percentile(realistic_mults, 90)
+                            else:
+                                q_min, q_max = np.percentile(realistic_mults, 5), np.percentile(realistic_mults, 95)
                             filtered_hist = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
                             if len(filtered_hist) > 0:
-                                avg_m_val     = np.mean(filtered_hist)
-                                mn, mx        = np.min(filtered_hist), np.max(filtered_hist)
+                                avg_m_val = np.mean(filtered_hist)
+                                mn, mx = np.min(filtered_hist), np.max(filtered_hist)
                                 fallback_step = 1.0 if ("PBR" in val_type or "EBITDA" in val_type) else 5.0
                                 if mx <= mn: mx = mn + fallback_step
-                                stp   = (mx - mn) / 3
+                                stp = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn + (stp * i) > 0])))
 
                     def get_band_y(m_val):
                         if "EBITDA" in val_type:
-                            y_arr = np.where(ext_interp > 0, curr_p * (float(m_val) / ext_interp), np.nan)
+                            # 💡 [핵심 수정] 각 날짜의 historical price × (target / historical_multiple)
+                            y_arr = np.where(ext_interp > 0, anchor_prices * (float(m_val) / ext_interp), np.nan)
                             return np.where(y_arr > 0, y_arr, np.nan)
                         else: 
                             return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
