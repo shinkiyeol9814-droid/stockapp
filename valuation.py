@@ -575,19 +575,13 @@ def render_valuation_menu():
                     valid_hist_mult = all_daily_val[valid_mask]
                     valid_hist_mult = valid_hist_mult[~np.isnan(valid_hist_mult)]
 
-                    # 💡 [핵심 수정] 밴드 범위 결정 시 EV/EBITDA는 더 엄격한 필터링
                     bands = []
                     avg_m_val = 0
                     if len(valid_hist_mult) > 0:
-                        # EV/EBITDA는 30x 이하만 현실적
-                        upper_cap = 30 if "EBITDA" in val_type else 300
-                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < upper_cap)]
+                        realistic_mults = valid_hist_mult[(valid_hist_mult > 0) & (valid_hist_mult < 300)]
                         if len(realistic_mults) > 0:
-                            # EV/EBITDA는 10-90 백분위로 더 빡빡하게
-                            if "EBITDA" in val_type:
-                                q_min, q_max = np.percentile(realistic_mults, 10), np.percentile(realistic_mults, 90)
-                            else:
-                                q_min, q_max = np.percentile(realistic_mults, 5), np.percentile(realistic_mults, 95)
+                            q_min = np.percentile(realistic_mults, 5)
+                            q_max = np.percentile(realistic_mults, 95)
                             filtered_hist = realistic_mults[(realistic_mults >= q_min) & (realistic_mults <= q_max)]
                             if len(filtered_hist) > 0:
                                 avg_m_val = np.mean(filtered_hist)
