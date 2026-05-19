@@ -154,8 +154,7 @@ def parse_consensus_value(s):
 
 
 def fetch_consensus_data(ticker):
-    """c1050001_data.aspx flag=2 호출 — 컨센서스 + 실적 통합 JSON
-       반환: [{YYMM, SALES, OP, NP, EV, ...}, ...] 또는 None"""
+    """c1050001_data.aspx flag=2 호출 — 컨센서스 + 실적 통합 JSON"""
     try:
         today_str = datetime.today().strftime('%Y%m%d')
         url = (
@@ -190,7 +189,7 @@ def get_hybrid_financials(ticker):
         ajax_headers = HEADERS.copy()
         ajax_headers["Referer"] = main_url
 
-        # ── ① cF1001(손익계산서) + cF2001(재무상태표) — 2021년 실적 + 자본총계 ──
+        # ── ① cF1001(손익계산서) + cF2001(재무상태표) ──
         fin_urls = [
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
             f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
@@ -218,9 +217,6 @@ def get_hybrid_financials(ticker):
                 if pd.isna(master_dict[y]['자본총계'])   and pd.notna(cap): master_dict[y]['자본총계'] = cap
 
         # ── ② 컨센서스 API (c1050001_data.aspx?flag=2) ──
-        # JSON 구조: {YYMM:"2022.12(A)", SALES:"38,872.9", OP:"2,663.2",
-        #            NP:"2,699.7", EV:"23.52", ...}
-        # 미래 추정치(2026E~2028E)와 EV/EBITDA배수를 한 번에 가져옴
         consensus_rows = fetch_consensus_data(ticker)
         if consensus_rows:
             for row_json in consensus_rows:
@@ -238,7 +234,6 @@ def get_hybrid_financials(ticker):
                 if pd.isna(master_dict[y]['매출액'])     and pd.notna(sales): master_dict[y]['매출액']     = sales
                 if pd.isna(master_dict[y]['영업이익'])   and pd.notna(op):    master_dict[y]['영업이익']   = op
                 if pd.isna(master_dict[y]['당기순이익']) and pd.notna(np_v):  master_dict[y]['당기순이익'] = np_v
-                # EV/EBITDA는 음수면 의미 없음(적자 기업) → 양수만 채택
                 if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev) and ev > 0:
                     master_dict[y]['EV/EBITDA'] = ev
 
@@ -283,15 +278,12 @@ def apply_search():
     new_name = st.session_state.get("ui_corp_name", "").strip()
     if new_name:
         st.session_state.active_corp_name = new_name
-
     new_val_type = st.session_state.get("ui_val_type", "POR(영업익)")
     prev_val_type = st.session_state.get("active_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
-
     new_is_float = "PBR" in new_val_type or "EBITDA" in new_val_type
     prev_is_float = "PBR" in prev_val_type or "EBITDA" in prev_val_type
     type_changed = new_is_float != prev_is_float
-
     if new_is_float:
         if type_changed: st.session_state.active_target_mult = 1.0
         else: st.session_state.active_target_mult = float(st.session_state.get("ui_target_mult_float", 1.0))
@@ -330,23 +322,19 @@ def render_valuation_menu():
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
     is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
-    
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
         st.session_state.pop('ui_target_mult_float', None)
         st.session_state.pop('ui_target_mult_int', None)
         st.session_state.active_target_mult = 1.0 if is_float_type else 10.0
-    
     st.session_state['_prev_is_float'] = is_float_type
-    
     if is_float_type and 'ui_target_mult_float' not in st.session_state:
         st.session_state['ui_target_mult_float'] = float(st.session_state.active_target_mult)
     elif not is_float_type and 'ui_target_mult_int' not in st.session_state:
         st.session_state['ui_target_mult_int'] = int(st.session_state.active_target_mult)
-    
     if 'ui_val_type' not in st.session_state:
         st.session_state['ui_val_type'] = st.session_state.active_val_type
-    
+
     st.markdown("""
         <style>
         .stButton > button, [data-testid="stFormSubmitButton"] > button { background-color: #ffe6e6 !important; border-color: #ffcccc !important; }
@@ -377,13 +365,12 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** 화면의 밴드 차트는 표의 'EV/EBITDA 배수' 원본을 바탕으로 비례 계산되어 그려집니다. 적자 연도(음수 배수)는 자동 제외됩니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** EV/EBITDA는 배수(ratio) 데이터만 수집 가능하므로 주가 밴드 차트 대신 **배수 추이 차트**를 표시합니다. 적자 연도(음수 배수)는 자동 제외됩니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
     display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
-    
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
     if corp_name:
@@ -426,23 +413,20 @@ def render_valuation_menu():
                     curr_marcap = (curr_p * stocks_count) / UNIT
                     updown      = ((curr_p / prev_p) - 1) * 100
                     st.markdown(f"<div class='sub-header'>📊 {corp_name} ({ticker})</div>", unsafe_allow_html=True)
-                    
+
                     with st.form(f"fin_form_{ticker}"):
                         st.markdown("<div class='sub-header' style='margin-top:10px; font-size:15px !important;'>📝 연도별 재무 상세 <span style='color:red; font-size:12px; font-weight:normal;'>(※ 값 수정 후 [갱신] 클릭 시 재측정)</span></div>", unsafe_allow_html=True)
                         display_df = fin_df[['Label'] + cols_to_edit].copy()
-                        
                         for col in cols_to_edit:
                             if col == 'EV/EBITDA':
                                 display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{float(x):.1f}")
                             else:
                                 display_df[col] = display_df[col].apply(lambda x: "" if pd.isna(x) or x == 0 else f"{int(x):,}")
-                                
                         for r, c in manual_indices:
                             val = fin_df.at[r, c]
-                            if pd.notna(val) and val != 0: 
+                            if pd.notna(val) and val != 0:
                                 if c == 'EV/EBITDA': display_df.at[r, c] = f"{float(val):.1f} ✅"
                                 else: display_df.at[r, c] = f"{int(val):,} ✅"
-                                    
                         edited_df = st.data_editor(display_df, disabled=["Label"], hide_index=True, use_container_width=True, key=f"editor_{ticker}")
                         btn_col1, btn_col2 = st.columns(2)
                         with btn_col1: fin_update_clicked = st.form_submit_button("갱신", type="primary", use_container_width=True)
@@ -450,7 +434,6 @@ def render_valuation_menu():
 
                     if fin_update_clicked:
                         st.success("✅ 화면에 수치가 갱신되었습니다. (영구 보존하려면 '저장'을 누르세요)")
-                        
                     if fin_save_clicked:
                         with st.spinner("GitHub에 저장 중..."):
                             new_estimates = load_user_estimates()
@@ -534,11 +517,9 @@ def render_valuation_menu():
                     extended_dates = df_price.index.append(future_dates[1:])
 
                     raw_metrics   = pd.to_numeric(fin_df[col_p], errors='coerce').values
-                    cur_metrics   = pd.Series(raw_metrics).ffill().bfill().values 
-                    
-                    if not "EBITDA" in val_type: 
+                    cur_metrics   = pd.Series(raw_metrics).ffill().bfill().values
+                    if not "EBITDA" in val_type:
                         cur_metrics = cur_metrics * UNIT
-                        
                     cur_metrics   = np.nan_to_num(cur_metrics, nan=0.1)
                     cur_metrics   = np.where(cur_metrics <= 0, 0.1, cur_metrics)
                     band_dates_ts = fin_df['Plot_Date'].map(datetime.timestamp).values
@@ -546,19 +527,19 @@ def render_valuation_menu():
 
                     today_marcap     = curr_p * stocks_count
                     today_metric_val = ext_interp[len(df_price) - 1]
-                    
+
                     if "EBITDA" in val_type:
                         today_m = float(today_metric_val) if today_metric_val > 0 else 0
-                    else: 
+                    else:
                         today_m = float(today_marcap / today_metric_val) if today_metric_val > 0 else 0
 
                     date_mask       = (df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)
                     interp_history  = ext_interp[:len(df_price)]
                     hist_marcap     = df_price['Close'].values * stocks_count
-                    
+
                     if "EBITDA" in val_type:
                         all_daily_val = np.where(interp_history > 0, interp_history, np.nan)
-                    else: 
+                    else:
                         all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
 
                     valid_mask      = date_mask & (interp_history > 0)
@@ -581,42 +562,9 @@ def render_valuation_menu():
                                 stp   = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn + (stp * i) > 0])))
 
-                    def get_band_y(m_val):
-                        if "EBITDA" in val_type:
-                            y_arr = np.where(ext_interp > 0, curr_p * (float(m_val) / ext_interp), np.nan)
-                            return np.where(y_arr > 0, y_arr, np.nan)
-                        else: 
-                            return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
-
                     target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
                     x_range         = [start_date_chart, target_year_end]
                     cols            = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
-                    fig1 = go.Figure()
-
-                    mask_future        = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
-                    visible_ext_interp = ext_interp[mask_future]
-                    df_filtered_price = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
-                    price_max = df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p
-                    price_min = df_filtered_price['Close'].min() if not df_filtered_price.empty else curr_p
-
-                    important_vals_fig1 = []
-                    if len(visible_ext_interp) > 0:
-                        important_vals_fig1.extend(pd.Series(get_band_y(target_mult)[mask_future]).dropna().tolist())
-                        if avg_m_val > 0: important_vals_fig1.extend(pd.Series(get_band_y(avg_m_val)[mask_future]).dropna().tolist())
-                        if today_m > 0 and today_m < 300: important_vals_fig1.extend(pd.Series(get_band_y(today_m)[mask_future]).dropna().tolist())
-
-                    core_max = max([price_max] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
-                    core_min = min([price_min] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
-                    y_max = max(core_max * 1.2, price_max * 1.5)
-                    y_min = core_min * 0.8
-                    fig1.update_yaxes(range=[max(0, y_min), y_max])
-
-                    fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
-                    for i, b in enumerate(bands):
-                        if pd.notna(b): fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dot')))
-                    fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
-                    if avg_m_val > 0: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
-                    if today_m > 0 and today_m < 300: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
 
                     def _fmt_metric(v):
                         try:
@@ -624,11 +572,47 @@ def render_valuation_menu():
                             return "N/A" if (np.isnan(f) or f == 0) else (f"{f:,.1f}x" if "EBITDA" in val_type else f"{f:,.0f}억")
                         except: return "N/A"
 
-                    fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
-                    fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-                    st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
+                    # ────────────────────────────────────────────────────────────
+                    # EV/EBITDA 모드: 주가 밴드(fig1) 건너뛰고 배수 추이만 표시
+                    # PER/POR/PBR 모드: 기존 fig1 + fig2 모두 표시
+                    # ────────────────────────────────────────────────────────────
+                    if "EBITDA" not in val_type:
+                        # ── fig1: 주가 밴드 차트 (PER/POR/PBR 전용) ──
+                        def get_band_y(m_val):
+                            return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
 
-                    st.write("")
+                        fig1 = go.Figure()
+                        mask_future        = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
+                        visible_ext_interp = ext_interp[mask_future]
+                        df_filtered_price  = df_price[(df_price.index >= start_date_chart) & (df_price.index <= end_date_dt)]
+                        price_max = df_filtered_price['Close'].max() if not df_filtered_price.empty else curr_p
+                        price_min = df_filtered_price['Close'].min() if not df_filtered_price.empty else curr_p
+
+                        important_vals_fig1 = []
+                        if len(visible_ext_interp) > 0:
+                            important_vals_fig1.extend(pd.Series(get_band_y(target_mult)[mask_future]).dropna().tolist())
+                            if avg_m_val > 0: important_vals_fig1.extend(pd.Series(get_band_y(avg_m_val)[mask_future]).dropna().tolist())
+                            if today_m > 0 and today_m < 300: important_vals_fig1.extend(pd.Series(get_band_y(today_m)[mask_future]).dropna().tolist())
+
+                        core_max = max([price_max] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
+                        core_min = min([price_min] + [v for v in important_vals_fig1 if pd.notna(v) and v > 0])
+                        y_max = max(core_max * 1.2, price_max * 1.5)
+                        y_min = core_min * 0.8
+                        fig1.update_yaxes(range=[max(0, y_min), y_max])
+
+                        fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
+                        for i, b in enumerate(bands):
+                            if pd.notna(b): fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dot')))
+                        fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
+                        if avg_m_val > 0: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
+                        if today_m > 0 and today_m < 300: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
+
+                        fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
+                        fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                        st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
+                        st.write("")
+
+                    # ── fig2: 배수 추이 차트 (모든 평가방식 공통) ──
                     fig2 = go.Figure()
                     important_mults = [target_mult]
                     if avg_m_val > 0: important_mults.append(avg_m_val)
@@ -662,7 +646,11 @@ def render_valuation_menu():
 
                     bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{_fmt_metric(row[col_p])}" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
-                    fig2.update_layout(height=300, margin=dict(l=0, r=20, t=50, b=80), title=dict(text=f"[평균 {band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), showlegend=False, hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+
+                    # EV/EBITDA 모드에서는 이게 유일한 차트 → 높이 키움
+                    fig2_height = 400 if "EBITDA" in val_type else 300
+                    fig2_title  = f"[EV/EBITDA 배수 추이]" if "EBITDA" in val_type else f"[평균 {band_name} 밴드]"
+                    fig2.update_layout(height=fig2_height, margin=dict(l=0, r=20, t=50, b=80), title=dict(text=fig2_title, x=0.0, y=0.99, font=dict(size=14)), showlegend=("EBITDA" in val_type), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
 
                 else: st.error("❌ 주가 데이터를 불러오는 데 실패했습니다. 종목명을 확인하거나 잠시 후 다시 시도해주세요.")
