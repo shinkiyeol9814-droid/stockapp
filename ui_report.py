@@ -4,7 +4,6 @@ import json
 import os
 import glob
 import re
-from streamlit_autorefresh import st_autorefresh
 
 # 💡 하이브리드 포맷 리더: 신규/구형 파일 모두 호환하여 예쁜 옵션 리스트 생성
 def get_report_options():
@@ -51,9 +50,6 @@ def get_report_options():
 
 
 def render_report_summary():
-    # 💡 [자동 갱신] 3분(180,000ms)마다 화면을 조용히 새로고침합니다!
-    st_autorefresh(interval=3 * 60 * 1000, key="report_auto_refresh")
-    
     # 💡 [수동 갱신] 사용자가 원할 때 즉시 갱신할 수 있는 버튼 추가
     col1, col2 = st.columns([8, 2])
     with col1:

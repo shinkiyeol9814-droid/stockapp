@@ -4,13 +4,13 @@ import os
 import re
 from pathlib import Path
 from github import Github
-from streamlit_autorefresh import st_autorefresh
 
 BASE_DIR = Path(__file__).parent
 DATA_FILE = BASE_DIR / "data" / "earnings" / "earnings_data.json"
 FAVORITES_FILE = "data/earnings/favorites.json"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 
+@st.cache_resource
 def get_github_repo():
     token = st.secrets.get("GITHUB_TOKEN", "")
     repo_name = st.secrets.get("GITHUB_REPO", "")
@@ -65,9 +65,8 @@ def get_growth_color(val):
     return "#555555" 
 
 def render_earnings_menu():
-    # 💡 [Oracle Point 1] 자동 갱신 횟수를 추적하여 데이터 강제 리로드
-    refresh_count = st_autorefresh(interval=3 * 60 * 1000, key="earnings_auto_refresh")
-    
+    refresh_count = st.session_state.get('auto_refresh_count', 0)
+
     if 'favorites' not in st.session_state or refresh_count > st.session_state.get('last_refresh', -1):
         fav_set, is_safe = load_favorites()
         if not is_safe and 'favorites' in st.session_state:

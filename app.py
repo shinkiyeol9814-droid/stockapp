@@ -1,8 +1,14 @@
 import streamlit as st
 import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 
 # --- 💡 [필수] 페이지 기본 설정은 무조건 코드 최상단에 위치해야 합니다! ---
 st.set_page_config(page_title="StkPro 통합 보드", page_icon="📊", layout="wide")
+
+# 전역 autorefresh: 앱 전체에 1개만 등록해 메뉴 전환 시 중복 타이머를 방지합니다.
+st.session_state.auto_refresh_count = st_autorefresh(
+    interval=3 * 60 * 1000, key="global_auto_refresh"
+)
 
 # ==========================================
 # 💡 [핵심 마법] 스켈레톤 제거 & 상단 잘림 방지 CSS
