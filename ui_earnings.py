@@ -135,16 +135,11 @@ def render_earnings_menu():
     with col1:
         st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
     with col2:
-        batch_on = st.session_state.batch_enabled
-        status_label = "🟢 배치 ON" if batch_on else "🔴 배치 OFF"
-        if st.button(status_label, use_container_width=True, type="primary" if batch_on else "secondary"):
-            new_state = not batch_on
-            with st.spinner("배치 상태 변경 중..."):
-                if save_batch_config(new_state):
-                    st.session_state.batch_enabled = new_state
-                    st.rerun()
-                else:
-                    st.error("❌ 배치 상태 변경 실패")
+        st.markdown("<div style='font-size: 14px; color: #31333F; margin-bottom: 8px;'>⚡ 배치 수집</div>", unsafe_allow_html=True)
+        batch_toggle = st.toggle("batch_toggle", value=st.session_state.batch_enabled, label_visibility="collapsed")
+        if batch_toggle != st.session_state.batch_enabled:
+            save_batch_config(batch_toggle)
+            st.session_state.batch_enabled = batch_toggle
     with col3:
         if st.button("🔄 새로고침", use_container_width=True):
             st.session_state.pop('favorites', None)
