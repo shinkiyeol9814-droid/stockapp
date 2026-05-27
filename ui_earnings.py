@@ -9,6 +9,8 @@ BASE_DIR = Path(__file__).parent
 DATA_FILE = BASE_DIR / "data" / "earnings" / "earnings_data.json"
 FAVORITES_FILE = "data/earnings/favorites.json"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
+BATCH_CONFIG_FILE = "data/earnings/batch_config.json"
+LOCAL_BATCH_CONFIG_FILE = BASE_DIR / "data" / "earnings" / "batch_config.json"
 
 @st.cache_resource
 def get_github_repo():
@@ -33,6 +35,44 @@ def load_favorites():
             with open(LOCAL_FAVORITES_FILE, "r", encoding="utf-8") as f:
                 return set(json.load(f)), True
         return set(), True
+
+def load_batch_config():
+    repo = get_github_repo()
+    if repo:
+        try:
+            file_content = repo.get_contents(BATCH_CONFIG_FILE)
+            data = json.loads(file_content.decoded_content.decode('utf-8'))
+            return data.get("enabled", True)
+        except Exception:
+            return True
+    else:
+        if LOCAL_BATCH_CONFIG_FILE.exists():
+            with open(LOCAL_BATCH_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f).get("enabled", True)
+        return True
+
+def save_batch_config(enabled: bool):
+    repo = get_github_repo()
+    content_str = json.dumps({"enabled": enabled}, ensure_ascii=False)
+    if repo:
+        try:
+            file = repo.get_contents(BATCH_CONFIG_FILE)
+            repo.update_file(BATCH_CONFIG_FILE, f"Batch {'ON' if enabled else 'OFF'}", content_str, file.sha)
+            return True
+        except Exception:
+            try:
+                repo.create_file(BATCH_CONFIG_FILE, f"Batch {'ON' if enabled else 'OFF'}", content_str)
+                return True
+            except Exception:
+                return False
+    else:
+        try:
+            LOCAL_BATCH_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(LOCAL_BATCH_CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump({"enabled": enabled}, f, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
 
 def save_favorites(favorites_set):
     repo = get_github_repo()
@@ -88,12 +128,27 @@ def render_earnings_menu():
     </style>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([8, 2])
+    if 'batch_enabled' not in st.session_state:
+        st.session_state.batch_enabled = load_batch_config()
+
+    col1, col2, col3 = st.columns([6, 2, 2])
     with col1:
         st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
     with col2:
+        batch_on = st.session_state.batch_enabled
+        status_label = "🟢 배치 ON" if batch_on else "🔴 배치 OFF"
+        if st.button(status_label, use_container_width=True, type="primary" if batch_on else "secondary"):
+            new_state = not batch_on
+            with st.spinner("배치 상태 변경 중..."):
+                if save_batch_config(new_state):
+                    st.session_state.batch_enabled = new_state
+                    st.rerun()
+                else:
+                    st.error("❌ 배치 상태 변경 실패")
+    with col3:
         if st.button("🔄 새로고침", use_container_width=True):
             st.session_state.pop('favorites', None)
+            st.session_state.pop('batch_enabled', None)
             st.rerun()
             
     if not DATA_FILE.exists():
