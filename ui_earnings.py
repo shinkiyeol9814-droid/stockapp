@@ -131,23 +131,22 @@ def render_earnings_menu():
     if 'batch_enabled' not in st.session_state:
         st.session_state.batch_enabled = load_batch_config()
 
-    col1, col2 = st.columns([7, 3])
+    col1, col2, col3, col4 = st.columns([6, 1.2, 0.8, 2])
     with col1:
         st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
     with col2:
-        bc1, bc2, bc3 = st.columns([1.2, 1, 1.5])
-        with bc1:
-            batch_toggle = st.toggle("⚡ 배치 수집", value=st.session_state.batch_enabled)
-            if batch_toggle != st.session_state.batch_enabled:
-                save_batch_config(batch_toggle)
-                st.session_state.batch_enabled = batch_toggle
-        with bc2:
-            st.empty()
-        with bc3:
-            if st.button("🔄 새로고침", use_container_width=True):
-                st.session_state.pop('favorites', None)
-                st.session_state.pop('batch_enabled', None)
-                st.rerun()
+        batch_status = "🟢 수집 ON" if st.session_state.batch_enabled else "🔴 수집 OFF"
+        st.markdown(f"<div style='margin-top: 10px; font-size: 13px; font-weight: 600; white-space: nowrap;'>{batch_status}</div>", unsafe_allow_html=True)
+    with col3:
+        batch_toggle = st.toggle("batch", value=st.session_state.batch_enabled, label_visibility="collapsed")
+        if batch_toggle != st.session_state.batch_enabled:
+            save_batch_config(batch_toggle)
+            st.session_state.batch_enabled = batch_toggle
+    with col4:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.session_state.pop('favorites', None)
+            st.session_state.pop('batch_enabled', None)
+            st.rerun()
             
     if not DATA_FILE.exists():
         st.info("📂 수집된 실적 데이터가 없습니다.")
