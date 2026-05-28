@@ -120,10 +120,16 @@ def render_earnings_menu():
     <style>
     div[data-testid="stCheckbox"] {
         position: relative;
-        z-index: 99;         
-        left: 14px;          
-        top: 14px;           
-        width: 30px;         
+        z-index: 99;
+        left: 14px;
+        top: 14px;
+        width: 30px;
+    }
+    div[data-testid="stForm"] button[kind="secondaryFormSubmit"] {
+        background-color: #FFE5E5;
+        color: #CC0000;
+        border: 1px solid #FFB3B3;
+        font-weight: 600;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -131,17 +137,21 @@ def render_earnings_menu():
     if 'batch_enabled' not in st.session_state:
         st.session_state.batch_enabled = load_batch_config()
 
-    col1, col2, col3, col4 = st.columns([6, 1.2, 0.8, 2])
+    col1, col2, col3, col4 = st.columns([5, 1.8, 1.5, 1.7])
     with col1:
         st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
     with col2:
-        batch_status = "🟢 수집 ON" if st.session_state.batch_enabled else "🔴 수집 OFF"
-        st.markdown(f"<div style='margin-top: 10px; font-size: 13px; font-weight: 600; white-space: nowrap;'>{batch_status}</div>", unsafe_allow_html=True)
+        batch_label = "🟢 수집 ON" if st.session_state.batch_enabled else "🔴 수집 OFF"
+        if st.button(batch_label, use_container_width=True, key="batch_btn"):
+            new_state = not st.session_state.batch_enabled
+            save_batch_config(new_state)
+            st.session_state.batch_enabled = new_state
+            st.rerun()
     with col3:
-        batch_toggle = st.toggle("batch", value=st.session_state.batch_enabled, label_visibility="collapsed")
-        if batch_toggle != st.session_state.batch_enabled:
-            save_batch_config(batch_toggle)
-            st.session_state.batch_enabled = batch_toggle
+        fav_label = "⭐ 관심종목 ✓" if st.session_state.get('ea_favs', False) else "⭐ 관심종목"
+        if st.button(fav_label, use_container_width=True, key="fav_filter_btn"):
+            st.session_state.ea_favs = not st.session_state.get('ea_favs', False)
+            st.rerun()
     with col4:
         if st.button("🔄 새로고침", use_container_width=True):
             st.session_state.pop('favorites', None)
@@ -174,7 +184,7 @@ def render_earnings_menu():
     if 'ea_favs' not in st.session_state: st.session_state.ea_favs = False
 
     with st.form("earnings_search_form", border=False):
-        f_col1, f_col2, f_col3, f_col4 = st.columns([2, 3, 1.2, 1.8])
+        f_col1, f_col2, f_col3 = st.columns([2.5, 4, 1.5])
         with f_col1:
             idx = available_quarters.index(st.session_state.ea_quarter) if st.session_state.ea_quarter in available_quarters else 0
             ui_quarter = st.selectbox("📌 분기 필터", available_quarters, index=idx)
@@ -182,15 +192,11 @@ def render_earnings_menu():
             ui_keyword = st.text_input("🔍 종목 검색", value=st.session_state.ea_keyword, placeholder="종목명/코드")
         with f_col3:
             st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-            search_btn = st.form_submit_button("검색", type="primary", use_container_width=True)
-        with f_col4:
-            st.markdown("<div style='font-size: 14px; color: #31333F; margin-bottom: 8px;'>⭐ 관심종목만</div>", unsafe_allow_html=True)
-            ui_show_favs = st.toggle("hidden_fav_toggle", value=st.session_state.ea_favs, label_visibility="collapsed")
+            search_btn = st.form_submit_button("검색", use_container_width=True)
 
     if search_btn:
         st.session_state.ea_quarter = ui_quarter
         st.session_state.ea_keyword = ui_keyword.strip()
-        st.session_state.ea_favs = ui_show_favs
         st.rerun()
 
     filtered_results = []
