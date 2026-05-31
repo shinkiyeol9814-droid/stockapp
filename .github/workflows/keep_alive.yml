@@ -14,8 +14,8 @@ jobs:
     steps:
       - name: Ping Streamlit App
         run: |
-          # 💡 본(Main) 서버 깨우기
-          curl -I "https://stockapp-sky.streamlit.app/"
-          
-          # 💡 Dev(개발) 서버 깨우기 (아래 주소를 실제 Dev 주소로 변경하세요)
-          curl -I "https://stockapp-sky-dev.streamlit.app/"
+          # 본(Main) 서버 깨우기 — GET 요청으로 실제 앱 활성화
+          curl -s -o /dev/null -L "https://stockapp-sky.streamlit.app/"
+
+          # Dev(개발) 서버 깨우기
+          curl -s -o /dev/null -L "https://stockapp-sky-dev.streamlit.app/"
