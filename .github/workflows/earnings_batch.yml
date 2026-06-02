@@ -65,3 +65,9 @@ jobs:
           git commit -m "Auto-update: AWAKE Earnings data" || echo "No changes to commit"
           git pull --rebase origin ${{ github.ref_name }}
           git push origin ${{ github.ref_name }}
+
+      - name: Ping Streamlit App (keep awake)
+        if: always()
+        run: |
+          curl -s -o /dev/null -w "%{http_code}\n" "https://stockapp-sky.streamlit.app/" || true
+          curl -s -o /dev/null -w "%{http_code}\n" "https://stockapp-sky-dev.streamlit.app/" || true
