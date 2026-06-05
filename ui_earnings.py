@@ -247,7 +247,7 @@ def render_earnings_menu():
                 surf_status = "컨센 없음"
 
         is_fav = code in st.session_state.favorites
-        new_fav = st.checkbox("", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
+        new_fav = st.checkbox("관심종목", value=is_fav, key=f"fav_btn_{code}", label_visibility="collapsed")
         
         if new_fav != is_fav:
             if not st.session_state.get('is_safe_to_save', False):
