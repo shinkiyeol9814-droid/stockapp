@@ -6,6 +6,7 @@ import glob
 import re
 
 # 💡 하이브리드 포맷 리더: 신규/구형 파일 모두 호환하여 예쁜 옵션 리스트 생성
+@st.cache_data(ttl=60)
 def get_report_options():
     file_list = glob.glob('data/broker_report/*.json')
     options = {}

@@ -97,6 +97,13 @@ def save_favorites(favorites_set):
         except Exception as e:
             return False, str(e)
 
+@st.cache_data(ttl=180)
+def load_earnings_data():
+    if not DATA_FILE.exists():
+        return None
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
 # 💡 [Oracle Point 4] 함수를 루프 밖으로 이동시켜 성능 최적화
 def get_growth_color(val):
     if not val: return "#555555"
@@ -158,13 +165,11 @@ def render_earnings_menu():
             st.session_state.pop('batch_enabled', None)
             st.rerun()
             
-    if not DATA_FILE.exists():
+    results = load_earnings_data()
+    if results is None:
         st.info("📂 수집된 실적 데이터가 없습니다.")
         return
-    
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        results = json.load(f)
-        
+
     if not results:
         st.warning("분석된 실적 데이터가 없습니다.")
         return

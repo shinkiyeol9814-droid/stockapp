@@ -20,21 +20,33 @@ st.markdown("""
             display: none !important;
             opacity: 0 !important;
         }
-        
-        /* 2. 💡 상단 여백 넉넉하게 확보 (메뉴 잘림 현상 해결!) */
-        .block-container { 
-            padding-top: 3.5rem !important; /* 👈 너무 바짝 당겼던 여백을 정상화했습니다 */
-            padding-bottom: 1rem !important; 
-            padding-left: 0.8rem !important; 
-            padding-right: 0.8rem !important; 
+
+        /* 2. 상단 여백 넉넉하게 확보 (메뉴 잘림 현상 해결!) */
+        .block-container {
+            padding-top: 3.5rem !important;
+            padding-bottom: 1rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
         }
-        
+
         /* 3. 메인 타이틀 여백 조정 */
-        .main-title { 
-            font-size: 1.4rem !important; 
-            font-weight: bold; 
-            margin-top: 0.5rem !important; 
-            margin-bottom: 1rem !important; 
+        .main-title {
+            font-size: 1.4rem !important;
+            font-weight: bold;
+            margin-top: 0.5rem !important;
+            margin-bottom: 1rem !important;
+        }
+
+        /* 4. 버튼 클릭 잔상·트랜지션 제거 */
+        div[data-testid="stButton"] > button,
+        div[data-testid="stFormSubmitButton"] > button {
+            transition: none !important;
+            -webkit-transition: none !important;
+        }
+
+        /* 5. 탭 전환 시 컨텐츠 영역 깜빡임 방지 */
+        .main .block-container > div {
+            animation: none !important;
         }
     </style>
 """, unsafe_allow_html=True)

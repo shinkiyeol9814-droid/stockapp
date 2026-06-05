@@ -9,6 +9,7 @@ GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
 
 # new_high.py 수정
+@st.cache_data(ttl=60)
 def get_all_reports():
     data_path = "data/new_high/"
     if not os.path.exists(data_path): return []
