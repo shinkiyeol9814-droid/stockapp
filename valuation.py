@@ -562,7 +562,7 @@ def render_valuation_menu():
                                 stp   = (mx - mn) / 3
                                 bands = sorted(list(set([round(mn + (stp * i), 1) for i in range(4) if mn + (stp * i) > 0])))
 
-                    target_year_end = pd.to_datetime(f"{datetime.today().year}-12-31")
+                    target_year_end = pd.to_datetime(f"{fin_df['Year'].max()}-12-31")
                     x_range         = [start_date_chart, target_year_end]
                     cols            = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
