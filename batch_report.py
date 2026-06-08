@@ -365,7 +365,13 @@ async def main():
     doc_source_map = {str(d['id']): d['source'] for d in docs_to_process}
 
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
-    df_listing = fdr.StockListing('KRX')
+    try:
+        df_listing = fdr.StockListing('KRX')
+        if df_listing.empty or 'Name' not in df_listing.columns:
+            raise ValueError("KRX 데이터 불완전")
+    except Exception as e:
+        print(f"⚠️ fdr.StockListing('KRX') 실패: {e}\n📌 KOSPI+KOSDAQ 폴백 수집...")
+        df_listing = pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
 
     chunk_size = 7
     MAX_PASSES = 4 

@@ -22,9 +22,22 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
+def get_krx_listing():
+    """KRX 전체 종목 리스트 — fdr 캐시 404 시 KOSPI+KOSDAQ 폴백"""
+    try:
+        df = fdr.StockListing('KRX')
+        if not df.empty and 'Marcap' in df.columns:
+            return df
+    except Exception as e:
+        print(f"⚠️ fdr.StockListing('KRX') 실패: {e}")
+    print("📌 KOSPI + KOSDAQ 분리 수집으로 폴백합니다...")
+    df_kospi  = fdr.StockListing('KOSPI')
+    df_kosdaq = fdr.StockListing('KOSDAQ')
+    return pd.concat([df_kospi, df_kosdaq], ignore_index=True)
+
 def get_high_stocks():
     print("데이터 수집 및 필터링 시작...")
-    df = fdr.StockListing('KRX')
+    df = get_krx_listing()
     
     # 데이터 숫자형 변환
     df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
