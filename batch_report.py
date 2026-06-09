@@ -10,6 +10,7 @@ import fitz  # PyMuPDF
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from google import genai
+from pykrx import stock as pykrx_stock
 
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
@@ -267,23 +268,34 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
         matched = df_listing[df_listing['Name'] == clean_name]
         
         if not matched.empty:
-            curr_price = matched.iloc[0]['Close']
-            curr_marcap = matched.iloc[0]['Marcap']
-            
-            target_price_str = item.get("목표주가", "0")
+            curr_price_raw = matched.iloc[0].get('Close')
+            curr_marcap_raw = matched.iloc[0].get('Marcap')
+
+            # 주가 데이터가 있을 때만 현재가/시총/Upside 계산
             try:
-                target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
-            except:
-                target_price = 0
-            
-            item['현재가'] = f"{int(curr_price):,}원"
-            item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억"
-            if target_price > 0:
-                upside = (target_price / curr_price - 1) * 100
-                item['Upside'] = round(upside, 1)
-                item['목표시총'] = f"{int(curr_marcap * (1 + upside/100) // 100_000_000):,}억"
-                item['목표주가'] = f"{target_price:,}원"
-            
+                curr_price = float(curr_price_raw) if curr_price_raw is not None and not pd.isna(curr_price_raw) else None
+            except (TypeError, ValueError):
+                curr_price = None
+            try:
+                curr_marcap = float(curr_marcap_raw) if curr_marcap_raw is not None and not pd.isna(curr_marcap_raw) else 0
+            except (TypeError, ValueError):
+                curr_marcap = 0
+
+            if curr_price:
+                target_price_str = item.get("목표주가", "0")
+                try:
+                    target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
+                except:
+                    target_price = 0
+
+                item['현재가'] = f"{int(curr_price):,}원"
+                item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억" if curr_marcap else 'N/A'
+                if target_price > 0:
+                    upside = (target_price / curr_price - 1) * 100
+                    item['Upside'] = round(upside, 1)
+                    item['목표시총'] = f"{int(curr_marcap * (1 + upside/100) // 100_000_000):,}억" if curr_marcap else 'N/A'
+                    item['목표주가'] = f"{target_price:,}원"
+
             # 버틀러 우선순위 덮어쓰기 로직
             is_butler = (item.get('source') == 'butler_works')
             if dup_key in unique_results:
@@ -366,12 +378,47 @@ async def main():
     doc_source_map = {str(d['id']): d['source'] for d in docs_to_process}
 
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
-    print("📌 KRX KIND에서 종목 목록 수집 중...")
+    print("📌 KRX 종목 데이터 수집 중 (이름: KIND, 주가: pykrx)...")
+
+    # [Step 1] KRX KIND → 종목명 + 종목코드
     kind_url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-    kind_res  = requests.get(kind_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-    df_listing = pd.read_html(io.StringIO(kind_res.text), header=0)[0][['회사명', '종목코드']]
-    df_listing.columns = ['Name', 'Code']
-    df_listing['Code'] = df_listing['Code'].astype(str).str.zfill(6)
+    kind_res = requests.get(kind_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+    df_kind = pd.read_html(io.StringIO(kind_res.text), header=0)[0][['회사명', '종목코드']]
+    df_kind.columns = ['Name', 'Code']
+    df_kind['Code'] = df_kind['Code'].astype(str).str.zfill(6)
+    print(f"  ✅ KIND 종목명 수집 완료 ({len(df_kind)}개)")
+
+    # [Step 2] pykrx → 종가(Close) + 시가총액(Marcap), 최근 5일 재시도
+    df_price = None
+    for i in range(5):
+        target = (datetime.today() - timedelta(days=i)).strftime('%Y%m%d')
+        try:
+            df_k = pykrx_stock.get_market_ohlcv_by_ticker(target, market='KOSPI')
+            df_q = pykrx_stock.get_market_ohlcv_by_ticker(target, market='KOSDAQ')
+            df_ohlcv = pd.concat([df_k, df_q])
+            if df_ohlcv.empty or '종가' not in df_ohlcv.columns:
+                continue
+            df_cap_k = pykrx_stock.get_market_cap_by_ticker(target, market='KOSPI')
+            df_cap_q = pykrx_stock.get_market_cap_by_ticker(target, market='KOSDAQ')
+            df_cap = pd.concat([df_cap_k, df_cap_q])
+            df_price = df_ohlcv[['종가']].join(df_cap[['시가총액']], how='left')
+            df_price = df_price.rename(columns={'종가': 'Close', '시가총액': 'Marcap'})
+            df_price.index.name = 'Code'
+            df_price = df_price.reset_index()
+            print(f"  ✅ pykrx 주가 수집 완료 ({target} 기준, {len(df_price)}개)")
+            break
+        except Exception as e:
+            print(f"  ⚠️ pykrx {target} 실패: {e}")
+
+    # [Step 3] 병합: 종목명(KIND) + 주가(pykrx)
+    if df_price is not None:
+        df_listing = df_kind.merge(df_price[['Code', 'Close', 'Marcap']], on='Code', how='left')
+        print(f"  ✅ 종목 데이터 병합 완료 (총 {len(df_listing)}개)")
+    else:
+        print("  ⚠️ pykrx 주가 수집 실패. 현재가/시총 없이 진행합니다.")
+        df_listing = df_kind
+        df_listing['Close'] = None
+        df_listing['Marcap'] = None
 
     chunk_size = 7
     MAX_PASSES = 4 
