@@ -173,7 +173,7 @@ def analyze_chunk_with_gemini(chunk_docs):
         safe_text = d['text'][:2500] 
         prompt_text += f"\n\n[문서 ID: {d['id']}]\n{safe_text}"
         
-    prompt = f"""너는 증권사 레포트 전문 분석가야. 
+    prompt = f"""너는 증권사 레포트 전문 분석가야.
     아래 텍스트에서 정보를 추출해서 반드시 JSON 배열 포맷으로만 응답해.
     기업 분석 레포트가 아니면 제외해.
     [응답 포맷]
@@ -184,13 +184,15 @@ def analyze_chunk_with_gemini(chunk_docs):
             "증권사": "증권사명",
             "레포트 제목": "제목",
             "발행일자": "YYYY-MM-DD",
-            "목표주가": "숫자만",
-            "평가방식": "밸류에이션 근거",
-            "투자포인트": ["포인트1", "포인트2"]
+            "현재주가": "레포트에 명시된 현재 주가 (숫자만, 원 단위. 없으면 null)",
+            "목표주가": "목표주가 (숫자만, 원 단위)",
+            "상승여력": "레포트에 명시된 상승여력 또는 Upside % (숫자만. 없으면 null)",
+            "평가방식": "밸류에이션 근거 (예: PER 15배, DCF, EV/EBITDA 등. 없으면 null)",
+            "투자포인트": ["핵심 포인트1", "핵심 포인트2"]
         }}
     ]
     [분석할 문서들]
-    {prompt_text} 
+    {prompt_text}
     """
     
     current_usage = increment_api_usage()
@@ -272,38 +274,34 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
         dup_key = f"{clean_name}_{title_nospace}"
         unique_results[dup_key] = item
 
-    # [3] 신규 데이터 매칭 및 병합
+    # [3] 신규 데이터 저장 (KIND 매칭 여부와 무관하게 전체 저장)
     new_matched_count = 0
     for item in analyzed_data:
         raw_name = item.get('종목명') or ''
-        clean_name = str(raw_name).split('(')[0].strip() 
-        
-        # 증권사는 저장용으로 파싱만 해둡니다
-        raw_broker = item.get('증권사') or '정보없음'
-        broker = str(raw_broker).strip()
-        
+        clean_name = str(raw_name).split('(')[0].strip()
+
         raw_title = item.get('레포트 제목') or '제목없음'
         title_nospace = str(raw_title).replace(" ", "").strip()
-        
-        # 여기서도 증권사를 빼고 2중 키로만 판별!
         dup_key = f"{clean_name}_{title_nospace}"
-        matched = df_listing[df_listing['Name'] == clean_name]
-        
-        if not matched.empty:
-            curr_price_raw = matched.iloc[0].get('Close')
-            curr_marcap_raw = matched.iloc[0].get('Marcap')
 
-            # 주가 데이터가 있을 때만 현재가/시총/Upside 계산
+        # --- 현재가 결정: ① pykrx/fdr 실시간 → ② AI 추출값 순서 ---
+        curr_price = None
+        curr_marcap = 0
+
+        matched = df_listing[df_listing['Name'] == clean_name]
+        if not matched.empty:
             try:
-                curr_price = float(curr_price_raw) if curr_price_raw is not None and not pd.isna(curr_price_raw) else None
+                v = matched.iloc[0].get('Close')
+                curr_price = float(v) if v is not None and not pd.isna(v) else None
             except (TypeError, ValueError):
                 curr_price = None
             try:
-                curr_marcap = float(curr_marcap_raw) if curr_marcap_raw is not None and not pd.isna(curr_marcap_raw) else 0
+                v = matched.iloc[0].get('Marcap')
+                curr_marcap = float(v) if v is not None and not pd.isna(v) else 0
             except (TypeError, ValueError):
                 curr_marcap = 0
 
-            # pykrx 벌크 조회 실패 시 fdr 개별 조회로 fallback
+            # pykrx 실패 시 fdr fallback
             if curr_price is None:
                 code = str(matched.iloc[0].get('Code', ''))
                 if code:
@@ -311,31 +309,56 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
                     if curr_price:
                         print(f"      📈 fdr fallback: {clean_name}({code}) = {curr_price:,.0f}원")
 
-            if curr_price:
-                target_price_str = item.get("목표주가", "0")
+        # pykrx/fdr 모두 실패 시 AI가 레포트에서 추출한 현재주가 사용
+        if curr_price is None:
+            ai_price_raw = item.get("현재주가")
+            if ai_price_raw:
                 try:
-                    target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
-                except:
-                    target_price = 0
+                    digits = ''.join(filter(str.isdigit, str(ai_price_raw)))
+                    curr_price = float(digits) if digits else None
+                except (TypeError, ValueError):
+                    curr_price = None
 
-                item['현재가'] = f"{int(curr_price):,}원"
-                item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억" if curr_marcap else 'N/A'
-                if target_price > 0:
-                    upside = (target_price / curr_price - 1) * 100
-                    item['Upside'] = round(upside, 1)
-                    item['목표시총'] = f"{int(curr_marcap * (1 + upside/100) // 100_000_000):,}억" if curr_marcap else 'N/A'
-                    item['목표주가'] = f"{target_price:,}원"
+        # --- 목표주가 파싱 ---
+        target_price_str = item.get("목표주가", "0")
+        try:
+            target_price = int(''.join(filter(str.isdigit, str(target_price_str))))
+        except (TypeError, ValueError):
+            target_price = 0
 
-            # 버틀러 우선순위 덮어쓰기 로직
-            is_butler = (item.get('source') == 'butler_works')
-            if dup_key in unique_results:
-                if is_butler and unique_results[dup_key].get('source_type') != 'butler_works':
-                    item['source_type'] = 'butler_works'
-                    unique_results[dup_key] = item
-            else:
-                item['source_type'] = 'butler_works' if is_butler else 'pdf'
+        # --- Upside 결정: ① AI 명시값 → ② 현재가·목표주가로 계산 ---
+        ai_upside_raw = item.get("상승여력")
+        if ai_upside_raw is not None:
+            try:
+                item['Upside'] = round(float(str(ai_upside_raw).replace('%', '').strip()), 1)
+            except (TypeError, ValueError):
+                pass
+        elif curr_price and curr_price > 0 and target_price > 0:
+            item['Upside'] = round((target_price / curr_price - 1) * 100, 1)
+
+        # --- 표시용 필드 포맷 ---
+        if curr_price:
+            item['현재가'] = f"{int(curr_price):,}원"
+            item['현재시총'] = f"{int(curr_marcap // 100_000_000):,}억" if curr_marcap else 'N/A'
+        if target_price > 0:
+            item['목표주가'] = f"{target_price:,}원"
+            if curr_marcap and item.get('Upside') is not None:
+                item['목표시총'] = f"{int(curr_marcap * (1 + item['Upside'] / 100) // 100_000_000):,}억"
+
+        # AI에서 추출한 임시 필드 정리
+        item.pop('현재주가', None)
+        item.pop('상승여력', None)
+
+        # --- 버틀러 우선순위 덮어쓰기 로직 ---
+        is_butler = (item.get('source') == 'butler_works')
+        if dup_key in unique_results:
+            if is_butler and unique_results[dup_key].get('source_type') != 'butler_works':
+                item['source_type'] = 'butler_works'
                 unique_results[dup_key] = item
-                new_matched_count += 1
+        else:
+            item['source_type'] = 'butler_works' if is_butler else 'pdf'
+            unique_results[dup_key] = item
+            new_matched_count += 1
             
     # [4] 최종 결과 정리 및 저장
     final_list = []
