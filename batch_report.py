@@ -11,6 +11,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from google import genai
 from pykrx import stock as pykrx_stock
+import FinanceDataReader as fdr
 
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
@@ -224,6 +225,27 @@ def analyze_chunk_with_gemini(chunk_docs):
             print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
             return None
 
+# 💡 4-0. pykrx 실패 시 fdr 개별 조회 fallback (캐시 적용으로 중복 호출 방지)
+_price_cache = {}
+
+def get_price_fallback(code):
+    """pykrx 벌크 조회 실패 시 fdr로 개별 종목 현재가 조회"""
+    if code in _price_cache:
+        return _price_cache[code]
+    try:
+        end = datetime.today().strftime('%Y-%m-%d')
+        start = (datetime.today() - timedelta(days=10)).strftime('%Y-%m-%d')
+        df = fdr.DataReader(code, start, end)
+        if not df.empty and 'Close' in df.columns:
+            price = float(df['Close'].iloc[-1])
+            _price_cache[code] = price
+            return price
+    except Exception:
+        pass
+    _price_cache[code] = None
+    return None
+
+
 # 💡 4. JSON 파일 누적 저장 & 중복 제거 (종목명+제목)
 def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_name, analysis_time):
     # [1] 기존 데이터 로드
@@ -280,6 +302,14 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
                 curr_marcap = float(curr_marcap_raw) if curr_marcap_raw is not None and not pd.isna(curr_marcap_raw) else 0
             except (TypeError, ValueError):
                 curr_marcap = 0
+
+            # pykrx 벌크 조회 실패 시 fdr 개별 조회로 fallback
+            if curr_price is None:
+                code = str(matched.iloc[0].get('Code', ''))
+                if code:
+                    curr_price = get_price_fallback(code)
+                    if curr_price:
+                        print(f"      📈 fdr fallback: {clean_name}({code}) = {curr_price:,.0f}원")
 
             if curr_price:
                 target_price_str = item.get("목표주가", "0")
