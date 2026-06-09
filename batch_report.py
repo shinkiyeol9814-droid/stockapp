@@ -1,10 +1,11 @@
 import os
+import io
 import json
 import asyncio
 import time
+import requests
 from datetime import datetime, timedelta
 import pandas as pd
-import FinanceDataReader as fdr
 import fitz  # PyMuPDF
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -365,13 +366,12 @@ async def main():
     doc_source_map = {str(d['id']): d['source'] for d in docs_to_process}
 
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
-    try:
-        df_listing = fdr.StockListing('KRX')
-        if df_listing.empty or 'Name' not in df_listing.columns:
-            raise ValueError("KRX 데이터 불완전")
-    except Exception as e:
-        print(f"⚠️ fdr.StockListing('KRX') 실패: {e}\n📌 KOSPI+KOSDAQ 폴백 수집...")
-        df_listing = pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
+    print("📌 KRX KIND에서 종목 목록 수집 중...")
+    kind_url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
+    kind_res  = requests.get(kind_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+    df_listing = pd.read_html(io.StringIO(kind_res.text), header=0)[0][['회사명', '종목코드']]
+    df_listing.columns = ['Name', 'Code']
+    df_listing['Code'] = df_listing['Code'].astype(str).str.zfill(6)
 
     chunk_size = 7
     MAX_PASSES = 4 

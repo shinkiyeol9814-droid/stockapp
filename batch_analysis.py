@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import asyncio
 import aiohttp
@@ -6,10 +7,11 @@ import time
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
-import re 
+import re
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
+from pykrx import stock as pykrx_stock
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from google import genai
@@ -23,17 +25,27 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 def get_krx_listing():
-    """KRX 전체 종목 리스트 — fdr 캐시 404 시 KOSPI+KOSDAQ 폴백"""
+    """pykrx로 KRX 전체 종목 가격·시총 수집 + KRX KIND로 종목명 병합"""
+    today = datetime.today().strftime('%Y%m%d')
+    print(f"📌 pykrx로 KRX 데이터 수집 중... ({today})")
+    df_ohlcv = pykrx_stock.get_market_ohlcv_by_ticker(today, market='ALL')
+    df_cap   = pykrx_stock.get_market_cap_by_ticker(today)
+    df = df_ohlcv[['종가', '거래량', '등락률']].join(df_cap[['시가총액']], how='left')
+    df = df.rename(columns={'종가': 'Close', '거래량': 'Volume', '등락률': 'ChagesRatio', '시가총액': 'Marcap'})
+    df.index.name = 'Code'
+    df = df.reset_index()
     try:
-        df = fdr.StockListing('KRX')
-        if not df.empty and 'Marcap' in df.columns:
-            return df
+        kind_url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
+        res = requests.get(kind_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        name_df = pd.read_html(io.StringIO(res.text), header=0)[0][['회사명', '종목코드']]
+        name_df.columns = ['Name', 'Code']
+        name_df['Code'] = name_df['Code'].astype(str).str.zfill(6)
+        df = df.merge(name_df, on='Code', how='left')
+        df['Name'] = df['Name'].fillna(df['Code'])
     except Exception as e:
-        print(f"⚠️ fdr.StockListing('KRX') 실패: {e}")
-    print("📌 KOSPI + KOSDAQ 분리 수집으로 폴백합니다...")
-    df_kospi  = fdr.StockListing('KOSPI')
-    df_kosdaq = fdr.StockListing('KOSDAQ')
-    return pd.concat([df_kospi, df_kosdaq], ignore_index=True)
+        print(f"⚠️ 종목명 조회 실패: {e} — Code를 Name으로 대체")
+        df['Name'] = df['Code']
+    return df
 
 def get_high_stocks():
     print("데이터 수집 및 필터링 시작...")
