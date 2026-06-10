@@ -21,6 +21,7 @@ def get_github_repo():
         return g.get_repo(repo_name)
     return None
 
+@st.cache_data(ttl=60, show_spinner=False)
 def load_favorites():
     repo = get_github_repo()
     if repo:
@@ -81,10 +82,12 @@ def save_favorites(favorites_set):
         try:
             file = repo.get_contents(str(FAVORITES_FILE))
             repo.update_file(str(FAVORITES_FILE), "Update favorites", content_str, file.sha)
+            load_favorites.clear()
             return True, ""
         except Exception as e:
             try:
                 repo.create_file(str(FAVORITES_FILE), "Create favorites", content_str)
+                load_favorites.clear()
                 return True, ""
             except Exception as e2:
                 return False, str(e2)
@@ -93,6 +96,7 @@ def save_favorites(favorites_set):
             LOCAL_FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(LOCAL_FAVORITES_FILE, "w", encoding="utf-8") as f:
                 json.dump(list(favorites_set), f, ensure_ascii=False)
+            load_favorites.clear()
             return True, ""
         except Exception as e:
             return False, str(e)
@@ -187,6 +191,7 @@ def render_earnings_menu():
     if 'ea_quarter' not in st.session_state: st.session_state.ea_quarter = available_quarters[0]
     if 'ea_keyword' not in st.session_state: st.session_state.ea_keyword = ""
     if 'ea_favs' not in st.session_state: st.session_state.ea_favs = False
+    if 'ea_page' not in st.session_state: st.session_state.ea_page = 1
 
     with st.form("earnings_search_form", border=False):
         f_col1, f_col2, f_col3 = st.columns([2.5, 4, 1.5])
@@ -202,6 +207,7 @@ def render_earnings_menu():
     if search_btn:
         st.session_state.ea_quarter = ui_quarter
         st.session_state.ea_keyword = ui_keyword.strip()
+        st.session_state.ea_page = 1
         st.rerun()
 
     filtered_results = []
@@ -214,10 +220,14 @@ def render_earnings_menu():
         if st.session_state.ea_favs and code not in st.session_state.favorites: continue
         filtered_results.append(row)
 
-    st.caption(f"📊 **{st.session_state.ea_quarter}** 기준 총 **{len(filtered_results)}**개의 실적 공시가 있습니다.")
+    ITEMS_PER_PAGE = 30
+    total_items = len(filtered_results)
+    display_results = filtered_results[:st.session_state.ea_page * ITEMS_PER_PAGE]
+
+    st.caption(f"📊 **{st.session_state.ea_quarter}** 기준 총 **{total_items}**개 · {len(display_results)}개 표시")
     st.divider()
-    
-    for row in filtered_results:
+
+    for row in display_results:
         corp_name = row.get('종목명', '')
         code = row.get('코드', '')
         pub_time = row.get('발표시간', '')
@@ -307,3 +317,9 @@ def render_earnings_menu():
         </details>
         """
         st.markdown(card_html, unsafe_allow_html=True)
+
+    remaining = total_items - len(display_results)
+    if remaining > 0:
+        if st.button(f"⬇️ 더보기 ({remaining}개 남음)", use_container_width=True, key="ea_more_btn"):
+            st.session_state.ea_page += 1
+            st.rerun()

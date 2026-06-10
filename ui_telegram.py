@@ -139,33 +139,43 @@ def render_telegram_viewer():
 
     st.markdown("""
     <style>
-    /* 채널 라디오 리스트 스타일 */
-    div[data-testid="stRadio"] > div { gap: 2px; }
-    div[data-testid="stRadio"] label {
-        padding: 7px 10px !important;
-        border-radius: 6px !important;
+    /* 채널 목록 버튼 — flat 리스트 아이템 스타일 */
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        color: #262730 !important;
+        padding: 6px 10px !important;
         font-size: 13px !important;
-        cursor: pointer !important;
-        width: 100% !important;
-        display: block !important;
+        border-radius: 6px !important;
+        font-weight: normal !important;
     }
-    div[data-testid="stRadio"] label:hover { background: #f0f2f6; }
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"]:hover {
+        background: #f0f2f6 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
+
+    if 'tg_selected' not in st.session_state:
+        st.session_state.tg_selected = 0
 
     col_left, col_right = st.columns([2, 5], gap="medium")
 
     # ── 왼쪽: 채널 목록 ──────────────────────────────────
     with col_left:
-        st.markdown("<div style='font-weight:bold;font-size:15px;margin-bottom:8px;'>📱 채널</div>",
-                    unsafe_allow_html=True)
+        c_title, c_rfr = st.columns([3, 1])
+        with c_title:
+            st.markdown("<div style='font-weight:bold;font-size:15px;padding:4px 0;'>📱 채널</div>",
+                        unsafe_allow_html=True)
+        with c_rfr:
+            if st.button("🔄", key="tg_ch_rfr", help="채널 목록 새로고침"):
+                load_dialogs.clear()
+                load_messages.clear()
+                st.rerun()
 
-        if st.button("🔄 채널 새로고침", use_container_width=True, key="tg_ch_rfr"):
-            load_dialogs.clear()
-            load_messages.clear()
-            st.rerun()
-
-        st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin:4px 0 6px;'>", unsafe_allow_html=True)
 
         with st.spinner("채널 목록 로딩..."):
             dialogs = load_dialogs()
@@ -177,22 +187,26 @@ def render_telegram_viewer():
             st.info("채널 없음")
             return
 
-        labels = [
-            f"🔵 {d['name']}" if d["unread"] > 0 else d["name"]
-            for d in dialogs
-        ]
+        tg_sel = min(st.session_state.tg_selected, len(dialogs) - 1)
 
-        selected_idx = st.radio(
-            "채널 선택",
-            range(len(dialogs)),
-            format_func=lambda i: labels[i],
-            label_visibility="collapsed",
-            key="tg_radio",
-        )
+        for i, d in enumerate(dialogs):
+            label = f"🔵 {d['name']}" if d["unread"] > 0 else d["name"]
+            if i == tg_sel:
+                st.markdown(f"""
+                <div style='background:#dbeafe;border-radius:6px;padding:6px 10px;
+                            margin:1px 0;font-size:13px;font-weight:600;color:#1d4ed8;
+                            border-left:3px solid #2563eb;'>
+                    {label}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                if st.button(label, key=f"tg_ch_{i}", use_container_width=True):
+                    st.session_state.tg_selected = i
+                    st.rerun()
 
     # ── 오른쪽: 메시지 ───────────────────────────────────
     with col_right:
-        selected = dialogs[selected_idx]
+        selected = dialogs[tg_sel]
 
         c1, c2, c3 = st.columns([5, 1.2, 0.7])
         with c1:
