@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import asyncio
 import aiohttp
@@ -6,7 +7,7 @@ import time
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
-import re 
+import re
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
@@ -22,49 +23,86 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-def get_high_stocks():
+async def _fetch_naver_summary(session, sem, code):
+    """NAVER Finance itemSummary API로 단일 종목 현재가/시총 조회 (KRX 무관)"""
+    url = f"https://api.finance.naver.com/service/itemSummary.nhn?itemcode={code}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    async with sem:
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                data = await r.json(content_type=None)
+                close = float((data.get('closePrice') or '0').replace(',', ''))
+                change = float(str(data.get('fluctuationsRatio') or '0').replace(',', ''))
+                marcap = int(float((data.get('marketValue') or '0').replace(',', '')))
+                return {'Code': code, 'Close': close, 'ChagesRatio': change, 'Marcap': marcap}
+        except Exception:
+            return None
+
+async def get_high_stocks():
     print("데이터 수집 및 필터링 시작...")
-    df = fdr.StockListing('KRX')
-    
+
+    # 1. KIND에서 전체 종목 코드/이름 수집 (KRX kind.krx.co.kr — data.krx.co.kr 아님)
+    try:
+        kind_url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
+        res = requests.get(kind_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        name_df = pd.read_html(io.StringIO(res.text), header=0)[0][['회사명', '종목코드']]
+        name_df.columns = ['Name', 'Code']
+        name_df['Code'] = name_df['Code'].astype(str).str.zfill(6)
+        print(f"📋 KIND에서 {len(name_df)}개 종목 수집")
+    except Exception as e:
+        print(f"⚠️ KIND API 실패: {e}")
+        return []
+
+    # 2. NAVER Finance에서 현재가/시총 병렬 수집 (50 동시 요청)
+    codes = name_df['Code'].tolist()
+    sem = asyncio.Semaphore(50)
+    print(f"📌 NAVER Finance에서 {len(codes)}개 종목 현재가 수집 중...")
+    async with aiohttp.ClientSession() as session:
+        tasks = [_fetch_naver_summary(session, sem, code) for code in codes]
+        price_results = await asyncio.gather(*tasks)
+
+    price_df = pd.DataFrame([r for r in price_results if r])
+    df = name_df.merge(price_df, on='Code', how='left')
+
     # 데이터 숫자형 변환
     df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
     df['Close'] = pd.to_numeric(df['Close'], errors='coerce').fillna(0)
-    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
-    
+
+    print(f"✅ 데이터 수집 완료 ({len(df)}개 종목)")
+
     # 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
-    
+
     # 당일 상승 마감(양봉) 종목만 선정
-    df = df[df['ChagesRatio'] > 0.0] 
+    df = df[df['ChagesRatio'] > 0.0]
     candidates = df.sort_values('ChagesRatio', ascending=False)
     results = []
-    
+
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    
+
     print(f"필터 통과 {len(candidates)}개 종목 신고가 정밀 연산 중...")
     for row in candidates.itertuples():
         try:
             hist = fdr.DataReader(row.Code, start_date)
             if hist.empty or len(hist) < 20: continue
-            
+
             # 오늘을 제외한 '과거' 데이터만 분리하여 매물대 계산 (윗꼬리 왜곡 방지)
             past_hist = hist.iloc[:-1]
             if past_hist.empty: continue
-            
+
             # 과거 기간별 최고 '종가' (매물대 저항선)
             past_max_1y = past_hist['Close'].max()
             past_max_6m = past_hist['Close'].tail(120).max()
             past_max_3m = past_hist['Close'].tail(60).max()
-            
+
             today_close = int(hist['Close'].iloc[-1])
-            
+
             period_flag = ""
-            # 💡 [핵심 수정] 0.98(98%) 버퍼를 삭제하고, 과거 최고 종가를 '완벽하게' 넘은 녀석만 인정
             if today_close >= past_max_1y: period_flag = "1년(52주) 신고가"
             elif today_close >= past_max_6m: period_flag = "6개월 신고가"
             elif today_close >= past_max_3m: period_flag = "3개월 신고가"
-            
+
             if period_flag:
                 results.append({
                     "종목명": row.Name,
@@ -76,7 +114,7 @@ def get_high_stocks():
                 })
         except Exception:
             pass
-            
+
     return results
 
 async def get_telegram_news(client, stock_name):
@@ -220,7 +258,7 @@ async def main():
     os.makedirs(save_dir, exist_ok=True)
     file_name = f"{save_dir}/newhigh_{now.strftime('%Y%m%d_%H%M')}.json"
     
-    stocks = get_high_stocks()
+    stocks = await get_high_stocks()
     
     if not stocks:
         print("조건을 만족하는 신고가 종목이 없습니다.")
