@@ -13,12 +13,12 @@ CHANNELS = {
 }
 
 def _get_config():
+    import os
     try:
-        return (
-            int(st.secrets.get("TELEGRAM_API_ID", 0)),
-            st.secrets.get("TELEGRAM_API_HASH", ""),
-            st.secrets.get("TELEGRAM_SESSION", ""),
-        )
+        api_id = st.secrets.get("TELEGRAM_API_ID", "") or os.environ.get("TELEGRAM_API_ID", "")
+        api_hash = st.secrets.get("TELEGRAM_API_HASH", "") or os.environ.get("TELEGRAM_API_HASH", "")
+        session = st.secrets.get("TELEGRAM_SESSION", "") or os.environ.get("TELEGRAM_SESSION", "")
+        return int(api_id) if api_id else 0, api_hash, session
     except Exception:
         return 0, "", ""
 
