@@ -54,9 +54,10 @@ st.markdown("""
 # CSS 세팅 후 나머지 모듈 불러오기
 from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
-from ui_report import render_report_summary  
+from ui_report import render_report_summary
 from ui_earnings import render_earnings_menu
-from streamlit_option_menu import option_menu 
+from ui_telegram import render_telegram_viewer
+from streamlit_option_menu import option_menu
 
 # 세션 상태 초기화 (전역)
 if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
@@ -78,8 +79,8 @@ if query_stock_code:
 # ==========================================
 menu = option_menu(
     menu_title=None, 
-    options=["가치평가", "신고가", "레포트", "실적"],
-    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line"], 
+    options=["가치평가", "신고가", "레포트", "실적", "텔레그램"],
+    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "chat-dots"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -134,3 +135,6 @@ elif menu == "레포트":
 
 elif menu == "실적":
     render_earnings_menu()
+
+elif menu == "텔레그램":
+    render_telegram_viewer()
