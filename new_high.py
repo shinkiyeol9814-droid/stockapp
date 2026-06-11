@@ -73,10 +73,6 @@ def render_new_high_menu():
     with open(f"data/new_high/{selected_file}", "r", encoding="utf-8") as f:
         report_data = json.load(f)
 
-    analysis_time = report_data.get('analysis_time', 'N/A')
-    exec_time = report_data.get('execution_time', '알 수 없음')
-    st.success(f"✅ **기준 시점:** {analysis_time} &nbsp;&nbsp;|&nbsp;&nbsp; ⏱️ **소요시간:** {exec_time}")
-    
     if not report_data.get('results'):
         st.write("조건을 만족하는 주도주가 없습니다.")
         return
