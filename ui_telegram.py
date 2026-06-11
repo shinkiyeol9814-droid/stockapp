@@ -172,6 +172,7 @@ def render_telegram_viewer():
         width: 100% !important;
         display: block !important;
         margin: 0 !important;
+        text-align: left !important;
     }
     div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"]:hover {
         background: #eef2f7 !important;
