@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
@@ -292,6 +293,33 @@ def apply_search():
         else: st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
 
 def render_valuation_menu():
+    # 모바일에서 자리 비움 후 복귀 시 자동 리로드 (2분 이상 부재 → 새 데이터로 갱신)
+    components.html("""
+    <script>
+    (function() {
+        var AWAY_MS = 2 * 60 * 1000;
+        var win = window.parent || window;
+        var doc = win.document;
+        // parent window에 상태 저장 → Streamlit 재렌더링(autorefresh)에도 유지됨
+        if (!win.__valVisRegistered__) {
+            win.__valVisRegistered__ = true;
+            win.__valHiddenAt__ = null;
+            doc.addEventListener('visibilitychange', function() {
+                if (doc.hidden) {
+                    win.__valHiddenAt__ = Date.now();
+                } else if (win.__valHiddenAt__) {
+                    if (Date.now() - win.__valHiddenAt__ > AWAY_MS) {
+                        win.__valVisRegistered__ = false;
+                        win.location.reload();
+                    }
+                    win.__valHiddenAt__ = null;
+                }
+            });
+        }
+    })();
+    </script>
+    """, height=0)
+
     if 'app_init_done' not in st.session_state:
         st.session_state.app_init_done = True
         q_code = st.query_params.get("stock_code", "")
