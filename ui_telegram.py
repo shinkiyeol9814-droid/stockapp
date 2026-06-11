@@ -150,13 +150,14 @@ def render_telegram_viewer():
 
     st.markdown("""
     <style>
-    /* 채널 목록 버튼 — flat 리스트 아이템 + 텍스트 말줄임 */
-    div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"] {
+    /* 채널 목록 버튼 — flat 리스트 아이템 + 왼쪽 정렬 + 텍스트 말줄임 */
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button {
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
         text-align: left !important;
         justify-content: flex-start !important;
+        align-items: center !important;
         color: #262730 !important;
         padding: 5px 8px !important;
         font-size: 12.5px !important;
@@ -165,7 +166,8 @@ def render_telegram_viewer():
         width: 100% !important;
         min-height: 0 !important;
     }
-    div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"] p {
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button p,
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button span {
         overflow: hidden !important;
         text-overflow: ellipsis !important;
         white-space: nowrap !important;
@@ -174,7 +176,7 @@ def render_telegram_viewer():
         margin: 0 !important;
         text-align: left !important;
     }
-    div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"]:hover {
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button:hover {
         background: #eef2f7 !important;
     }
     </style>
