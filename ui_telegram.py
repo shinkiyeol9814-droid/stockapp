@@ -90,6 +90,15 @@ def load_messages(entity_key, limit):
     except Exception:
         return []
 
+_URL_RE = re.compile(r'(https?://[^\s<>"\']+[^\s<>"\'.,!?)\]])')
+
+def _linkify(text):
+    return _URL_RE.sub(
+        r'<a href="\1" target="_blank" rel="noopener noreferrer" '
+        r'style="color:#0088cc;text-decoration:underline;word-break:break-all;">\1</a>',
+        text
+    )
+
 def _render_msg(msg):
     time_str = msg["time_str"]
     text = msg["text"]
@@ -97,8 +106,9 @@ def _render_msg(msg):
 
     if doc_name:
         icon = "📄" if doc_name.lower().endswith(".pdf") else "📎"
+        caption_raw = text[:120].replace(chr(10), ' ') if text else ""
         caption = (f"<div style='font-size:12px;color:#666;margin-top:4px;'>"
-                   f"{text[:120].replace(chr(10),' ')}</div>") if text else ""
+                   f"{_linkify(caption_raw)}</div>") if caption_raw else ""
         st.markdown(f"""
         <div style='border:1px solid #e0e0e0;background:#fff;border-radius:8px;
                     padding:10px 14px;margin-bottom:6px;'>
@@ -109,7 +119,7 @@ def _render_msg(msg):
         """, unsafe_allow_html=True)
 
     elif text:
-        full_html = text.replace('\n', '<br>')
+        full_html = _linkify(text.replace('\n', '<br>'))
         preview = text[:120].replace('\n', ' ')
         if len(text) > 120:
             st.markdown(f"""
@@ -139,7 +149,7 @@ def render_telegram_viewer():
 
     st.markdown("""
     <style>
-    /* 채널 목록 버튼 — flat 리스트 아이템 스타일 */
+    /* 채널 목록 버튼 — flat 리스트 아이템 + 텍스트 말줄임 */
     div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"] {
         background: transparent !important;
         border: none !important;
@@ -147,13 +157,23 @@ def render_telegram_viewer():
         text-align: left !important;
         justify-content: flex-start !important;
         color: #262730 !important;
-        padding: 6px 10px !important;
-        font-size: 13px !important;
+        padding: 5px 8px !important;
+        font-size: 12.5px !important;
         border-radius: 6px !important;
         font-weight: normal !important;
+        width: 100% !important;
+        min-height: 0 !important;
+    }
+    div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"] p {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        width: 100% !important;
+        display: block !important;
+        margin: 0 !important;
     }
     div[data-testid="column"]:first-child div[data-testid="stButton"] > button[kind="secondary"]:hover {
-        background: #f0f2f6 !important;
+        background: #eef2f7 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -161,7 +181,7 @@ def render_telegram_viewer():
     if 'tg_selected' not in st.session_state:
         st.session_state.tg_selected = 0
 
-    col_left, col_right = st.columns([2, 5], gap="medium")
+    col_left, col_right = st.columns([1.4, 5], gap="medium")
 
     # ── 왼쪽: 채널 목록 ──────────────────────────────────
     with col_left:
@@ -193,9 +213,10 @@ def render_telegram_viewer():
             label = f"🔵 {d['name']}" if d["unread"] > 0 else d["name"]
             if i == tg_sel:
                 st.markdown(f"""
-                <div style='background:#dbeafe;border-radius:6px;padding:6px 10px;
-                            margin:1px 0;font-size:13px;font-weight:600;color:#1d4ed8;
-                            border-left:3px solid #2563eb;'>
+                <div style='background:#1976d2;border-radius:6px;padding:5px 8px;
+                            margin:1px 0;font-size:12.5px;font-weight:600;color:#fff;
+                            overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                            cursor:default;'>
                     {label}
                 </div>
                 """, unsafe_allow_html=True)
