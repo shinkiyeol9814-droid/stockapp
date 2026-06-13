@@ -1,5 +1,4 @@
 import os
-import io
 import json
 import asyncio
 import aiohttp
@@ -8,10 +7,8 @@ import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
 import re
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import pandas as pd
-import yfinance as yf
 import FinanceDataReader as fdr
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -25,100 +22,49 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-def _yf_marcap(row):
-    """Yahoo Finance fast_info로 시가총액 조회 (ThreadPoolExecutor 용)"""
-    try:
-        mc = yf.Ticker(row['Ticker']).fast_info.market_cap
-        return int(mc) if mc else 0
-    except Exception:
-        return 0
-
-async def get_high_stocks():
+def get_high_stocks():
     print("데이터 수집 및 필터링 시작...")
-
-    # 1. KIND에서 KOSPI/KOSDAQ 분리 수집 → Yahoo Finance suffix 결정
-    hdrs = {'User-Agent': 'Mozilla/5.0'}
-    base_url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-    try:
-        dfs = []
-        for market, suffix in [('stockMkt', '.KS'), ('kosdaqMkt', '.KQ')]:
-            res = requests.get(f'{base_url}&marketType={market}', headers=hdrs, timeout=15)
-            mdf = pd.read_html(io.StringIO(res.text), header=0)[0][['회사명', '종목코드']]
-            mdf.columns = ['Name', 'Code']
-            mdf['Code'] = mdf['Code'].astype(str).str.zfill(6)
-            mdf['Ticker'] = mdf['Code'] + suffix
-            dfs.append(mdf)
-        name_df = pd.concat(dfs, ignore_index=True)
-        print(f"📋 KIND에서 {len(name_df)}개 종목 수집 (KOSPI {len(dfs[0])} + KOSDAQ {len(dfs[1])})")
-    except Exception as e:
-        print(f"⚠️ KIND API 실패: {e}")
-        return []
-
-    # 2. yfinance 배치 다운로드 — 전체 현재가/등락률 (GitHub Actions에서 접근 가능)
-    print(f"📌 Yahoo Finance 배치 다운로드 중 ({len(name_df)}개)...")
-    try:
-        raw = yf.download(
-            tickers=name_df['Ticker'].tolist(),
-            period='2d',
-            interval='1d',
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
-        close_s  = raw['Close'].iloc[-1]
-        prev_s   = raw['Close'].iloc[-2]
-        change_s = ((close_s - prev_s) / prev_s * 100).round(2)
-
-        price_df = pd.DataFrame({
-            'Ticker':      close_s.index,
-            'Close':       close_s.values,
-            'ChagesRatio': change_s.values,
-        }).dropna(subset=['Close'])
-        print(f"✅ Yahoo Finance 수집 완료 ({len(price_df)}개)")
-    except Exception as e:
-        print(f"⚠️ Yahoo Finance 실패: {e}")
-        return []
-
-    df = name_df.merge(price_df, on='Ticker', how='inner')
-    df['Close']       = pd.to_numeric(df['Close'],       errors='coerce').fillna(0)
+    df = fdr.StockListing('KRX')
+    
+    # 데이터 숫자형 변환
+    df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
+    df['Close'] = pd.to_numeric(df['Close'], errors='coerce').fillna(0)
+    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
     df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
-
-    # 1차 필터: 주가 1000원 이상 + 당일 양봉
-    df = df[(df['Close'] >= 1000) & (df['ChagesRatio'] > 0.0)].copy()
-    print(f"📊 1차 필터 (주가≥1000, 양봉): {len(df)}개")
-
-    # 3. 시총 조회 — 1차 필터 통과 종목만 (ThreadPoolExecutor 30 workers)
-    print(f"💰 시가총액 수집 중 ({len(df)}개)...")
-    with ThreadPoolExecutor(max_workers=30) as ex:
-        df['Marcap'] = list(ex.map(_yf_marcap, df.to_dict('records')))
-
-    # 2차 필터: 시총 500억 이상
-    df = df[df['Marcap'] >= 50_000_000_000].copy()
+    
+    # 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
+    df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
+    
+    # 당일 상승 마감(양봉) 종목만 선정
+    df = df[df['ChagesRatio'] > 0.0] 
     candidates = df.sort_values('ChagesRatio', ascending=False)
     results = []
-
+    
     start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    print(f"📊 2차 필터 (시총≥500억): {len(candidates)}개 → 신고가 정밀 연산 시작")
-
+    
+    print(f"필터 통과 {len(candidates)}개 종목 신고가 정밀 연산 중...")
     for row in candidates.itertuples():
         try:
             hist = fdr.DataReader(row.Code, start_date)
             if hist.empty or len(hist) < 20: continue
-
+            
+            # 오늘을 제외한 '과거' 데이터만 분리하여 매물대 계산 (윗꼬리 왜곡 방지)
             past_hist = hist.iloc[:-1]
             if past_hist.empty: continue
-
+            
+            # 과거 기간별 최고 '종가' (매물대 저항선)
             past_max_1y = past_hist['Close'].max()
             past_max_6m = past_hist['Close'].tail(120).max()
             past_max_3m = past_hist['Close'].tail(60).max()
-
+            
             today_close = int(hist['Close'].iloc[-1])
-
+            
             period_flag = ""
+            # 💡 [핵심 수정] 0.98(98%) 버퍼를 삭제하고, 과거 최고 종가를 '완벽하게' 넘은 녀석만 인정
             if today_close >= past_max_1y: period_flag = "1년(52주) 신고가"
             elif today_close >= past_max_6m: period_flag = "6개월 신고가"
             elif today_close >= past_max_3m: period_flag = "3개월 신고가"
-
+            
             if period_flag:
                 results.append({
                     "종목명": row.Name,
@@ -130,7 +76,7 @@ async def get_high_stocks():
                 })
         except Exception:
             pass
-
+            
     return results
 
 async def get_telegram_news(client, stock_name):
@@ -274,7 +220,7 @@ async def main():
     os.makedirs(save_dir, exist_ok=True)
     file_name = f"{save_dir}/newhigh_{now.strftime('%Y%m%d_%H%M')}.json"
     
-    stocks = await get_high_stocks()
+    stocks = get_high_stocks()
     
     if not stocks:
         print("조건을 만족하는 신고가 종목이 없습니다.")
