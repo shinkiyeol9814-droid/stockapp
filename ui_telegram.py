@@ -42,7 +42,7 @@ async def _fetch_dialogs(api_id, api_hash, session_str):
         await client.disconnect()
     return dialogs
 
-async def _fetch_messages(api_id, api_hash, session_str, entity_key, limit):
+async def _fetch_messages(api_id, api_hash, session_str, entity_key, limit, query=""):
     client = TelegramClient(StringSession(session_str), api_id, api_hash)
     await client.start()
     msgs = []
@@ -51,7 +51,10 @@ async def _fetch_messages(api_id, api_hash, session_str, entity_key, limit):
             entity = int(entity_key)
         except ValueError:
             entity = entity_key
-        async for m in client.iter_messages(entity, limit=limit):
+        kwargs = {"limit": limit}
+        if query:
+            kwargs["search"] = query
+        async for m in client.iter_messages(entity, **kwargs):
             kst = m.date.replace(tzinfo=None) + timedelta(hours=9)
             item = {
                 "time_str": kst.strftime("%m/%d %H:%M"),
@@ -88,6 +91,16 @@ def load_messages(entity_key, limit):
         return []
     try:
         return _run(_fetch_messages(api_id, api_hash, session, entity_key, limit))
+    except Exception:
+        return []
+
+@st.cache_data(ttl=60, show_spinner=False)
+def search_messages(entity_key, query, limit):
+    api_id, api_hash, session = _get_config()
+    if not api_id or not session:
+        return []
+    try:
+        return _run(_fetch_messages(api_id, api_hash, session, entity_key, limit, query=query))
     except Exception:
         return []
 
@@ -242,16 +255,30 @@ def render_telegram_viewer():
         with c3:
             if st.button("🔄", key="tg_msg_rfr", use_container_width=True):
                 load_messages.clear()
+                search_messages.clear()
                 st.rerun()
 
-        with st.spinner("메시지 로딩..."):
-            messages = load_messages(selected["entity_key"], limit)
+        query = st.text_input(
+            "검색", placeholder="🔍 채널 내 단어 검색...",
+            label_visibility="collapsed", key="tg_search",
+        )
 
-        st.caption(f"최근 {len(messages)}개 · 3분 자동 갱신")
+        is_search = bool(query and query.strip())
+
+        with st.spinner("메시지 로딩..." if not is_search else f"'{query}' 검색 중..."):
+            if is_search:
+                messages = search_messages(selected["entity_key"], query.strip(), limit)
+            else:
+                messages = load_messages(selected["entity_key"], limit)
+
+        if is_search:
+            st.caption(f"🔍 **'{query}'** 검색 결과 {len(messages)}개")
+        else:
+            st.caption(f"최근 {len(messages)}개 · 3분 자동 갱신")
         st.divider()
 
         if not messages:
-            st.info("메시지가 없습니다.")
+            st.info("메시지가 없습니다." if not is_search else f"'{query}' 검색 결과가 없습니다.")
         else:
             for msg in messages:
                 _render_msg(msg)
