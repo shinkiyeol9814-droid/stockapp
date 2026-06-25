@@ -22,23 +22,6 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-<<<<<<< Updated upstream
-def get_high_stocks():
-    print("데이터 수집 및 필터링 시작...")
-    df = fdr.StockListing('KRX')
-    
-    # 데이터 숫자형 변환
-    df['Marcap'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
-    df['Close'] = pd.to_numeric(df['Close'], errors='coerce').fillna(0)
-    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
-    df['ChagesRatio'] = pd.to_numeric(df['ChagesRatio'], errors='coerce').fillna(0)
-    
-    # 거래대금/거래량 조건 모두 제외 (시총 500억, 주가 1000원 이상만 유지)
-    df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
-    
-    # 당일 상승 마감(양봉) 종목만 선정
-    df = df[df['ChagesRatio'] > 0.0] 
-=======
 def _get_krx_listing():
     """KRX 전체 종목 리스트 — fdr.StockListing('KRX') 실패 시 KOSPI+KOSDAQ 폴백"""
     try:
@@ -63,18 +46,11 @@ def get_high_stocks():
 
     df = df[(df['Marcap'] >= 50_000_000_000) & (df['Close'] >= 1000)].copy()
     df = df[df['ChagesRatio'] > 0.0]
->>>>>>> Stashed changes
     candidates = df.sort_values('ChagesRatio', ascending=False)
     results = []
-    
-    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-<<<<<<< Updated upstream
-    
-    print(f"필터 통과 {len(candidates)}개 종목 신고가 정밀 연산 중...")
-=======
-    print(f"필터 통과 {len(candidates)}개 종목 신고가 정밀 연산 중...")
 
->>>>>>> Stashed changes
+    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
+    print(f"필터 통과 {len(candidates)}개 종목 신고가 정밀 연산 중...")
     for row in candidates.itertuples():
         try:
             hist = fdr.DataReader(row.Code, start_date)
