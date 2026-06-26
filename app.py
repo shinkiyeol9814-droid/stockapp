@@ -57,6 +57,7 @@ from valuation import render_valuation_menu, get_ticker_listing
 from ui_report import render_report_summary
 from ui_earnings import render_earnings_menu
 from ui_telegram import render_telegram_viewer
+from ui_watchlist import render_watchlist
 from streamlit_option_menu import option_menu
 
 # 세션 상태 초기화 (전역)
@@ -78,9 +79,9 @@ if query_stock_code:
 # 🚀 상단 가로형 메뉴 생성 (모바일 최적화 & 아이콘 색상 동적 전환)
 # ==========================================
 menu = option_menu(
-    menu_title=None, 
-    options=["가치평가", "신고가", "레포트", "실적", "텔레그램"],
-    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "chat-dots"],
+    menu_title=None,
+    options=["가치평가", "신고가", "레포트", "실적", "텔레그램", "워치리스트"],
+    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "chat-dots", "list-check"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -138,3 +139,6 @@ elif menu == "실적":
 
 elif menu == "텔레그램":
     render_telegram_viewer()
+
+elif menu == "워치리스트":
+    render_watchlist()
