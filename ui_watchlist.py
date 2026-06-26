@@ -3,7 +3,6 @@ import requests
 import json
 import base64
 import pandas as pd
-import numpy as np
 from datetime import datetime
 
 from valuation import (
@@ -101,7 +100,7 @@ def calc_target(fin_df, stocks, method, multiple, curr_price, year):
     except:
         return None, None
 
-# ── 업사이드 색상 HTML ─────────────────────────────────────────────────────────
+# ── 헬퍼 HTML ─────────────────────────────────────────────────────────────────
 def _up_html(upside):
     if upside is None:
         return "<span style='color:#bbb;font-size:12px;'>N/A</span>"
@@ -143,8 +142,15 @@ def render_watchlist():
             if st.button("추가", type="primary", use_container_width=True, key="wl_add") and chosen:
                 code = chosen.split("(")[-1].rstrip(")")
                 if code not in watchlist:
-                    watchlist[code] = {"method": "POR(영업익)", "multiple": 12.0}
-                    if save_watchlist(watchlist):
+                    # 현재 session_state의 method/multiple을 watchlist에 반영한 뒤 추가
+                    updated_wl = {}
+                    for c, cfg in watchlist.items():
+                        updated_wl[c] = {
+                            "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "POR(영업익)")),
+                            "multiple": float(st.session_state.get(f"wl_x_{c}", cfg.get("multiple", 12.0))),
+                        }
+                    updated_wl[code] = {"method": "POR(영업익)", "multiple": 12.0}
+                    if save_watchlist(updated_wl):
                         st.success(f"✅ {chosen.split('(')[0].strip()} 추가")
                         st.rerun()
                     else:
@@ -156,7 +162,7 @@ def render_watchlist():
         st.info("종목을 추가해주세요.")
         return
 
-    # ── 세션 상태 초기화 (최초 1회) ───────────────────────────────────────────
+    # ── 세션 상태 초기화 (최초 1회, 키가 없을 때만) ───────────────────────────
     for code, cfg in watchlist.items():
         if f"wl_m_{code}" not in st.session_state:
             st.session_state[f"wl_m_{code}"] = cfg.get("method", "POR(영업익)")
@@ -164,13 +170,13 @@ def render_watchlist():
             st.session_state[f"wl_x_{code}"] = float(cfg.get("multiple", 12.0))
 
     # ── 테이블 헤더 ───────────────────────────────────────────────────────────
-    W = [2.0, 1.5, 1.6, 1.0, 1.3, 1.1, 1.3, 1.1, 0.5]
-    cols = st.columns(W)
-    for c, label in zip(cols, [
-        "종목명", "현재가", "평가방식", "목표배수",
-        f"{CUR_YEAR}E 목표가", f"{CUR_YEAR}E 업사이드",
-        "27E 목표가", "27E 업사이드", ""
-    ]):
+    # 컬럼: 순서 | 종목명 | 현재가 | 방식 | 배수 | 26E목표 | 26E업사이드 | 27E목표 | 27E업사이드 | 삭제
+    W = [0.55, 1.9, 1.4, 1.6, 0.95, 1.3, 1.1, 1.3, 1.1, 0.5]
+    hdr_labels = ["↕", "종목명", "현재가", "평가방식", "목표배수",
+                  f"{CUR_YEAR}E 목표가", f"{CUR_YEAR}E 업사이드",
+                  "27E 목표가", "27E 업사이드", ""]
+    h_cols = st.columns(W)
+    for c, label in zip(h_cols, hdr_labels):
         c.markdown(
             f"<div style='font-size:11px;font-weight:700;color:#555;"
             f"padding:3px 0;border-bottom:2px solid #e0e0e0;'>{label}</div>",
@@ -178,23 +184,39 @@ def render_watchlist():
         )
 
     # ── 종목 행 ───────────────────────────────────────────────────────────────
+    codes        = list(watchlist.keys())
     codes_to_del = []
+    swap_action  = None   # (idx_a, idx_b)
 
-    for code in list(watchlist.keys()):
+    for i, code in enumerate(codes):
         price, change, name = get_live_price(code)
         fin_df, stocks      = get_watch_financials(code)
 
-        method   = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
-        multiple = float(st.session_state.get(f"wl_x_{code}", 12.0))
-        is_float = "PBR" in method or "EBITDA" in method
+        # 세션 상태에서 현재 method/multiple 읽기 (위젯 렌더 전)
+        cur_method   = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
+        cur_multiple = float(st.session_state.get(f"wl_x_{code}", 12.0))
+        is_float     = "PBR" in cur_method or "EBITDA" in cur_method
 
-        tp_c, up_c = calc_target(fin_df, stocks, method, multiple, price, CUR_YEAR)
-        tp_n, up_n = calc_target(fin_df, stocks, method, multiple, price, NEXT_YEAR)
+        tp_c, up_c = calc_target(fin_df, stocks, cur_method, cur_multiple, price, CUR_YEAR)
+        tp_n, up_n = calc_target(fin_df, stocks, cur_method, cur_multiple, price, NEXT_YEAR)
 
         cols = st.columns(W)
 
+        # ↑ / ↓ 순서 버튼
+        with cols[0]:
+            st.write("")
+            b_up, b_dn = st.columns(2)
+            with b_up:
+                if st.button("↑", key=f"wl_up_{code}", disabled=(i == 0),
+                             help="위로"):
+                    swap_action = (i, i - 1)
+            with b_dn:
+                if st.button("↓", key=f"wl_dn_{code}", disabled=(i == len(codes) - 1),
+                             help="아래로"):
+                    swap_action = (i, i + 1)
+
         # 종목명
-        cols[0].markdown(
+        cols[1].markdown(
             f"<div style='font-size:13px;font-weight:600;padding:8px 0 2px;'>{name}</div>",
             unsafe_allow_html=True,
         )
@@ -202,26 +224,27 @@ def render_watchlist():
         # 현재가
         if price:
             chg_color = "#ef5350" if change and change < 0 else "#26a69a"
-            chg_txt   = f"<span style='font-size:11px;color:{chg_color};'>{change:+.2f}%</span>" if change is not None else ""
-            cols[1].markdown(
+            chg_txt   = (f"<span style='font-size:11px;color:{chg_color};'>{change:+.2f}%</span>"
+                         if change is not None else "")
+            cols[2].markdown(
                 f"<div style='padding:6px 0 2px;'>"
                 f"<span style='font-size:14px;font-weight:700;'>{price:,.0f}</span><br>{chg_txt}</div>",
                 unsafe_allow_html=True,
             )
         else:
-            cols[1].markdown("<span style='color:#999;font-size:12px;'>조회중…</span>", unsafe_allow_html=True)
+            cols[2].markdown("<span style='color:#999;font-size:12px;'>조회중…</span>",
+                             unsafe_allow_html=True)
 
-        # 평가방식 selectbox (변경 즉시 재계산)
-        with cols[2]:
-            new_method = st.selectbox(
+        # 평가방식 selectbox — index= 미전달, key로만 상태 관리
+        with cols[3]:
+            st.selectbox(
                 " ", METHODS,
-                index=METHODS.index(method) if method in METHODS else 0,
                 key=f"wl_m_{code}",
                 label_visibility="collapsed",
             )
 
         # 목표배수 number_input
-        with cols[3]:
+        with cols[4]:
             st.number_input(
                 " ",
                 min_value=0.1, max_value=200.0,
@@ -232,32 +255,39 @@ def render_watchlist():
             )
 
         # 현재년도 목표가 / 업사이드
-        cols[4].markdown(
-            f"<div style='padding:8px 0 2px;'>{_price_html(tp_c)}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[5].markdown(
-            f"<div style='padding:8px 0 2px;'>{_up_html(up_c)}</div>",
-            unsafe_allow_html=True,
-        )
+        cols[5].markdown(f"<div style='padding:8px 0 2px;'>{_price_html(tp_c)}</div>",
+                         unsafe_allow_html=True)
+        cols[6].markdown(f"<div style='padding:8px 0 2px;'>{_up_html(up_c)}</div>",
+                         unsafe_allow_html=True)
 
         # 2027E 목표가 / 업사이드
-        cols[6].markdown(
-            f"<div style='padding:8px 0 2px;'>{_price_html(tp_n)}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[7].markdown(
-            f"<div style='padding:8px 0 2px;'>{_up_html(up_n)}</div>",
-            unsafe_allow_html=True,
-        )
+        cols[7].markdown(f"<div style='padding:8px 0 2px;'>{_price_html(tp_n)}</div>",
+                         unsafe_allow_html=True)
+        cols[8].markdown(f"<div style='padding:8px 0 2px;'>{_up_html(up_n)}</div>",
+                         unsafe_allow_html=True)
 
         # 삭제
-        with cols[8]:
+        with cols[9]:
             st.write("")
             if st.button("✕", key=f"wl_del_{code}", help=f"{name} 삭제"):
                 codes_to_del.append(code)
 
-    # 삭제 처리
+    # ── 순서 변경 처리 ────────────────────────────────────────────────────────
+    if swap_action:
+        a, b           = swap_action
+        codes[a], codes[b] = codes[b], codes[a]
+        # 현재 session_state 값을 반영해서 순서 바꾼 뒤 저장
+        new_wl = {
+            c: {
+                "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
+                "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
+            }
+            for c in codes
+        }
+        save_watchlist(new_wl)
+        st.rerun()
+
+    # ── 삭제 처리 ─────────────────────────────────────────────────────────────
     if codes_to_del:
         for code in codes_to_del:
             watchlist.pop(code, None)
