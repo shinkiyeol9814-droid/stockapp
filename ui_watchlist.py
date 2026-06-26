@@ -174,31 +174,38 @@ def render_watchlist():
         method   = cfg.get("method", "PER")
         multiple = float(cfg.get("multiple", DEFAULT_MULT.get(method, 10.0)))
         price    = m.get("price")
-        target   = calc_target(method, multiple, m)
-        upside   = ((target / price - 1) * 100) if (target and price and price > 0) else None
+
+        # 기준값: 저장된 값 우선, 없으면 API 자동
+        base_key    = {"PER": "eps", "PBR": "bps", "PSR": "sps", "EV/EBITDA": "ebitda_ps"}[method]
+        api_base    = m.get(base_key)
+        stored_base = cfg.get("base_val")
+        base_val    = stored_base if stored_base else api_base
+
+        # 목표주가 / 업사이드
+        target = (base_val * multiple) if (base_val and base_val > 0) else None
+        upside = ((target / price - 1) * 100) if (target and price and price > 0) else None
 
         # 현재 배수 (참고용)
-        base_key = {"PER": "eps", "PBR": "bps", "PSR": "sps", "EV/EBITDA": "ebitda_ps"}[method]
-        base_val = m.get(base_key)
         cur_mult = (price / base_val) if (price and base_val and base_val > 0) else None
 
         rows.append({
-            "_code":      code,
-            "종목명":     m.get("name") or code,
-            "현재가":     int(price)       if price    else None,
-            "평가방식":   method,
-            "현재배수":   round(cur_mult, 1) if cur_mult else None,
-            "목표배수":   multiple,
-            f"기준값":    round(base_val)  if base_val else None,
-            "목표주가":   int(target)      if target   else None,
-            "업사이드(%)": round(upside, 1) if upside is not None else None,
-            "_del":       False,
+            "_code":       code,
+            "종목명":      m.get("name") or code,
+            "현재가":      int(price)         if price    else None,
+            "평가방식":    method,
+            "현재배수":    round(cur_mult, 1)  if cur_mult else None,
+            "목표배수":    multiple,
+            "기준값":      float(round(base_val)) if base_val else None,
+            "목표주가":    int(target)         if target   else None,
+            "업사이드(%)": round(upside, 1)    if upside is not None else None,
+            "_del":        False,
         })
 
     df = pd.DataFrame(rows)
 
     st.caption(
-        f"총 {len(df)}개 종목 · 기준값: EPS(PER)/BPS(PBR)/주당매출(PSR)/주당영업이익(EV/EBITDA) · 60초 캐시"
+        "기준값(EPS/BPS/SPS/EBITDA)은 직접 입력하거나 API 자동값을 사용합니다. "
+        "평가방식·목표배수·기준값 수정 후 💾 저장을 눌러주세요."
     )
 
     edited = st.data_editor(
@@ -209,11 +216,15 @@ def render_watchlist():
             "현재가":      st.column_config.NumberColumn("현재가",  format="%d원",  disabled=True),
             "평가방식":    st.column_config.SelectboxColumn("평가방식", options=METHODS, width="small"),
             "현재배수":    st.column_config.NumberColumn("현재배수", format="%.1f×", disabled=True,
-                                                        help="현재 주가 기준 실제 배수"),
+                                                        help="현재 주가 ÷ 기준값"),
             "목표배수":    st.column_config.NumberColumn("목표배수", format="%.1f×",
                                                         min_value=0.1, max_value=200.0, step=0.5),
-            "기준값":      st.column_config.NumberColumn("기준값",   format="%d원",  disabled=True,
-                                                        help="PER→EPS  PBR→BPS  PSR→주당매출  EV/EBITDA→주당영업이익"),
+            "기준값":      st.column_config.NumberColumn(
+                                "기준값 ✏️",
+                                format="%d원",
+                                min_value=0.0,
+                                help="직접 입력 — PER:EPS  PBR:BPS  PSR:주당매출  EV/EBITDA:주당영업이익(원 단위)",
+                            ),
             "목표주가":    st.column_config.NumberColumn("목표주가", format="%d원",  disabled=True),
             "업사이드(%)": st.column_config.NumberColumn("업사이드", format="%.1f%%", disabled=True),
             "_del":        st.column_config.CheckboxColumn("삭제",  width="small"),
@@ -223,6 +234,40 @@ def render_watchlist():
         key="wl_editor",
     )
 
+    # 편집된 기준값·배수로 목표주가/업사이드 즉시 재계산해 아래에 표시
+    recalc_rows = []
+    for _, row in edited.iterrows():
+        bv     = row["기준값"]
+        mult   = row["목표배수"]
+        price  = row["현재가"]
+        target = (bv * mult) if (bv and bv > 0 and mult) else None
+        upside = ((target / price - 1) * 100) if (target and price and price > 0) else None
+        recalc_rows.append({
+            "종목명":      row["종목명"],
+            "현재가":      price,
+            "평가방식":    row["평가방식"],
+            "기준값":      round(bv)      if bv     else None,
+            "목표배수":    mult,
+            "목표주가":    int(target)    if target else None,
+            "업사이드(%)": round(upside, 1) if upside is not None else None,
+        })
+    recalc_df = pd.DataFrame(recalc_rows)
+
+    if recalc_df["목표주가"].notna().any():
+        st.markdown("**실시간 계산 결과** (저장 전 미리보기)")
+        st.dataframe(
+            recalc_df,
+            column_config={
+                "현재가":      st.column_config.NumberColumn(format="%d원"),
+                "기준값":      st.column_config.NumberColumn(format="%d원"),
+                "목표배수":    st.column_config.NumberColumn(format="%.1f×"),
+                "목표주가":    st.column_config.NumberColumn(format="%d원"),
+                "업사이드(%)": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
+
     # ── 저장 / 삭제 ────────────────────────────────────────
     c_save, c_rfr, _ = st.columns([1.5, 1.5, 5])
 
@@ -231,10 +276,15 @@ def render_watchlist():
             new_wl = {}
             for _, row in edited.iterrows():
                 if not row["_del"]:
-                    new_wl[row["_code"]] = {
+                    entry = {
                         "method":   row["평가방식"],
                         "multiple": float(row["목표배수"]),
                     }
+                    # 기준값이 입력된 경우 저장 (0이나 None이면 저장 안 함)
+                    bv = row.get("기준값")
+                    if bv and float(bv) > 0:
+                        entry["base_val"] = float(bv)
+                    new_wl[row["_code"]] = entry
             if save_watchlist(new_wl):
                 st.success("저장됐습니다.")
                 st.rerun()
