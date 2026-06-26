@@ -20,8 +20,8 @@
     "multiple": 20.0
   },
   "006400": {
-    "method": "PBR(자본총계)",
-    "multiple": 2.0
+    "method": "PER(순이익)",
+    "multiple": 50.0
   },
   "000660": {
     "method": "PER(순이익)",
