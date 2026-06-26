@@ -28,7 +28,7 @@
     "multiple": 50.0
   },
   "278470": {
-    "method": "POR(영업익)",
-    "multiple": 12.0
+    "method": "PER(순이익)",
+    "multiple": 30.0
   }
 }
