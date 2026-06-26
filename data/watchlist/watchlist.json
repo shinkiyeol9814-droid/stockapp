@@ -22,5 +22,9 @@
   "006400": {
     "method": "PBR(자본총계)",
     "multiple": 2.0
+  },
+  "000660": {
+    "method": "POR(영업익)",
+    "multiple": 12.0
   }
 }
