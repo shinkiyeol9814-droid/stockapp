@@ -4,6 +4,9 @@ import json
 import base64
 import pandas as pd
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from streamlit_sortables import sort_items
 
 from valuation import (
     get_hybrid_financials, get_ticker_listing, get_stocks_count,
@@ -12,11 +15,10 @@ from valuation import (
 
 WATCHLIST_FILE = "data/watchlist/watchlist.json"
 METHODS        = ["POR(영업익)", "PER(순이익)", "PBR(자본총계)", "EV/EBITDA"]
-DEFAULT_MULT   = {"POR(영업익)": 12.0, "PER(순이익)": 12.0, "PBR(자본총계)": 1.5, "EV/EBITDA": 8.0}
 COL_MAP        = {"POR(영업익)": "영업이익", "PER(순이익)": "당기순이익",
                   "PBR(자본총계)": "자본총계", "EV/EBITDA": "EV/EBITDA"}
-CUR_YEAR       = datetime.today().year
-NEXT_YEAR      = 2027
+CUR_YEAR  = datetime.today().year
+NEXT_YEAR = 2027
 
 # ── GitHub 저장소 ─────────────────────────────────────────────────────────────
 def _gh_hdrs():
@@ -51,7 +53,6 @@ def save_watchlist(data: dict) -> bool:
 # ── 데이터 수집 ───────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
 def get_live_price(code: str):
-    """현재가, 등락률, 종목명 (NAVER Finance, 60초 캐시)"""
     try:
         data   = requests.get(
             f"https://m.stock.naver.com/api/stock/{code}/basic",
@@ -66,7 +67,6 @@ def get_live_price(code: str):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_watch_financials(code: str):
-    """재무 데이터(억원) + 발행주식수 반환 (1시간 캐시)"""
     try:
         listing    = get_ticker_listing()
         ticker_row = listing[listing["Code"].astype(str).str.zfill(6) == code.zfill(6)]
@@ -78,7 +78,13 @@ def get_watch_financials(code: str):
     except:
         return None, 0
 
-# ── 목표주가 계산 (valuation.py get_t() 동일 로직) ────────────────────────────
+def _fetch_stock_data(code: str):
+    """가격 + 재무데이터 동시 수집 (ThreadPoolExecutor에서 호출)"""
+    fin, stocks = get_watch_financials(code)
+    price, change, name = get_live_price(code)
+    return code, fin, stocks, price, change, name
+
+# ── 목표주가 계산 ─────────────────────────────────────────────────────────────
 def calc_target(fin_df, stocks, method, multiple, curr_price, year):
     if fin_df is None or stocks == 0 or not curr_price:
         return None, None
@@ -90,17 +96,16 @@ def calc_target(fin_df, stocks, method, multiple, curr_price, year):
     if pd.isna(val) or val <= 0:
         return None, None
     try:
-        if "EBITDA" in method:
-            tp = curr_price * (multiple / float(val))
-        else:
-            tp = float(val) * UNIT * multiple / stocks
+        tp = (curr_price * (multiple / float(val))
+              if "EBITDA" in method
+              else float(val) * UNIT * multiple / stocks)
         if tp <= 0:
             return None, None
         return tp, (tp / curr_price - 1) * 100
     except:
         return None, None
 
-# ── 헬퍼 HTML ─────────────────────────────────────────────────────────────────
+# ── HTML 헬퍼 ─────────────────────────────────────────────────────────────────
 def _up_html(upside):
     if upside is None:
         return "<span style='color:#bbb;font-size:12px;'>N/A</span>"
@@ -120,7 +125,7 @@ def render_watchlist():
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>📋 밸류 워치리스트</div>",
         unsafe_allow_html=True,
     )
-    st.caption("방식·배수 변경 즉시 재계산 · 현재가 60초 캐시 · 재무데이터 1시간 캐시")
+    st.caption("방식·배수 변경 즉시 재계산 · 현재가 60초 · 재무데이터 1시간 캐시")
 
     watchlist = load_watchlist()
 
@@ -142,15 +147,16 @@ def render_watchlist():
             if st.button("추가", type="primary", use_container_width=True, key="wl_add") and chosen:
                 code = chosen.split("(")[-1].rstrip(")")
                 if code not in watchlist:
-                    # 현재 session_state의 method/multiple을 watchlist에 반영한 뒤 추가
-                    updated_wl = {}
-                    for c, cfg in watchlist.items():
-                        updated_wl[c] = {
+                    # 현재 session_state 방식/배수 보존 후 저장
+                    updated = {
+                        c: {
                             "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "POR(영업익)")),
                             "multiple": float(st.session_state.get(f"wl_x_{c}", cfg.get("multiple", 12.0))),
                         }
-                    updated_wl[code] = {"method": "POR(영업익)", "multiple": 12.0}
-                    if save_watchlist(updated_wl):
+                        for c, cfg in watchlist.items()
+                    }
+                    updated[code] = {"method": "POR(영업익)", "multiple": 12.0}
+                    if save_watchlist(updated):
                         st.success(f"✅ {chosen.split('(')[0].strip()} 추가")
                         st.rerun()
                     else:
@@ -162,21 +168,67 @@ def render_watchlist():
         st.info("종목을 추가해주세요.")
         return
 
-    # ── 세션 상태 초기화 (최초 1회, 키가 없을 때만) ───────────────────────────
+    codes = list(watchlist.keys())
+
+    # ── 세션 상태 초기화 (키 없을 때만) ──────────────────────────────────────
     for code, cfg in watchlist.items():
         if f"wl_m_{code}" not in st.session_state:
             st.session_state[f"wl_m_{code}"] = cfg.get("method", "POR(영업익)")
         if f"wl_x_{code}" not in st.session_state:
             st.session_state[f"wl_x_{code}"] = float(cfg.get("multiple", 12.0))
 
+    # ── 전 종목 데이터 병렬 수집 (캐시 있으면 즉시, 없으면 동시 fetch) ────────
+    all_data: dict = {}
+    needs_fetch = [c for c in codes if c not in all_data]
+    if needs_fetch:
+        with st.spinner("데이터 로딩 중..."):
+            with ThreadPoolExecutor(max_workers=min(len(needs_fetch), 6)) as exe:
+                futs = {exe.submit(_fetch_stock_data, c): c for c in needs_fetch}
+                for fut in as_completed(futs):
+                    try:
+                        c, fin, stocks, price, change, name = fut.result()
+                        all_data[c] = (fin, stocks, price, change, name)
+                    except:
+                        c = futs[fut]
+                        all_data[c] = (None, 0, None, None, c)
+
+    # ── 드래그 순서 변경 ─────────────────────────────────────────────────────
+    # 종목명 추출 (NAVER 응답 우선, 없으면 listing)
+    name_map = {c: all_data[c][4] for c in codes}
+
+    # 이름→코드 역매핑 (중복 이름 방지: 이름+코드 앞 3자리 조합)
+    label_map  = {c: f"{name_map[c]}  [{c[:3]}]" for c in codes}  # c→label
+    code_of    = {v: k for k, v in label_map.items()}             # label→c
+
+    prev_labels = [label_map[c] for c in codes]
+    sorted_labels = sort_items(
+        prev_labels,
+        direction="horizontal",
+        key="wl_sort",
+    )
+
+    if sorted_labels != prev_labels:
+        sorted_codes = [code_of[l] for l in sorted_labels if l in code_of]
+        if sorted_codes and sorted_codes != codes:
+            new_wl = {
+                c: {
+                    "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
+                    "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
+                }
+                for c in sorted_codes
+            }
+            save_watchlist(new_wl)
+            st.rerun()
+        codes = sorted_codes or codes
+
     # ── 테이블 헤더 ───────────────────────────────────────────────────────────
-    # 컬럼: 순서 | 종목명 | 현재가 | 방식 | 배수 | 26E목표 | 26E업사이드 | 27E목표 | 27E업사이드 | 삭제
-    W = [0.55, 1.9, 1.4, 1.6, 0.95, 1.3, 1.1, 1.3, 1.1, 0.5]
-    hdr_labels = ["↕", "종목명", "현재가", "평가방식", "목표배수",
-                  f"{CUR_YEAR}E 목표가", f"{CUR_YEAR}E 업사이드",
-                  "27E 목표가", "27E 업사이드", ""]
+    W = [2.0, 1.4, 1.6, 0.95, 1.3, 1.1, 1.3, 1.1, 0.5]
     h_cols = st.columns(W)
-    for c, label in zip(h_cols, hdr_labels):
+    for c, label in zip(h_cols, [
+        "종목명", "현재가", "평가방식", "목표배수",
+        f"{CUR_YEAR}E 목표가", f"{CUR_YEAR}E 업사이드",
+        "27E 목표가", "27E 업사이드", ""
+    ]):
         c.markdown(
             f"<div style='font-size:11px;font-weight:700;color:#555;"
             f"padding:3px 0;border-bottom:2px solid #e0e0e0;'>{label}</div>",
@@ -184,15 +236,11 @@ def render_watchlist():
         )
 
     # ── 종목 행 ───────────────────────────────────────────────────────────────
-    codes        = list(watchlist.keys())
     codes_to_del = []
-    swap_action  = None   # (idx_a, idx_b)
 
-    for i, code in enumerate(codes):
-        price, change, name = get_live_price(code)
-        fin_df, stocks      = get_watch_financials(code)
+    for code in codes:
+        fin_df, stocks, price, change, name = all_data.get(code, (None, 0, None, None, code))
 
-        # 세션 상태에서 현재 method/multiple 읽기 (위젯 렌더 전)
         cur_method   = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
         cur_multiple = float(st.session_state.get(f"wl_x_{code}", 12.0))
         is_float     = "PBR" in cur_method or "EBITDA" in cur_method
@@ -202,21 +250,8 @@ def render_watchlist():
 
         cols = st.columns(W)
 
-        # ↑ / ↓ 순서 버튼
-        with cols[0]:
-            st.write("")
-            b_up, b_dn = st.columns(2)
-            with b_up:
-                if st.button("↑", key=f"wl_up_{code}", disabled=(i == 0),
-                             help="위로"):
-                    swap_action = (i, i - 1)
-            with b_dn:
-                if st.button("↓", key=f"wl_dn_{code}", disabled=(i == len(codes) - 1),
-                             help="아래로"):
-                    swap_action = (i, i + 1)
-
         # 종목명
-        cols[1].markdown(
+        cols[0].markdown(
             f"<div style='font-size:13px;font-weight:600;padding:8px 0 2px;'>{name}</div>",
             unsafe_allow_html=True,
         )
@@ -226,25 +261,21 @@ def render_watchlist():
             chg_color = "#ef5350" if change and change < 0 else "#26a69a"
             chg_txt   = (f"<span style='font-size:11px;color:{chg_color};'>{change:+.2f}%</span>"
                          if change is not None else "")
-            cols[2].markdown(
+            cols[1].markdown(
                 f"<div style='padding:6px 0 2px;'>"
                 f"<span style='font-size:14px;font-weight:700;'>{price:,.0f}</span><br>{chg_txt}</div>",
                 unsafe_allow_html=True,
             )
         else:
-            cols[2].markdown("<span style='color:#999;font-size:12px;'>조회중…</span>",
+            cols[1].markdown("<span style='color:#999;font-size:12px;'>조회중…</span>",
                              unsafe_allow_html=True)
 
-        # 평가방식 selectbox — index= 미전달, key로만 상태 관리
-        with cols[3]:
-            st.selectbox(
-                " ", METHODS,
-                key=f"wl_m_{code}",
-                label_visibility="collapsed",
-            )
+        # 평가방식 (index= 미전달 — key로만 상태 관리)
+        with cols[2]:
+            st.selectbox(" ", METHODS, key=f"wl_m_{code}", label_visibility="collapsed")
 
-        # 목표배수 number_input
-        with cols[4]:
+        # 목표배수
+        with cols[3]:
             st.number_input(
                 " ",
                 min_value=0.1, max_value=200.0,
@@ -254,40 +285,21 @@ def render_watchlist():
                 label_visibility="collapsed",
             )
 
-        # 현재년도 목표가 / 업사이드
-        cols[5].markdown(f"<div style='padding:8px 0 2px;'>{_price_html(tp_c)}</div>",
+        cols[4].markdown(f"<div style='padding:8px 0 2px;'>{_price_html(tp_c)}</div>",
                          unsafe_allow_html=True)
-        cols[6].markdown(f"<div style='padding:8px 0 2px;'>{_up_html(up_c)}</div>",
+        cols[5].markdown(f"<div style='padding:8px 0 2px;'>{_up_html(up_c)}</div>",
                          unsafe_allow_html=True)
-
-        # 2027E 목표가 / 업사이드
-        cols[7].markdown(f"<div style='padding:8px 0 2px;'>{_price_html(tp_n)}</div>",
+        cols[6].markdown(f"<div style='padding:8px 0 2px;'>{_price_html(tp_n)}</div>",
                          unsafe_allow_html=True)
-        cols[8].markdown(f"<div style='padding:8px 0 2px;'>{_up_html(up_n)}</div>",
+        cols[7].markdown(f"<div style='padding:8px 0 2px;'>{_up_html(up_n)}</div>",
                          unsafe_allow_html=True)
 
-        # 삭제
-        with cols[9]:
+        with cols[8]:
             st.write("")
             if st.button("✕", key=f"wl_del_{code}", help=f"{name} 삭제"):
                 codes_to_del.append(code)
 
-    # ── 순서 변경 처리 ────────────────────────────────────────────────────────
-    if swap_action:
-        a, b           = swap_action
-        codes[a], codes[b] = codes[b], codes[a]
-        # 현재 session_state 값을 반영해서 순서 바꾼 뒤 저장
-        new_wl = {
-            c: {
-                "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
-                "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
-            }
-            for c in codes
-        }
-        save_watchlist(new_wl)
-        st.rerun()
-
-    # ── 삭제 처리 ─────────────────────────────────────────────────────────────
+    # 삭제 처리
     if codes_to_del:
         for code in codes_to_del:
             watchlist.pop(code, None)

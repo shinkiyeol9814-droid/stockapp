@@ -16,4 +16,5 @@ aiohttp
 PyMuPDF
 streamlit-autorefresh
 streamlit-option-menu
+streamlit-sortables
 PyGithub==2.1.1
