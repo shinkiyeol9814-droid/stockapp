@@ -133,6 +133,13 @@ def _up_html(upside):
     return (f"<span style='color:{color};font-weight:700;font-size:14px;'>"
             f"{arrow} {upside:+.1f}%</span>")
 
+def _year_html(tp, upside):
+    """목표가(회색) + 업사이드(색상) 조합 셀"""
+    if tp is None:
+        return "<span style='color:#bbb;font-size:12px;'>N/A</span>"
+    price_line = f"<div style='font-size:12px;color:#666;'>{tp:,.0f}원</div>"
+    return price_line + f"<div style='margin-top:1px;'>{_up_html(upside)}</div>"
+
 # ── 메인 렌더링 ───────────────────────────────────────────────────────────────
 def render_watchlist():
     st.markdown(
@@ -270,11 +277,12 @@ def render_watchlist():
         unsafe_allow_html=True,
     )
 
-    W = [1.8, 1.6, 0.9, 1.1, 1.1, 1.2, 1.1, 0.5]
+    # 연도 컬럼 = 목표가 + 업사이드 합산 (업사이드만 색상)
+    W = [1.8, 1.6, 0.85, 1.0, 1.7, 1.7, 0.5]
     h_cols = st.columns(W)
     for col, label in zip(h_cols, [
         "종목명", "평가방식", "목표배수", "현재배수",
-        f"{CUR_YEAR}E 업사이드", "27E 목표가", "27E 업사이드", ""
+        f"{CUR_YEAR}E 목표가 / 업사이드", "27E 목표가 / 업사이드", ""
     ]):
         col.markdown(
             f"<div style='font-size:11px;font-weight:700;color:#555;"
@@ -309,19 +317,14 @@ def render_watchlist():
             unsafe_allow_html=True,
         )
         cols[4].markdown(
-            f"<div style='padding:8px 0;'>{_up_html(v['up_c'])}</div>",
+            f"<div style='padding:6px 0;'>{_year_html(v['tp_c'], v['up_c'])}</div>",
             unsafe_allow_html=True,
         )
-        tp_n_str = f"{v['tp_n']:,.0f}원" if v["tp_n"] is not None else "N/A"
         cols[5].markdown(
-            f"<div style='padding:8px 0;font-size:13px;'>{tp_n_str}</div>",
+            f"<div style='padding:6px 0;'>{_year_html(v['tp_n'], v['up_n'])}</div>",
             unsafe_allow_html=True,
         )
-        cols[6].markdown(
-            f"<div style='padding:8px 0;'>{_up_html(v['up_n'])}</div>",
-            unsafe_allow_html=True,
-        )
-        with cols[7]:
+        with cols[6]:
             st.write("")
             if st.button("✕", key=f"wl_del_{code}", help=f"{v['name']} 삭제"):
                 codes_to_del.append(code)
