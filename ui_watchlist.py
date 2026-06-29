@@ -1,4 +1,3 @@
-import re
 import streamlit as st
 import requests
 import json
@@ -6,16 +5,14 @@ import base64
 import pandas as pd
 from datetime import datetime
 
-from streamlit_sortables import sort_items
-
 from valuation import (
     get_hybrid_financials, get_ticker_listing, get_stocks_count,
     UNIT, API_HEADERS, GITHUB_REPO, GITHUB_BRANCH,
 )
 
 WATCHLIST_FILE = "data/watchlist/watchlist.json"
-METHODS = ["POR(영업익)", "PER(순이익)", "PBR(자본총계)", "EV/EBITDA"]
-COL_MAP = {
+METHODS   = ["POR(영업익)", "PER(순이익)", "PBR(자본총계)", "EV/EBITDA"]
+COL_MAP   = {
     "POR(영업익)": "영업이익",
     "PER(순이익)": "당기순이익",
     "PBR(자본총계)": "자본총계",
@@ -24,7 +21,7 @@ COL_MAP = {
 CUR_YEAR  = datetime.today().year
 NEXT_YEAR = 2027
 
-# ── GitHub 저장소 ─────────────────────────────────────────────────────────────
+# ── GitHub ───────────────────────────────────────────────────────────────────
 def _gh_hdrs():
     tok = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", "")
     return {"Authorization": f"token {tok}", "Accept": "application/vnd.github.v3+json"}
@@ -42,22 +39,20 @@ def load_watchlist() -> dict:
 
 def save_watchlist(data: dict) -> bool:
     load_watchlist.clear()
-    content = json.dumps(data, ensure_ascii=False, indent=2)
-    b64     = base64.b64encode(content.encode()).decode()
-    url     = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{WATCHLIST_FILE}"
-    hdrs    = _gh_hdrs()
-    res     = requests.get(url, headers=hdrs, params={"ref": GITHUB_BRANCH}, timeout=7)
-    sha     = res.json().get("sha") if res.status_code == 200 else None
+    b64 = base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode()
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{WATCHLIST_FILE}"
+    hdrs = _gh_hdrs()
+    res  = requests.get(url, headers=hdrs, params={"ref": GITHUB_BRANCH}, timeout=7)
+    sha  = res.json().get("sha") if res.status_code == 200 else None
     payload = {"message": "Update watchlist", "content": b64, "branch": GITHUB_BRANCH}
     if sha:
         payload["sha"] = sha
     r = requests.put(url, headers=hdrs, json=payload, timeout=10)
     return r.status_code in [200, 201]
 
-# ── 데이터 수집 ───────────────────────────────────────────────────────────────
+# ── 데이터 ───────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
 def get_live_price(code: str):
-    """현재가 (장중) 또는 전일종가 (장 마감 후 0.00% 상태에서도 가격 반환)"""
     try:
         data   = requests.get(
             f"https://m.stock.naver.com/api/stock/{code}/basic",
@@ -74,8 +69,7 @@ def get_live_price(code: str):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_watch_financials(code: str):
-    """재무 데이터 + 발행주식수 (Wise Report, 1시간 캐시).
-    반드시 Streamlit 메인 스레드에서 호출해야 함 — ThreadPoolExecutor 사용 금지."""
+    # 반드시 Streamlit 메인 스레드에서 호출 — ThreadPoolExecutor 금지
     try:
         listing    = get_ticker_listing()
         ticker_row = listing[listing["Code"].astype(str).str.zfill(6) == code.zfill(6)]
@@ -107,7 +101,6 @@ def calc_target(fin_df, stocks, method, multiple, curr_price, year):
         return None, None
 
 def calc_current_mult(fin_df, stocks, method, curr_price, year):
-    """현재 PER/POR/PBR/EV·EBITDA 배수 계산"""
     if fin_df is None or not curr_price:
         return None
     col_p = COL_MAP.get(method, "영업이익")
@@ -119,7 +112,7 @@ def calc_current_mult(fin_df, stocks, method, curr_price, year):
         return None
     try:
         if "EBITDA" in method:
-            return float(val)  # 컨센서스 EV/EBITDA 값 그대로
+            return float(val)
         return (curr_price * stocks) / (float(val) * UNIT)
     except:
         return None
@@ -134,19 +127,19 @@ def _up_html(upside):
             f"{arrow} {upside:+.1f}%</span>")
 
 def _year_html(tp, upside):
-    """목표가(회색) + 업사이드(색상) 조합 셀"""
+    """목표가(회색) + 업사이드(색상)"""
     if tp is None:
         return "<span style='color:#bbb;font-size:12px;'>N/A</span>"
-    price_line = f"<div style='font-size:12px;color:#666;'>{tp:,.0f}원</div>"
-    return price_line + f"<div style='margin-top:1px;'>{_up_html(upside)}</div>"
+    return (f"<div style='font-size:12px;color:#666;'>{tp:,.0f}원</div>"
+            f"<div style='margin-top:2px;'>{_up_html(upside)}</div>")
 
-# ── 메인 렌더링 ───────────────────────────────────────────────────────────────
+# ── 렌더링 ───────────────────────────────────────────────────────────────────
 def render_watchlist():
     st.markdown(
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>📋 밸류 워치리스트</div>",
         unsafe_allow_html=True,
     )
-    st.caption("티켓 드래그로 순서 변경 · 방식·배수 변경 즉시 재계산 · 현재가 60초 · 재무 1시간 캐시")
+    st.caption("↑↓ 핸들로 순서 변경 · 방식·배수 변경 즉시 재계산 · 현재가 60초 · 재무 1시간 캐시")
 
     watchlist = load_watchlist()
 
@@ -190,24 +183,22 @@ def render_watchlist():
 
     codes = list(watchlist.keys())
 
-    # ── 세션 상태 초기화 (키 없을 때만) ──────────────────────────────────────
+    # ── 세션 상태 초기화 ─────────────────────────────────────────────────────
     for code, cfg in watchlist.items():
         if f"wl_m_{code}" not in st.session_state:
             st.session_state[f"wl_m_{code}"] = cfg.get("method", "POR(영업익)")
         if f"wl_x_{code}" not in st.session_state:
             st.session_state[f"wl_x_{code}"] = float(cfg.get("multiple", 12.0))
 
-    # ── 순차 데이터 로딩 (미캐시 종목만 spinner 표시) ─────────────────────────
-    # @st.cache_data 는 Streamlit 메인 스레드에서만 정상 동작 → ThreadPoolExecutor 사용 금지
+    # ── 순차 로딩 (미캐시 종목만 스피너) ──────────────────────────────────────
     uncached = [c for c in codes if f"_wlc_{c}" not in st.session_state]
     if uncached:
         with st.spinner(f"재무 데이터 로딩 중... (신규 {len(uncached)}개 종목)"):
             for code in uncached:
-                get_watch_financials(code)   # 캐시에 채워 넣기
+                get_watch_financials(code)
                 get_live_price(code)
                 st.session_state[f"_wlc_{code}"] = True
 
-    # 캐시에서 즉시 반환 (네트워크 요청 없음)
     all_data = {}
     for code in codes:
         fin, stocks = get_watch_financials(code)
@@ -222,113 +213,132 @@ def render_watchlist():
         tp_c, up_c = calc_target(fin, stocks, method, mult, price, CUR_YEAR)
         tp_n, up_n = calc_target(fin, stocks, method, mult, price, NEXT_YEAR)
         curr_m     = calc_current_mult(fin, stocks, method, price, CUR_YEAR)
-        return dict(
-            name=name, price=price, change=change,
-            fin=fin, stocks=stocks,
-            method=method, mult=mult,
-            tp_c=tp_c, up_c=up_c,
-            tp_n=tp_n, up_n=up_n,
-            curr_m=curr_m,
-        )
+        return dict(name=name, price=price, change=change,
+                    method=method, mult=mult,
+                    tp_c=tp_c, up_c=up_c, tp_n=tp_n, up_n=up_n, curr_m=curr_m)
 
     vals = {c: _calc(c) for c in codes}
 
-    # ── 드래그 순서 변경 — 세로 티켓 형태 ────────────────────────────────────
-    def _ticket(code):
-        v = vals[code]
-        price_s = f"{v['price']:,.0f}원" if v["price"] else "조회중"
-        chg_s   = f"({v['change']:+.2f}%)" if v["change"] is not None else ""
-        curr_s  = f"현재 {v['curr_m']:.1f}x" if v["curr_m"] is not None else ""
-        mshort  = v["method"].split("(")[0]   # "POR", "PER", ...
-
-        def _up(u):
-            if u is None: return "N/A"
-            return f"▲ {u:+.1f}%" if u >= 0 else f"▼ {u:+.1f}%"
-
-        return (
-            f"{v['name']}  ·  {price_s} {chg_s}"
-            f"  ·  {mshort} {v['mult']:.1f}x  {curr_s}"
-            f"  →  26E {_up(v['up_c'])}  /  27E {_up(v['up_n'])}"
-            f" | {code}"          # 코드 내장 (매핑용, 구분자 " | " 이후)
-        )
-
-    labels = [_ticket(c) for c in codes]
-    sorted_labels = sort_items(labels, direction="vertical", key="wl_sort")
-
-    if sorted_labels != labels:
-        sorted_codes = [l.split(" | ")[-1].strip() for l in sorted_labels]
-        sorted_codes = [c for c in sorted_codes if c in watchlist]
-        if sorted_codes and sorted_codes != codes:
-            new_wl = {
-                c: {
-                    "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
-                    "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
-                }
-                for c in sorted_codes
-            }
-            save_watchlist(new_wl)
-            st.rerun()
-        codes = sorted_codes or codes
-
-    # ── 방식·배수 편집 테이블 ─────────────────────────────────────────────────
-    st.markdown(
-        "<div style='font-size:11px;color:#999;margin:6px 0 4px;'>"
-        "▼ 평가방식·배수 설정 (변경 즉시 위 티켓에 반영)</div>",
-        unsafe_allow_html=True,
-    )
-
-    # 연도 컬럼 = 목표가 + 업사이드 합산 (업사이드만 색상)
-    W = [1.8, 1.6, 0.85, 1.0, 1.7, 1.7, 0.5]
+    # ── 컬럼 헤더 (카드 밖, 상단 1회) ────────────────────────────────────────
+    W = [0.38, 1.7, 1.25, 1.6, 0.85, 0.9, 1.35, 1.35, 0.38]
     h_cols = st.columns(W)
     for col, label in zip(h_cols, [
-        "종목명", "평가방식", "목표배수", "현재배수",
-        f"{CUR_YEAR}E 목표가 / 업사이드", "27E 목표가 / 업사이드", ""
+        "", "종목명", "현재가", "평가방식", "목표배수", "현재배수",
+        f"{CUR_YEAR}E 목표·업사이드", "27E 목표·업사이드", ""
     ]):
         col.markdown(
             f"<div style='font-size:11px;font-weight:700;color:#555;"
-            f"padding:3px 0;border-bottom:2px solid #e0e0e0;'>{label}</div>",
+            f"padding:2px 0 4px;border-bottom:2px solid #e0e0e0;'>{label}</div>",
             unsafe_allow_html=True,
         )
 
+    # ── 종목 카드 행 ──────────────────────────────────────────────────────────
+    swap_action  = None
     codes_to_del = []
-    for code in codes:
-        v = vals.get(code)
-        if not v:
-            continue
-        is_float = "PBR" in v["method"] or "EBITDA" in v["method"]
-        cols = st.columns(W)
 
-        cols[0].markdown(
-            f"<div style='font-size:13px;font-weight:600;padding:8px 0;'>{v['name']}</div>",
-            unsafe_allow_html=True,
-        )
-        with cols[1]:
-            st.selectbox(" ", METHODS, key=f"wl_m_{code}", label_visibility="collapsed")
-        with cols[2]:
-            st.number_input(
-                " ", min_value=0.1, max_value=200.0,
-                step=0.1 if is_float else 0.5, format="%.1f",
-                key=f"wl_x_{code}", label_visibility="collapsed",
+    for i, code in enumerate(codes):
+        v = vals.get(code, {})
+        is_float = "PBR" in v.get("method", "") or "EBITDA" in v.get("method", "")
+
+        with st.container(border=True):
+            cols = st.columns(W)
+
+            # ↑/↓ 핸들
+            with cols[0]:
+                up_btn, dn_btn = st.columns(2)
+                with up_btn:
+                    if st.button("↑", key=f"wl_up_{code}",
+                                 disabled=(i == 0), use_container_width=True):
+                        swap_action = (i, i - 1)
+                with dn_btn:
+                    if st.button("↓", key=f"wl_dn_{code}",
+                                 disabled=(i == len(codes) - 1), use_container_width=True):
+                        swap_action = (i, i + 1)
+
+            # 종목명
+            cols[1].markdown(
+                f"<div style='font-size:14px;font-weight:700;padding:6px 0 2px;'>"
+                f"{v.get('name', code)}</div>",
+                unsafe_allow_html=True,
             )
 
-        curr_m_str = f"{v['curr_m']:.1f}x" if v["curr_m"] is not None else "N/A"
-        cols[3].markdown(
-            f"<div style='padding:8px 0;font-size:13px;color:#666;'>{curr_m_str}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[4].markdown(
-            f"<div style='padding:6px 0;'>{_year_html(v['tp_c'], v['up_c'])}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[5].markdown(
-            f"<div style='padding:6px 0;'>{_year_html(v['tp_n'], v['up_n'])}</div>",
-            unsafe_allow_html=True,
-        )
-        with cols[6]:
-            st.write("")
-            if st.button("✕", key=f"wl_del_{code}", help=f"{v['name']} 삭제"):
-                codes_to_del.append(code)
+            # 현재가 + 등락률
+            price  = v.get("price")
+            change = v.get("change")
+            if price:
+                chg_color = "#ef5350" if change and change < 0 else "#26a69a"
+                chg_html  = (f"<span style='font-size:11px;color:{chg_color};'>"
+                             f"{change:+.2f}%</span>") if change is not None else ""
+                cols[2].markdown(
+                    f"<div style='padding:4px 0;'>"
+                    f"<span style='font-size:14px;font-weight:600;'>{price:,.0f}</span>"
+                    f"<br>{chg_html}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                cols[2].markdown(
+                    "<span style='color:#999;font-size:12px;'>조회중…</span>",
+                    unsafe_allow_html=True,
+                )
 
+            # 평가방식 selectbox
+            with cols[3]:
+                st.selectbox(" ", METHODS, key=f"wl_m_{code}",
+                             label_visibility="collapsed")
+
+            # 목표배수 number_input
+            with cols[4]:
+                st.number_input(
+                    " ", min_value=0.1, max_value=200.0,
+                    step=0.1 if is_float else 0.5, format="%.1f",
+                    key=f"wl_x_{code}", label_visibility="collapsed",
+                )
+
+            # 현재배수
+            curr_m = v.get("curr_m")
+            cols[5].markdown(
+                f"<div style='padding:6px 0;font-size:13px;color:#555;'>"
+                f"{'%.1f' % curr_m + 'x' if curr_m is not None else 'N/A'}</div>",
+                unsafe_allow_html=True,
+            )
+
+            # 26E 목표가 + 업사이드 (색상)
+            cols[6].markdown(
+                f"<div style='padding:4px 0;'>"
+                f"{_year_html(v.get('tp_c'), v.get('up_c'))}</div>",
+                unsafe_allow_html=True,
+            )
+
+            # 27E 목표가 + 업사이드 (색상)
+            cols[7].markdown(
+                f"<div style='padding:4px 0;'>"
+                f"{_year_html(v.get('tp_n'), v.get('up_n'))}</div>",
+                unsafe_allow_html=True,
+            )
+
+            # 삭제 버튼
+            with cols[8]:
+                st.write("")
+                if st.button("✕", key=f"wl_del_{code}",
+                             help=f"{v.get('name', code)} 삭제"):
+                    codes_to_del.append(code)
+
+    # ── 순서 변경 ────────────────────────────────────────────────────────────
+    if swap_action:
+        a, b = swap_action
+        cl = list(codes)
+        cl[a], cl[b] = cl[b], cl[a]
+        new_wl = {
+            c: {
+                "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
+                "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
+            }
+            for c in cl
+        }
+        save_watchlist(new_wl)
+        st.rerun()
+
+    # ── 삭제 ────────────────────────────────────────────────────────────────
     if codes_to_del:
         for code in codes_to_del:
             watchlist.pop(code, None)
