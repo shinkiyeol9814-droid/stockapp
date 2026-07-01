@@ -333,12 +333,12 @@ def render_watchlist():
             "_per_n":   _tp1x(fin, stocks, "당기순이익", NEXT_YEAR),
             "_pbr_n":   _tp1x(fin, stocks, "자본총계",   NEXT_YEAR),
             "_ev_n":    _ev(fin, NEXT_YEAR),
-            # ── valueGetter가 계산할 열 (초기값 무시됨) ──
-            "현재배수":         None,
-            f"{CY} 목표가":    None,
-            f"{CY} 업사이드":  None,
-            f"{NY} 목표가":    None,
-            f"{NY} 업사이드":  None,
+            # ── valueGetter가 계산할 열 (NaN placeholder; dtype=float64 유지) ──
+            "현재배수":         float("nan"),
+            f"{CY} 목표가":    float("nan"),
+            f"{CY} 업사이드":  float("nan"),
+            f"{NY} 목표가":    float("nan"),
+            f"{NY} 업사이드":  float("nan"),
             "삭제":            "",
         })
     df = pd.DataFrame(rows)
@@ -379,29 +379,31 @@ def render_watchlist():
                         cellStyle=_edit_style, minWidth=68, maxWidth=82)
 
     # valueGetter 열 (브라우저에서 실시간 계산)
+    # type="numericColumn" 제거: pandas 2.x에서 object dtype 컬럼과 충돌하는 aggrid 버그 회피
+    _right = {"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}
     gb.configure_column("현재배수",
                         valueGetter=_vg_curr_mult,
                         valueFormatter=_mult_fmt,
-                        type="numericColumn", minWidth=68, maxWidth=82,
-                        cellStyle={"color": "#888", "display": "flex", "alignItems": "center"})
+                        minWidth=68, maxWidth=82,
+                        cellStyle={**_right, "color": "#888"})
     gb.configure_column(f"{CY} 목표가",
                         valueGetter=_vg_tp("_c"),
                         valueFormatter=_tp_fmt,
-                        type="numericColumn", minWidth=95, maxWidth=115,
-                        cellStyle={"color": "#555", "display": "flex", "alignItems": "center"})
+                        minWidth=95, maxWidth=115,
+                        cellStyle={**_right, "color": "#555"})
     gb.configure_column(f"{CY} 업사이드",
                         valueGetter=_vg_up("_c"),
                         valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        type="numericColumn", minWidth=85, maxWidth=105)
+                        minWidth=85, maxWidth=105)
     gb.configure_column(f"{NY} 목표가",
                         valueGetter=_vg_tp("_n"),
                         valueFormatter=_tp_fmt,
-                        type="numericColumn", minWidth=95, maxWidth=115,
-                        cellStyle={"color": "#555", "display": "flex", "alignItems": "center"})
+                        minWidth=95, maxWidth=115,
+                        cellStyle={**_right, "color": "#555"})
     gb.configure_column(f"{NY} 업사이드",
                         valueGetter=_vg_up("_n"),
                         valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        type="numericColumn", minWidth=85, maxWidth=105)
+                        minWidth=85, maxWidth=105)
 
     gb.configure_column("삭제", cellRenderer=_del_btn,
                         headerName="", width=48, maxWidth=48,
