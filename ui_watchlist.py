@@ -60,13 +60,19 @@ def save_watchlist(data: dict) -> bool:
 @st.cache_data(ttl=60, show_spinner=False)
 def get_live_price(code: str):
     try:
-        data   = requests.get(
+        data = requests.get(
             f"https://m.stock.naver.com/api/stock/{code}/basic",
             headers=API_HEADERS, timeout=5
         ).json()
-        price  = float(str(data.get("closePrice")  or "0").replace(",", ""))
-        if price == 0:
-            price = float(str(data.get("stockEndPrice") or "0").replace(",", ""))
+        price = 0.0
+        # 비정규장에도 유효한 가격 필드를 순서대로 시도
+        for field in ["closePrice", "stockEndPrice", "endPrice", "basePrice", "prevClosePrice"]:
+            v = data.get(field)
+            if v:
+                p = float(str(v).replace(",", ""))
+                if p > 0:
+                    price = p
+                    break
         change = float(str(data.get("fluctuationsRatio") or "0").replace(",", ""))
         name   = data.get("stockName") or data.get("corporateName", code)
         return (price if price > 0 else None), change, name
@@ -168,8 +174,8 @@ _upside_style = JsCode(f"""
 function(params) {{
     var v = params.value;
     if ({_jsnull('v')}) return {{}};
-    if (v > 0) return {{color:'#26a69a', fontWeight:'700'}};
-    if (v < 0) return {{color:'#ef5350', fontWeight:'700'}};
+    if (v > 0) return {{color:'#ef5350', fontWeight:'700'}};
+    if (v < 0) return {{color:'#1565C0', fontWeight:'700'}};
     return {{color:'#888'}};
 }}
 """)
@@ -216,7 +222,7 @@ function(params) {{
     return v.toFixed(1) + 'x';
 }}
 """)
-_edit_style = JsCode("function(params) { return {color:'#1565C0', cursor:'pointer'}; }")
+_edit_style = JsCode("function(params) { return {color:'#1565C0', backgroundColor:'#eef4ff', cursor:'pointer', display:'flex', alignItems:'center'}; }")
 _del_btn = JsCode("""
 class DelBtn {
     init(params) {
@@ -241,13 +247,16 @@ def render_watchlist():
     )
     st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 업사이드 즉시 반영 · 자동 저장")
 
-    # ── 직전 그리드 편집값을 session_state에 선적용 (깜빡임 방지) ─────────────
-    pending = st.session_state.pop("_wl_pending", {})
+    # ── 직전 편집값 선적용 + watchlist 즉시 반영 (GitHub 캐시 지연 우회) ────
+    pending  = st.session_state.pop("_wl_pending", {})
+    wl_fresh = st.session_state.pop("_wl_fresh", None)
+    # pending이 있거나 fresh watchlist가 있을 때만 그리드 데이터 강제 갱신
+    force_reload = bool(pending) or (wl_fresh is not None)
     for code, (m, x) in pending.items():
         st.session_state[f"wl_m_{code}"] = m
         st.session_state[f"wl_x_{code}"] = x
 
-    watchlist = load_watchlist()
+    watchlist = wl_fresh or load_watchlist()
 
     # ── 종목 추가 ─────────────────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=len(watchlist) == 0):
@@ -276,7 +285,7 @@ def render_watchlist():
                     }
                     updated[code] = {"method": "POR(영업익)", "multiple": 12.0}
                     if save_watchlist(updated):
-                        st.success(f"✅ {chosen.split('(')[0].strip()} 추가됨")
+                        st.session_state["_wl_fresh"] = updated  # 즉시 반영
                         st.session_state.pop(f"_wlc_{code}", None)
                         st.rerun()
                     else:
@@ -414,6 +423,7 @@ def render_watchlist():
         update_mode=GridUpdateMode.MODEL_CHANGED,
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
         allow_unsafe_jscode=True,
+        reload_data=force_reload,   # 편집 중 False → 그리드가 편집값 보존; 변경 적용 시만 True
         theme="alpine",
         fit_columns_on_grid_load=False,
         key="wl_aggrid",
@@ -444,6 +454,7 @@ def render_watchlist():
             for c in current_codes if c in watchlist
         }
         save_watchlist(new_wl)
+        st.session_state["_wl_fresh"] = new_wl  # 즉시 반영
         st.rerun()
 
     # 방식·배수 변경 감지
