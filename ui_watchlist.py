@@ -347,23 +347,28 @@ def render_watchlist():
         save_watchlist(watchlist)
         st.rerun()
 
+    # ── 방식·배수 변경 시 자동 저장 ──────────────────────────────────────────
+    if not swap_action and not codes_to_del:
+        changed = any(
+            st.session_state.get(f"wl_m_{c}") != watchlist[c].get("method", "POR(영업익)") or
+            abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - float(watchlist[c].get("multiple", 12.0))) > 0.001
+            for c in codes
+        )
+        if changed:
+            new_wl = {
+                c: {
+                    "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
+                    "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
+                }
+                for c in codes
+            }
+            if save_watchlist(new_wl):
+                st.toast("저장됨", icon="✅")
+
     st.divider()
 
     # ── 하단 버튼 ─────────────────────────────────────────────────────────────
-    b1, b2, _ = st.columns([1.5, 1.5, 6])
-    with b1:
-        if st.button("💾 설정 저장", type="primary", use_container_width=True):
-            new_wl = {
-                code: {
-                    "method":   st.session_state.get(f"wl_m_{code}", "POR(영업익)"),
-                    "multiple": float(st.session_state.get(f"wl_x_{code}", 12.0)),
-                }
-                for code in watchlist
-            }
-            if save_watchlist(new_wl):
-                st.success("저장됐습니다.")
-            else:
-                st.error("저장 실패")
+    _, b2 = st.columns([8, 1.5])
     with b2:
         if st.button("🔄 새로고침", use_container_width=True):
             get_live_price.clear()

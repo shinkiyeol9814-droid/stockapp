@@ -542,7 +542,7 @@ def render_valuation_menu():
                     else: start_date_chart = pd.to_datetime("2021-01-01")
 
                     future_dates   = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
-                    extended_dates = df_price.index.append(future_dates[1:])
+                    extended_dates = pd.DatetimeIndex(list(df_price.index) + list(future_dates[1:]))
 
                     raw_metrics   = pd.to_numeric(fin_df[col_p], errors='coerce').values
                     cur_metrics   = pd.Series(raw_metrics).ffill().bfill().values
@@ -637,7 +637,7 @@ def render_valuation_menu():
 
                         fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                         fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-                        st.plotly_chart(fig1, use_container_width=True, config={'staticPlot': True})
+                        st.plotly_chart(fig1, use_container_width=True, config={"scrollZoom": True, "displayModeBar": "hover", "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]})
                         st.write("")
 
                     # ── fig2: 배수 추이 차트 (모든 평가방식 공통) ──
@@ -679,7 +679,7 @@ def render_valuation_menu():
                     fig2_height = 400 if "EBITDA" in val_type else 300
                     fig2_title  = f"[EV/EBITDA 배수 추이]" if "EBITDA" in val_type else f"[평균 {band_name} 밴드]"
                     fig2.update_layout(height=fig2_height, margin=dict(l=0, r=20, t=50, b=80), title=dict(text=fig2_title, x=0.0, y=0.99, font=dict(size=14)), showlegend=("EBITDA" in val_type), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-                    st.plotly_chart(fig2, use_container_width=True, config={'staticPlot': True})
+                    st.plotly_chart(fig2, use_container_width=True, config={"scrollZoom": True, "displayModeBar": "hover", "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]})
 
                 else: st.error("❌ 주가 데이터를 불러오는 데 실패했습니다. 종목명을 확인하거나 잠시 후 다시 시도해주세요.")
     else: st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
