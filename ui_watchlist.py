@@ -1,5 +1,5 @@
 """
-ui_watchlist.py — 밸류 워치리스트 tab (AG Grid 테이블 버전).
+ui_watchlist.py — 밸류 워치리스트 tab (AG Grid 테이블 + 실시간 계산).
 """
 import streamlit as st
 import requests
@@ -86,66 +86,95 @@ def get_watch_financials(code: str):
     except:
         return None, 0
 
-# ── 계산 ──────────────────────────────────────────────────────────────────────
-def calc_target(fin_df, stocks, method, multiple, curr_price, year):
-    if fin_df is None or stocks == 0 or not curr_price:
-        return None, None
-    col_p = COL_MAP.get(method, "영업이익")
-    row   = fin_df[fin_df["Year"] == year]
-    if row.empty:
-        return None, None
-    val = row[col_p].values[0]
-    if pd.isna(val) or val <= 0:
-        return None, None
-    try:
-        tp = (curr_price * (multiple / float(val))
-              if "EBITDA" in method
-              else float(val) * UNIT * multiple / stocks)
-        return (tp, (tp / curr_price - 1) * 100) if tp > 0 else (None, None)
-    except:
-        return None, None
-
-def calc_current_mult(fin_df, stocks, method, curr_price, year):
-    if fin_df is None or not curr_price:
+# ── 재무 계산 헬퍼 (JS valueGetter용 사전 계산) ────────────────────────────────
+def _tp1x(fin_df, stocks, col_key, year):
+    """1배수 기준 주가 = (재무값 * UNIT) / 주식수"""
+    if fin_df is None or stocks == 0:
         return None
-    col_p = COL_MAP.get(method, "영업이익")
-    row   = fin_df[fin_df["Year"] == year]
+    row = fin_df[fin_df["Year"] == year]
     if row.empty:
         return None
-    val = row[col_p].values[0]
+    val = row[col_key].values[0]
     if pd.isna(val) or val <= 0:
         return None
-    try:
-        if "EBITDA" in method:
-            return float(val)
-        return (curr_price * stocks) / (float(val) * UNIT)
-    except:
-        return None
+    return float(val) * UNIT / stocks
 
-# ── AG Grid JsCode 헬퍼 ────────────────────────────────────────────────────────
-def _jsnull(v: str) -> str:
-    """null/undefined/NaN 체크 JS 조각"""
-    return f"({v} == null || (typeof {v} === 'number' && isNaN({v})))"
+def _ev(fin_df, year):
+    if fin_df is None:
+        return None
+    row = fin_df[fin_df["Year"] == year]
+    if row.empty:
+        return None
+    val = row["EV/EBITDA"].values[0]
+    if pd.isna(val) or val <= 0:
+        return None
+    return float(val)
+
+# ── AG Grid JS ─────────────────────────────────────────────────────────────────
+# valueGetter: 브라우저에서 실시간 계산 (방식·배수 변경 시 즉시 반영)
+def _vg_tp(sfx: str) -> JsCode:
+    """목표가 valueGetter  sfx: '_c'(당해) or '_n'(내년)"""
+    return JsCode(f"""
+function(params) {{
+    var d = params.data, m = d['평가방식'], x = +d['목표배수'], p = d['_p'];
+    if (!m || !(x > 0) || !(p > 0)) return null;
+    if (m.indexOf('EV') >= 0) {{
+        var ev = d['_ev{sfx}']; return (ev > 0) ? p * (x / ev) : null;
+    }}
+    var t = m.indexOf('POR') >= 0 ? d['_por{sfx}']
+          : m.indexOf('PER') >= 0 ? d['_per{sfx}']
+          : m.indexOf('PBR') >= 0 ? d['_pbr{sfx}'] : null;
+    return (t > 0) ? t * x : null;
+}}
+""")
+
+def _vg_up(sfx: str) -> JsCode:
+    """업사이드(%) valueGetter"""
+    return JsCode(f"""
+function(params) {{
+    var d = params.data, m = d['평가방식'], x = +d['목표배수'], p = d['_p'];
+    if (!m || !(x > 0) || !(p > 0)) return null;
+    if (m.indexOf('EV') >= 0) {{
+        var ev = d['_ev{sfx}']; return (ev > 0) ? (x / ev - 1) * 100 : null;
+    }}
+    var t = m.indexOf('POR') >= 0 ? d['_por{sfx}']
+          : m.indexOf('PER') >= 0 ? d['_per{sfx}']
+          : m.indexOf('PBR') >= 0 ? d['_pbr{sfx}'] : null;
+    return (t > 0) ? (t * x / p - 1) * 100 : null;
+}}
+""")
+
+_vg_curr_mult = JsCode("""
+function(params) {
+    var d = params.data, m = d['평가방식'], p = d['_p'];
+    if (!m || !(p > 0)) return null;
+    if (m.indexOf('EV') >= 0) { var ev = d['_ev_c']; return (ev > 0) ? ev : null; }
+    var t = m.indexOf('POR') >= 0 ? d['_por_c']
+          : m.indexOf('PER') >= 0 ? d['_per_c']
+          : m.indexOf('PBR') >= 0 ? d['_pbr_c'] : null;
+    return (t > 0) ? p / t : null;
+}
+""")
+
+# 포매터
+def _jsnull(v): return f"({v} == null || (typeof {v} === 'number' && isNaN({v})))"
 
 _upside_style = JsCode(f"""
 function(params) {{
     var v = params.value;
     if ({_jsnull('v')}) return {{}};
-    if (v > 0) return {{color: '#26a69a', fontWeight: '700'}};
-    if (v < 0) return {{color: '#ef5350', fontWeight: '700'}};
-    return {{color: '#888'}};
+    if (v > 0) return {{color:'#26a69a', fontWeight:'700'}};
+    if (v < 0) return {{color:'#ef5350', fontWeight:'700'}};
+    return {{color:'#888'}};
 }}
 """)
-
 _upside_fmt = JsCode(f"""
 function(params) {{
     var v = params.value;
     if ({_jsnull('v')}) return 'N/A';
-    var arrow = v > 0 ? '▲ +' : (v < 0 ? '▼ ' : '');
-    return arrow + v.toFixed(1) + '%';
+    return (v > 0 ? '▲ +' : v < 0 ? '▼ ' : '') + v.toFixed(1) + '%';
 }}
 """)
-
 _price_fmt = JsCode(f"""
 function(params) {{
     var v = params.value;
@@ -153,7 +182,6 @@ function(params) {{
     return Math.round(v).toLocaleString('ko-KR') + '원';
 }}
 """)
-
 _change_fmt = JsCode(f"""
 function(params) {{
     var v = params.value;
@@ -161,16 +189,14 @@ function(params) {{
     return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 }}
 """)
-
 _change_style = JsCode("""
 function(params) {
     var v = params.value;
-    if (v > 0) return {color: '#ef5350'};
-    if (v < 0) return {color: '#1565C0'};
-    return {color: '#888'};
+    if (v > 0) return {color:'#ef5350'};
+    if (v < 0) return {color:'#1565C0'};
+    return {color:'#888'};
 }
 """)
-
 _tp_fmt = JsCode(f"""
 function(params) {{
     var v = params.value;
@@ -178,7 +204,6 @@ function(params) {{
     return Math.round(v).toLocaleString('ko-KR') + '원';
 }}
 """)
-
 _mult_fmt = JsCode(f"""
 function(params) {{
     var v = params.value;
@@ -186,23 +211,13 @@ function(params) {{
     return v.toFixed(1) + 'x';
 }}
 """)
-
-_edit_style = JsCode("""
-function(params) {
-    return {color: '#1565C0', cursor: 'pointer'};
-}
-""")
-
+_edit_style = JsCode("function(params) { return {color:'#1565C0', cursor:'pointer'}; }")
 _del_btn = JsCode("""
 class DelBtn {
     init(params) {
         this.eGui = document.createElement('div');
-        this.eGui.style.cssText =
-            'display:flex;align-items:center;justify-content:center;height:100%;';
-        this.eGui.innerHTML =
-            '<button style="border:none;background:transparent;color:#cc3333;'
-            + 'font-size:15px;cursor:pointer;padding:0 4px;line-height:1;"'
-            + ' title="삭제">✕</button>';
+        this.eGui.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;';
+        this.eGui.innerHTML = '<button style="border:none;background:transparent;color:#cc3333;font-size:15px;cursor:pointer;padding:0 4px;" title="삭제">✕</button>';
         this.eGui.querySelector('button').addEventListener('click', () => {
             params.api.applyTransaction({remove: [params.data]});
         });
@@ -219,7 +234,13 @@ def render_watchlist():
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>📋 밸류 워치리스트</div>",
         unsafe_allow_html=True,
     )
-    st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 자동 저장 · 현재가 1분 / 재무 1시간 캐시")
+    st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 업사이드 즉시 반영 · 자동 저장")
+
+    # ── 직전 그리드 편집값을 session_state에 선적용 (깜빡임 방지) ─────────────
+    pending = st.session_state.pop("_wl_pending", {})
+    for code, (m, x) in pending.items():
+        st.session_state[f"wl_m_{code}"] = m
+        st.session_state[f"wl_x_{code}"] = x
 
     watchlist = load_watchlist()
 
@@ -274,13 +295,11 @@ def render_watchlist():
     # ── 병렬 데이터 로딩 ─────────────────────────────────────────────────────
     uncached = [c for c in codes if f"_wlc_{c}" not in st.session_state]
     if uncached:
-        get_ticker_listing()   # main thread에서 캐시 워밍 → 스레드 내 중복 요청 방지
-
+        get_ticker_listing()  # main thread 캐시 워밍
         def _load_one(code):
             get_watch_financials(code)
             get_live_price(code)
             return code
-
         with st.spinner(f"데이터 로딩 중... ({len(uncached)}개 종목)"):
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(5, len(uncached))
@@ -289,33 +308,39 @@ def render_watchlist():
                     st.session_state[f"_wlc_{code}"] = True
 
     # ── DataFrame 구성 ────────────────────────────────────────────────────────
-    CY = f"{CUR_YEAR}E"
-    NY = f"{NEXT_YEAR}E"
-
+    CY, NY = f"{CUR_YEAR}E", f"{NEXT_YEAR}E"
     rows = []
     for code in codes:
         fin, stocks     = get_watch_financials(code)
         price, chg, nm  = get_live_price(code)
         method = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
         mult   = float(st.session_state.get(f"wl_x_{code}", 12.0))
-        tp_c, up_c = calc_target(fin, stocks, method, mult, price, CUR_YEAR)
-        tp_n, up_n = calc_target(fin, stocks, method, mult, price, NEXT_YEAR)
-        curr_m     = calc_current_mult(fin, stocks, method, price, CUR_YEAR)
+        p = float(price) if price else None
         rows.append({
-            "_code":       code,
-            "종목명":      nm or code,
-            "현재가":      float(price) if price else None,
-            "등락률":      float(chg)   if chg is not None else None,
-            "평가방식":    method,
-            "목표배수":    mult,
-            "현재배수":    float(curr_m) if curr_m is not None else None,
-            f"{CY} 목표가":   float(tp_c) if tp_c else None,
-            f"{CY} 업사이드": float(up_c) if up_c is not None else None,
-            f"{NY} 목표가":   float(tp_n) if tp_n else None,
-            f"{NY} 업사이드": float(up_n) if up_n is not None else None,
-            "삭제":        "",
+            "_code":    code,
+            "종목명":   nm or code,
+            "현재가":   p,
+            "등락률":   float(chg) if chg is not None else None,
+            "평가방식": method,
+            "목표배수": mult,
+            # ── JS valueGetter 용 숨김 재무 데이터 ──
+            "_p":       p,
+            "_por_c":   _tp1x(fin, stocks, "영업이익",   CUR_YEAR),
+            "_per_c":   _tp1x(fin, stocks, "당기순이익", CUR_YEAR),
+            "_pbr_c":   _tp1x(fin, stocks, "자본총계",   CUR_YEAR),
+            "_ev_c":    _ev(fin, CUR_YEAR),
+            "_por_n":   _tp1x(fin, stocks, "영업이익",   NEXT_YEAR),
+            "_per_n":   _tp1x(fin, stocks, "당기순이익", NEXT_YEAR),
+            "_pbr_n":   _tp1x(fin, stocks, "자본총계",   NEXT_YEAR),
+            "_ev_n":    _ev(fin, NEXT_YEAR),
+            # ── valueGetter가 계산할 열 (초기값 무시됨) ──
+            "현재배수":         None,
+            f"{CY} 목표가":    None,
+            f"{CY} 업사이드":  None,
+            f"{NY} 목표가":    None,
+            f"{NY} 업사이드":  None,
+            "삭제":            "",
         })
-
     df = pd.DataFrame(rows)
 
     # ── AG Grid 설정 ──────────────────────────────────────────────────────────
@@ -323,66 +348,64 @@ def render_watchlist():
     gb.configure_default_column(
         resizable=True, filterable=False, sortable=False,
         suppressMovable=True,
-        cellStyle={"fontSize": "13px", "display": "flex",
-                   "alignItems": "center"},
+        cellStyle={"fontSize": "13px", "display": "flex", "alignItems": "center"},
     )
 
-    gb.configure_column("_code", hide=True)
+    # 숨김 열
+    for hc in ["_code", "_p",
+               "_por_c", "_per_c", "_pbr_c", "_ev_c",
+               "_por_n", "_per_n", "_pbr_n", "_ev_n"]:
+        gb.configure_column(hc, hide=True)
 
-    # 종목명: 드래그 핸들 역할
-    gb.configure_column(
-        "종목명",
-        rowDrag=True,
-        minWidth=110, maxWidth=160,
-        cellStyle={"fontWeight": "700", "fontSize": "13px",
-                   "display": "flex", "alignItems": "center"},
-    )
+    # 종목명 (드래그 핸들)
+    gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
+                        cellStyle={"fontWeight": "700", "fontSize": "13px",
+                                   "display": "flex", "alignItems": "center"})
 
-    gb.configure_column("현재가",
-        valueFormatter=_price_fmt, type="numericColumn",
-        minWidth=95, maxWidth=120)
-    gb.configure_column("등락률",
-        valueFormatter=_change_fmt, cellStyle=_change_style,
-        type="numericColumn", minWidth=72, maxWidth=85)
+    gb.configure_column("현재가",  valueFormatter=_price_fmt,  type="numericColumn",
+                        minWidth=95, maxWidth=120)
+    gb.configure_column("등락률",  valueFormatter=_change_fmt, cellStyle=_change_style,
+                        type="numericColumn", minWidth=70, maxWidth=82)
 
     # 편집 가능 열 (파란색)
-    gb.configure_column(
-        "평가방식", editable=True,
-        cellEditor="agSelectCellEditor",
-        cellEditorParams={"values": METHODS},
-        cellStyle=_edit_style,
-        minWidth=130, maxWidth=148,
-    )
-    gb.configure_column(
-        "목표배수", editable=True,
-        type=["numericColumn"],
-        valueFormatter=_mult_fmt,
-        cellEditorParams={"step": 0.5},
-        cellStyle=_edit_style,
-        minWidth=72, maxWidth=85,
-    )
+    gb.configure_column("평가방식", editable=True,
+                        cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": METHODS},
+                        cellStyle=_edit_style, minWidth=128, maxWidth=148)
+    gb.configure_column("목표배수", editable=True,
+                        type=["numericColumn"],
+                        valueFormatter=_mult_fmt,
+                        cellEditorParams={"step": 0.5},
+                        cellStyle=_edit_style, minWidth=68, maxWidth=82)
 
+    # valueGetter 열 (브라우저에서 실시간 계산)
     gb.configure_column("현재배수",
-        valueFormatter=_mult_fmt, type="numericColumn",
-        minWidth=72, maxWidth=85,
-        cellStyle={"color": "#888", "display": "flex", "alignItems": "center"})
+                        valueGetter=_vg_curr_mult,
+                        valueFormatter=_mult_fmt,
+                        type="numericColumn", minWidth=68, maxWidth=82,
+                        cellStyle={"color": "#888", "display": "flex", "alignItems": "center"})
+    gb.configure_column(f"{CY} 목표가",
+                        valueGetter=_vg_tp("_c"),
+                        valueFormatter=_tp_fmt,
+                        type="numericColumn", minWidth=95, maxWidth=115,
+                        cellStyle={"color": "#555", "display": "flex", "alignItems": "center"})
+    gb.configure_column(f"{CY} 업사이드",
+                        valueGetter=_vg_up("_c"),
+                        valueFormatter=_upside_fmt, cellStyle=_upside_style,
+                        type="numericColumn", minWidth=85, maxWidth=105)
+    gb.configure_column(f"{NY} 목표가",
+                        valueGetter=_vg_tp("_n"),
+                        valueFormatter=_tp_fmt,
+                        type="numericColumn", minWidth=95, maxWidth=115,
+                        cellStyle={"color": "#555", "display": "flex", "alignItems": "center"})
+    gb.configure_column(f"{NY} 업사이드",
+                        valueGetter=_vg_up("_n"),
+                        valueFormatter=_upside_fmt, cellStyle=_upside_style,
+                        type="numericColumn", minWidth=85, maxWidth=105)
 
-    for col in [f"{CY} 목표가", f"{NY} 목표가"]:
-        gb.configure_column(col,
-            valueFormatter=_tp_fmt, type="numericColumn",
-            minWidth=95, maxWidth=115,
-            cellStyle={"color": "#555", "display": "flex", "alignItems": "center"})
-
-    for col in [f"{CY} 업사이드", f"{NY} 업사이드"]:
-        gb.configure_column(col,
-            valueFormatter=_upside_fmt, cellStyle=_upside_style,
-            type="numericColumn", minWidth=85, maxWidth=105)
-
-    gb.configure_column(
-        "삭제", cellRenderer=_del_btn,
-        headerName="", width=48, maxWidth=48,
-        suppressMovable=True, editable=False,
-    )
+    gb.configure_column("삭제", cellRenderer=_del_btn,
+                        headerName="", width=48, maxWidth=48,
+                        suppressMovable=True, editable=False)
 
     gb.configure_grid_options(
         rowDragManaged=True,
@@ -407,16 +430,15 @@ def render_watchlist():
     # ── 변경 감지 & 자동 저장 ─────────────────────────────────────────────────
     ret: pd.DataFrame = grid_resp.data
     if ret is None or ret.empty or "_code" not in ret.columns:
-        _render_bottom()
+        _render_bottom(watchlist)
         return
 
-    # 유효한 code 목록 (삭제된 행은 ret에서 빠짐)
     current_codes = [
         c for c in ret["_code"].tolist()
         if c and not (isinstance(c, float) and pd.isna(c))
     ]
 
-    # ── 삭제 감지 ────────────────────────────────────────────────────────────
+    # 삭제 감지
     deleted = [c for c in codes if c not in current_codes]
     if deleted:
         for c in deleted:
@@ -429,11 +451,12 @@ def render_watchlist():
             }
             for c in current_codes if c in watchlist
         }
-        if save_watchlist(new_wl):
-            st.rerun()
+        save_watchlist(new_wl)
+        st.rerun()
 
-    # ── 방식·배수 변경 감지 ───────────────────────────────────────────────────
+    # 방식·배수 변경 감지
     settings_changed = False
+    new_settings: dict[str, tuple] = {}
     for _, row in ret.iterrows():
         c = row.get("_code", "")
         if not c or c not in watchlist:
@@ -445,25 +468,29 @@ def render_watchlist():
             new_x = 12.0
         if (st.session_state.get(f"wl_m_{c}") != new_m or
                 abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - new_x) > 0.001):
-            st.session_state[f"wl_m_{c}"] = new_m
-            st.session_state[f"wl_x_{c}"] = new_x
+            new_settings[c] = (new_m, new_x)
             settings_changed = True
 
-    # ── 순서 변경 감지 ────────────────────────────────────────────────────────
+    # 순서 변경 감지
     order_changed = current_codes != codes
 
     if settings_changed or order_changed:
         new_wl = {
             c: {
-                "method":   st.session_state.get(f"wl_m_{c}", watchlist.get(c, {}).get("method", "POR(영업익)")),
-                "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist.get(c, {}).get("multiple", 12.0))),
+                "method":   new_settings[c][0] if c in new_settings
+                            else st.session_state.get(f"wl_m_{c}", watchlist.get(c, {}).get("method", "POR(영업익)")),
+                "multiple": new_settings[c][1] if c in new_settings
+                            else float(st.session_state.get(f"wl_x_{c}", watchlist.get(c, {}).get("multiple", 12.0))),
             }
             for c in current_codes if c in watchlist
         }
         save_watchlist(new_wl)
+
         if settings_changed:
+            # 다음 런에서 df를 올바르게 빌드하도록 pending에 저장 후 재런
+            st.session_state["_wl_pending"] = new_settings
             st.toast("저장됨", icon="✅")
-            st.rerun()   # 업사이드 재계산
+            st.rerun()
         else:
             st.toast("순서 저장됨", icon="✅")
 
