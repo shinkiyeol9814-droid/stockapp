@@ -110,51 +110,56 @@ def _ev(fin_df, year):
         return None
     return float(val)
 
-# ── AG Grid JS ─────────────────────────────────────────────────────────────────
-# valueGetter: 브라우저에서 실시간 계산 (방식·배수 변경 시 즉시 반영)
-def _vg_tp(sfx: str) -> JsCode:
-    """목표가 valueGetter  sfx: '_c'(당해) or '_n'(내년)"""
-    return JsCode(f"""
-function(params) {{
-    var d = params.data, m = d['평가방식'], x = +d['목표배수'], p = d['_p'];
-    if (!m || !(x > 0) || !(p > 0)) return null;
-    if (m.indexOf('EV') >= 0) {{
-        var ev = d['_ev{sfx}']; return (ev > 0) ? p * (x / ev) : null;
-    }}
-    var t = m.indexOf('POR') >= 0 ? d['_por{sfx}']
-          : m.indexOf('PER') >= 0 ? d['_per{sfx}']
-          : m.indexOf('PBR') >= 0 ? d['_pbr{sfx}'] : null;
-    return (t > 0) ? t * x : null;
-}}
-""")
+# ── Python 재무 계산 헬퍼 ──────────────────────────────────────────────────────
+def _tp1x_best(fin_df, stocks, col_key, years):
+    """여러 연도 순서로 시도해 첫 번째 유효한 1배수 주가를 반환"""
+    for yr in years:
+        v = _tp1x(fin_df, stocks, col_key, yr)
+        if v is not None:
+            return v
+    return None
 
-def _vg_up(sfx: str) -> JsCode:
-    """업사이드(%) valueGetter"""
-    return JsCode(f"""
-function(params) {{
-    var d = params.data, m = d['평가방식'], x = +d['목표배수'], p = d['_p'];
-    if (!m || !(x > 0) || !(p > 0)) return null;
-    if (m.indexOf('EV') >= 0) {{
-        var ev = d['_ev{sfx}']; return (ev > 0) ? (x / ev - 1) * 100 : null;
-    }}
-    var t = m.indexOf('POR') >= 0 ? d['_por{sfx}']
-          : m.indexOf('PER') >= 0 ? d['_per{sfx}']
-          : m.indexOf('PBR') >= 0 ? d['_pbr{sfx}'] : null;
-    return (t > 0) ? (t * x / p - 1) * 100 : null;
-}}
-""")
+def _ev_best(fin_df, years):
+    for yr in years:
+        v = _ev(fin_df, yr)
+        if v is not None:
+            return v
+    return None
 
-_vg_curr_mult = JsCode("""
-function(params) {
-    var d = params.data, m = d['평가방식'], p = d['_p'];
-    if (!m || !(p > 0)) return null;
-    if (m.indexOf('EV') >= 0) { var ev = d['_ev_c']; return (ev > 0) ? ev : null; }
-    var t = m.indexOf('POR') >= 0 ? d['_por_c']
-          : m.indexOf('PER') >= 0 ? d['_per_c']
-          : m.indexOf('PBR') >= 0 ? d['_pbr_c'] : null;
-    return (t > 0) ? p / t : null;
-}
-""")
+def _py_curr_mult(fin_df, stocks, method, price, years):
+    """시장 현재 배수"""
+    if price is None or price <= 0:
+        return None
+    if "EV" in method:
+        ev = _ev_best(fin_df, years)
+        return ev if ev else None
+    col = COL_MAP.get(method)
+    if col is None:
+        return None
+    tp1x = _tp1x_best(fin_df, stocks, col, years)
+    return (price / tp1x) if tp1x and tp1x > 0 else None
+
+def _py_target(fin_df, stocks, method, mult, price, years):
+    """목표 주가"""
+    if mult <= 0:
+        return None
+    if "EV" in method:
+        ev = _ev_best(fin_df, years)
+        if ev and ev > 0 and price and price > 0:
+            return price * (mult / ev)
+        return None
+    col = COL_MAP.get(method)
+    if col is None:
+        return None
+    tp1x = _tp1x_best(fin_df, stocks, col, years)
+    return (tp1x * mult) if tp1x else None
+
+def _py_upside(fin_df, stocks, method, mult, price, years):
+    """업사이드 (%)"""
+    tp = _py_target(fin_df, stocks, method, mult, price, years)
+    if tp is None or price is None or price <= 0:
+        return None
+    return (tp / price - 1) * 100
 
 # 포매터
 def _jsnull(v): return f"({v} == null || (typeof {v} === 'number' && isNaN({v})))"
@@ -309,6 +314,8 @@ def render_watchlist():
 
     # ── DataFrame 구성 ────────────────────────────────────────────────────────
     CY, NY = f"{CUR_YEAR}E", f"{NEXT_YEAR}E"
+    CY_YRS = [CUR_YEAR, CUR_YEAR - 1]    # 2026 → 2025 폴백
+    NY_YRS = [NEXT_YEAR, CUR_YEAR]       # 2027 → 2026 폴백
     rows = []
     for code in codes:
         fin, stocks     = get_watch_financials(code)
@@ -323,25 +330,17 @@ def render_watchlist():
             "등락률":   float(chg) if chg is not None else None,
             "평가방식": method,
             "목표배수": mult,
-            # ── JS valueGetter 용 숨김 재무 데이터 ──
-            "_p":       p,
-            "_por_c":   _tp1x(fin, stocks, "영업이익",   CUR_YEAR),
-            "_per_c":   _tp1x(fin, stocks, "당기순이익", CUR_YEAR),
-            "_pbr_c":   _tp1x(fin, stocks, "자본총계",   CUR_YEAR),
-            "_ev_c":    _ev(fin, CUR_YEAR),
-            "_por_n":   _tp1x(fin, stocks, "영업이익",   NEXT_YEAR),
-            "_per_n":   _tp1x(fin, stocks, "당기순이익", NEXT_YEAR),
-            "_pbr_n":   _tp1x(fin, stocks, "자본총계",   NEXT_YEAR),
-            "_ev_n":    _ev(fin, NEXT_YEAR),
-            # ── valueGetter가 계산할 열 (NaN placeholder; dtype=float64 유지) ──
-            "현재배수":         float("nan"),
-            f"{CY} 목표가":    float("nan"),
-            f"{CY} 업사이드":  float("nan"),
-            f"{NY} 목표가":    float("nan"),
-            f"{NY} 업사이드":  float("nan"),
+            "현재배수":        _py_curr_mult(fin, stocks, method, p, CY_YRS),
+            f"{CY} 목표가":   _py_target(fin, stocks, method, mult, p, CY_YRS),
+            f"{CY} 업사이드": _py_upside(fin, stocks, method, mult, p, CY_YRS),
+            f"{NY} 목표가":   _py_target(fin, stocks, method, mult, p, NY_YRS),
+            f"{NY} 업사이드": _py_upside(fin, stocks, method, mult, p, NY_YRS),
             "삭제":            "",
         })
     df = pd.DataFrame(rows)
+    # float64 dtype 보장 (None → NaN, aggrid numeric 변환 오류 방지)
+    for _c in ["현재배수", f"{CY} 목표가", f"{CY} 업사이드", f"{NY} 목표가", f"{NY} 업사이드"]:
+        df[_c] = pd.to_numeric(df[_c], errors="coerce")
 
     # ── AG Grid 설정 ──────────────────────────────────────────────────────────
     gb = GridOptionsBuilder.from_dataframe(df)
@@ -352,10 +351,7 @@ def render_watchlist():
     )
 
     # 숨김 열
-    for hc in ["_code", "_p",
-               "_por_c", "_per_c", "_pbr_c", "_ev_c",
-               "_por_n", "_per_n", "_pbr_n", "_ev_n"]:
-        gb.configure_column(hc, hide=True)
+    gb.configure_column("_code", hide=True)
 
     # 종목명 (드래그 핸들)
     gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
@@ -378,32 +374,26 @@ def render_watchlist():
                         cellEditorParams={"step": 0.5},
                         cellStyle=_edit_style, minWidth=68, maxWidth=82)
 
-    # valueGetter 열 (브라우저에서 실시간 계산)
-    # type="numericColumn" 제거: pandas 2.x에서 object dtype 컬럼과 충돌하는 aggrid 버그 회피
+    # 계산 열 (Python에서 사전 계산, rerun 시 갱신)
     _right = {"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}
     gb.configure_column("현재배수",
-                        valueGetter=_vg_curr_mult,
-                        valueFormatter=_mult_fmt,
+                        valueFormatter=_mult_fmt, type="numericColumn",
                         minWidth=68, maxWidth=82,
                         cellStyle={**_right, "color": "#888"})
     gb.configure_column(f"{CY} 목표가",
-                        valueGetter=_vg_tp("_c"),
-                        valueFormatter=_tp_fmt,
+                        valueFormatter=_tp_fmt, type="numericColumn",
                         minWidth=95, maxWidth=115,
                         cellStyle={**_right, "color": "#555"})
     gb.configure_column(f"{CY} 업사이드",
-                        valueGetter=_vg_up("_c"),
                         valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        minWidth=85, maxWidth=105)
+                        type="numericColumn", minWidth=85, maxWidth=105)
     gb.configure_column(f"{NY} 목표가",
-                        valueGetter=_vg_tp("_n"),
-                        valueFormatter=_tp_fmt,
+                        valueFormatter=_tp_fmt, type="numericColumn",
                         minWidth=95, maxWidth=115,
                         cellStyle={**_right, "color": "#555"})
     gb.configure_column(f"{NY} 업사이드",
-                        valueGetter=_vg_up("_n"),
                         valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        minWidth=85, maxWidth=105)
+                        type="numericColumn", minWidth=85, maxWidth=105)
 
     gb.configure_column("삭제", cellRenderer=_del_btn,
                         headerName="", width=48, maxWidth=48,
