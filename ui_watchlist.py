@@ -1,9 +1,15 @@
+"""
+ui_watchlist.py — 밸류 워치리스트 tab (AG Grid 테이블 버전).
+"""
 import streamlit as st
 import requests
 import json
 import base64
 import pandas as pd
+import concurrent.futures
 from datetime import datetime
+
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode, DataReturnMode
 
 from valuation import (
     get_hybrid_financials, get_ticker_listing, get_stocks_count,
@@ -13,15 +19,15 @@ from valuation import (
 WATCHLIST_FILE = "data/watchlist/watchlist.json"
 METHODS   = ["POR(영업익)", "PER(순이익)", "PBR(자본총계)", "EV/EBITDA"]
 COL_MAP   = {
-    "POR(영업익)": "영업이익",
-    "PER(순이익)": "당기순이익",
+    "POR(영업익)":   "영업이익",
+    "PER(순이익)":   "당기순이익",
     "PBR(자본총계)": "자본총계",
-    "EV/EBITDA": "EV/EBITDA",
+    "EV/EBITDA":    "EV/EBITDA",
 }
 CUR_YEAR  = datetime.today().year
-NEXT_YEAR = 2027
+NEXT_YEAR = CUR_YEAR + 1
 
-# ── GitHub ───────────────────────────────────────────────────────────────────
+# ── GitHub ─────────────────────────────────────────────────────────────────────
 def _gh_hdrs():
     tok = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", "")
     return {"Authorization": f"token {tok}", "Accept": "application/vnd.github.v3+json"}
@@ -50,7 +56,7 @@ def save_watchlist(data: dict) -> bool:
     r = requests.put(url, headers=hdrs, json=payload, timeout=10)
     return r.status_code in [200, 201]
 
-# ── 데이터 ───────────────────────────────────────────────────────────────────
+# ── 데이터 ────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
 def get_live_price(code: str):
     try:
@@ -69,7 +75,6 @@ def get_live_price(code: str):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_watch_financials(code: str):
-    # 반드시 Streamlit 메인 스레드에서 호출 — ThreadPoolExecutor 금지
     try:
         listing    = get_ticker_listing()
         ticker_row = listing[listing["Code"].astype(str).str.zfill(6) == code.zfill(6)]
@@ -81,7 +86,7 @@ def get_watch_financials(code: str):
     except:
         return None, 0
 
-# ── 계산 ─────────────────────────────────────────────────────────────────────
+# ── 계산 ──────────────────────────────────────────────────────────────────────
 def calc_target(fin_df, stocks, method, multiple, curr_price, year):
     if fin_df is None or stocks == 0 or not curr_price:
         return None, None
@@ -117,33 +122,108 @@ def calc_current_mult(fin_df, stocks, method, curr_price, year):
     except:
         return None
 
-# ── HTML 헬퍼 ─────────────────────────────────────────────────────────────────
-def _up_html(upside):
-    if upside is None:
-        return "<span style='color:#bbb;font-size:12px;'>N/A</span>"
-    color = "#ef5350" if upside < 0 else "#26a69a"
-    arrow = "▼" if upside < 0 else "▲"
-    return (f"<span style='color:{color};font-weight:700;font-size:14px;'>"
-            f"{arrow} {upside:+.1f}%</span>")
+# ── AG Grid JsCode 헬퍼 ────────────────────────────────────────────────────────
+def _jsnull(v: str) -> str:
+    """null/undefined/NaN 체크 JS 조각"""
+    return f"({v} == null || (typeof {v} === 'number' && isNaN({v})))"
 
-def _year_html(tp, upside):
-    """목표가(회색) + 업사이드(색상)"""
-    if tp is None:
-        return "<span style='color:#bbb;font-size:12px;'>N/A</span>"
-    return (f"<div style='font-size:12px;color:#666;'>{tp:,.0f}원</div>"
-            f"<div style='margin-top:2px;'>{_up_html(upside)}</div>")
+_upside_style = JsCode(f"""
+function(params) {{
+    var v = params.value;
+    if ({_jsnull('v')}) return {{}};
+    if (v > 0) return {{color: '#26a69a', fontWeight: '700'}};
+    if (v < 0) return {{color: '#ef5350', fontWeight: '700'}};
+    return {{color: '#888'}};
+}}
+""")
 
-# ── 렌더링 ───────────────────────────────────────────────────────────────────
+_upside_fmt = JsCode(f"""
+function(params) {{
+    var v = params.value;
+    if ({_jsnull('v')}) return 'N/A';
+    var arrow = v > 0 ? '▲ +' : (v < 0 ? '▼ ' : '');
+    return arrow + v.toFixed(1) + '%';
+}}
+""")
+
+_price_fmt = JsCode(f"""
+function(params) {{
+    var v = params.value;
+    if ({_jsnull('v')} || v === 0) return '-';
+    return Math.round(v).toLocaleString('ko-KR') + '원';
+}}
+""")
+
+_change_fmt = JsCode(f"""
+function(params) {{
+    var v = params.value;
+    if ({_jsnull('v')}) return '-';
+    return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+}}
+""")
+
+_change_style = JsCode("""
+function(params) {
+    var v = params.value;
+    if (v > 0) return {color: '#ef5350'};
+    if (v < 0) return {color: '#1565C0'};
+    return {color: '#888'};
+}
+""")
+
+_tp_fmt = JsCode(f"""
+function(params) {{
+    var v = params.value;
+    if ({_jsnull('v')} || v <= 0) return 'N/A';
+    return Math.round(v).toLocaleString('ko-KR') + '원';
+}}
+""")
+
+_mult_fmt = JsCode(f"""
+function(params) {{
+    var v = params.value;
+    if ({_jsnull('v')}) return 'N/A';
+    return v.toFixed(1) + 'x';
+}}
+""")
+
+_edit_style = JsCode("""
+function(params) {
+    return {color: '#1565C0', cursor: 'pointer'};
+}
+""")
+
+_del_btn = JsCode("""
+class DelBtn {
+    init(params) {
+        this.eGui = document.createElement('div');
+        this.eGui.style.cssText =
+            'display:flex;align-items:center;justify-content:center;height:100%;';
+        this.eGui.innerHTML =
+            '<button style="border:none;background:transparent;color:#cc3333;'
+            + 'font-size:15px;cursor:pointer;padding:0 4px;line-height:1;"'
+            + ' title="삭제">✕</button>';
+        this.eGui.querySelector('button').addEventListener('click', () => {
+            params.api.applyTransaction({remove: [params.data]});
+        });
+    }
+    getGui() { return this.eGui; }
+    refresh() { return true; }
+}
+""")
+
+
+# ── 렌더링 ─────────────────────────────────────────────────────────────────────
 def render_watchlist():
     st.markdown(
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>📋 밸류 워치리스트</div>",
         unsafe_allow_html=True,
     )
-    st.caption("↑↓ 핸들로 순서 변경 · 방식·배수 변경 즉시 재계산 · 현재가 60초 · 재무 1시간 캐시")
+    st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 자동 저장 · 현재가 1분 / 재무 1시간 캐시")
 
     watchlist = load_watchlist()
 
-    # ── 종목 추가 ──────────────────────────────────────────────────────────────
+    # ── 종목 추가 ─────────────────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=len(watchlist) == 0):
         listing = get_ticker_listing()
         c1, c2, c3 = st.columns([3, 2, 1])
@@ -170,7 +250,8 @@ def render_watchlist():
                     }
                     updated[code] = {"method": "POR(영업익)", "multiple": 12.0}
                     if save_watchlist(updated):
-                        st.success(f"✅ {chosen.split('(')[0].strip()} 추가")
+                        st.success(f"✅ {chosen.split('(')[0].strip()} 추가됨")
+                        st.session_state.pop(f"_wlc_{code}", None)
                         st.rerun()
                     else:
                         st.error("저장 실패 (GH_PAT 확인)")
@@ -190,188 +271,212 @@ def render_watchlist():
         if f"wl_x_{code}" not in st.session_state:
             st.session_state[f"wl_x_{code}"] = float(cfg.get("multiple", 12.0))
 
-    # ── 순차 로딩 (미캐시 종목만 스피너) ──────────────────────────────────────
+    # ── 병렬 데이터 로딩 ─────────────────────────────────────────────────────
     uncached = [c for c in codes if f"_wlc_{c}" not in st.session_state]
     if uncached:
-        with st.spinner(f"재무 데이터 로딩 중... (신규 {len(uncached)}개 종목)"):
-            for code in uncached:
-                get_watch_financials(code)
-                get_live_price(code)
-                st.session_state[f"_wlc_{code}"] = True
+        get_ticker_listing()   # main thread에서 캐시 워밍 → 스레드 내 중복 요청 방지
 
-    all_data = {}
+        def _load_one(code):
+            get_watch_financials(code)
+            get_live_price(code)
+            return code
+
+        with st.spinner(f"데이터 로딩 중... ({len(uncached)}개 종목)"):
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(5, len(uncached))
+            ) as executor:
+                for code in executor.map(_load_one, uncached):
+                    st.session_state[f"_wlc_{code}"] = True
+
+    # ── DataFrame 구성 ────────────────────────────────────────────────────────
+    CY = f"{CUR_YEAR}E"
+    NY = f"{NEXT_YEAR}E"
+
+    rows = []
     for code in codes:
-        fin, stocks = get_watch_financials(code)
-        price, change, name = get_live_price(code)
-        all_data[code] = (fin, stocks, price, change, name)
-
-    # ── 밸류 계산 ────────────────────────────────────────────────────────────
-    def _calc(code):
-        fin, stocks, price, change, name = all_data[code]
+        fin, stocks     = get_watch_financials(code)
+        price, chg, nm  = get_live_price(code)
         method = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
         mult   = float(st.session_state.get(f"wl_x_{code}", 12.0))
         tp_c, up_c = calc_target(fin, stocks, method, mult, price, CUR_YEAR)
         tp_n, up_n = calc_target(fin, stocks, method, mult, price, NEXT_YEAR)
         curr_m     = calc_current_mult(fin, stocks, method, price, CUR_YEAR)
-        return dict(name=name, price=price, change=change,
-                    method=method, mult=mult,
-                    tp_c=tp_c, up_c=up_c, tp_n=tp_n, up_n=up_n, curr_m=curr_m)
+        rows.append({
+            "_code":       code,
+            "종목명":      nm or code,
+            "현재가":      float(price) if price else None,
+            "등락률":      float(chg)   if chg is not None else None,
+            "평가방식":    method,
+            "목표배수":    mult,
+            "현재배수":    float(curr_m) if curr_m is not None else None,
+            f"{CY} 목표가":   float(tp_c) if tp_c else None,
+            f"{CY} 업사이드": float(up_c) if up_c is not None else None,
+            f"{NY} 목표가":   float(tp_n) if tp_n else None,
+            f"{NY} 업사이드": float(up_n) if up_n is not None else None,
+            "삭제":        "",
+        })
 
-    vals = {c: _calc(c) for c in codes}
+    df = pd.DataFrame(rows)
 
-    # ── 컬럼 헤더 (카드 밖, 상단 1회) ────────────────────────────────────────
-    W = [0.38, 1.7, 1.25, 1.6, 0.85, 0.9, 1.35, 1.35, 0.38]
-    h_cols = st.columns(W)
-    for col, label in zip(h_cols, [
-        "", "종목명", "현재가", "평가방식", "목표배수", "현재배수",
-        f"{CUR_YEAR}E 목표·업사이드", "27E 목표·업사이드", ""
-    ]):
-        col.markdown(
-            f"<div style='font-size:11px;font-weight:700;color:#555;"
-            f"padding:2px 0 4px;border-bottom:2px solid #e0e0e0;'>{label}</div>",
-            unsafe_allow_html=True,
-        )
+    # ── AG Grid 설정 ──────────────────────────────────────────────────────────
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(
+        resizable=True, filterable=False, sortable=False,
+        suppressMovable=True,
+        cellStyle={"fontSize": "13px", "display": "flex",
+                   "alignItems": "center"},
+    )
 
-    # ── 종목 카드 행 ──────────────────────────────────────────────────────────
-    swap_action  = None
-    codes_to_del = []
+    gb.configure_column("_code", hide=True)
 
-    for i, code in enumerate(codes):
-        v = vals.get(code, {})
-        is_float = "PBR" in v.get("method", "") or "EBITDA" in v.get("method", "")
+    # 종목명: 드래그 핸들 역할
+    gb.configure_column(
+        "종목명",
+        rowDrag=True,
+        minWidth=110, maxWidth=160,
+        cellStyle={"fontWeight": "700", "fontSize": "13px",
+                   "display": "flex", "alignItems": "center"},
+    )
 
-        with st.container(border=True):
-            cols = st.columns(W)
+    gb.configure_column("현재가",
+        valueFormatter=_price_fmt, type="numericColumn",
+        minWidth=95, maxWidth=120)
+    gb.configure_column("등락률",
+        valueFormatter=_change_fmt, cellStyle=_change_style,
+        type="numericColumn", minWidth=72, maxWidth=85)
 
-            # ↑/↓ 핸들
-            with cols[0]:
-                up_btn, dn_btn = st.columns(2)
-                with up_btn:
-                    if st.button("↑", key=f"wl_up_{code}",
-                                 disabled=(i == 0), use_container_width=True):
-                        swap_action = (i, i - 1)
-                with dn_btn:
-                    if st.button("↓", key=f"wl_dn_{code}",
-                                 disabled=(i == len(codes) - 1), use_container_width=True):
-                        swap_action = (i, i + 1)
+    # 편집 가능 열 (파란색)
+    gb.configure_column(
+        "평가방식", editable=True,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": METHODS},
+        cellStyle=_edit_style,
+        minWidth=130, maxWidth=148,
+    )
+    gb.configure_column(
+        "목표배수", editable=True,
+        type=["numericColumn"],
+        valueFormatter=_mult_fmt,
+        cellEditorParams={"step": 0.5},
+        cellStyle=_edit_style,
+        minWidth=72, maxWidth=85,
+    )
 
-            # 종목명
-            cols[1].markdown(
-                f"<div style='font-size:14px;font-weight:700;padding:6px 0 2px;'>"
-                f"{v.get('name', code)}</div>",
-                unsafe_allow_html=True,
-            )
+    gb.configure_column("현재배수",
+        valueFormatter=_mult_fmt, type="numericColumn",
+        minWidth=72, maxWidth=85,
+        cellStyle={"color": "#888", "display": "flex", "alignItems": "center"})
 
-            # 현재가 + 등락률
-            price  = v.get("price")
-            change = v.get("change")
-            if price:
-                chg_color = "#ef5350" if change and change < 0 else "#26a69a"
-                chg_html  = (f"<span style='font-size:11px;color:{chg_color};'>"
-                             f"{change:+.2f}%</span>") if change is not None else ""
-                cols[2].markdown(
-                    f"<div style='padding:4px 0;'>"
-                    f"<span style='font-size:14px;font-weight:600;'>{price:,.0f}</span>"
-                    f"<br>{chg_html}</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                cols[2].markdown(
-                    "<span style='color:#999;font-size:12px;'>조회중…</span>",
-                    unsafe_allow_html=True,
-                )
+    for col in [f"{CY} 목표가", f"{NY} 목표가"]:
+        gb.configure_column(col,
+            valueFormatter=_tp_fmt, type="numericColumn",
+            minWidth=95, maxWidth=115,
+            cellStyle={"color": "#555", "display": "flex", "alignItems": "center"})
 
-            # 평가방식 selectbox
-            with cols[3]:
-                st.selectbox(" ", METHODS, key=f"wl_m_{code}",
-                             label_visibility="collapsed")
+    for col in [f"{CY} 업사이드", f"{NY} 업사이드"]:
+        gb.configure_column(col,
+            valueFormatter=_upside_fmt, cellStyle=_upside_style,
+            type="numericColumn", minWidth=85, maxWidth=105)
 
-            # 목표배수 number_input
-            with cols[4]:
-                st.number_input(
-                    " ", min_value=0.1, max_value=200.0,
-                    step=0.1 if is_float else 0.5, format="%.1f",
-                    key=f"wl_x_{code}", label_visibility="collapsed",
-                )
+    gb.configure_column(
+        "삭제", cellRenderer=_del_btn,
+        headerName="", width=48, maxWidth=48,
+        suppressMovable=True, editable=False,
+    )
 
-            # 현재배수
-            curr_m = v.get("curr_m")
-            cols[5].markdown(
-                f"<div style='padding:6px 0;font-size:13px;color:#555;'>"
-                f"{'%.1f' % curr_m + 'x' if curr_m is not None else 'N/A'}</div>",
-                unsafe_allow_html=True,
-            )
+    gb.configure_grid_options(
+        rowDragManaged=True,
+        animateRows=True,
+        suppressRowClickSelection=True,
+        rowHeight=42,
+        headerHeight=38,
+        domLayout="autoHeight",
+    )
 
-            # 26E 목표가 + 업사이드 (색상)
-            cols[6].markdown(
-                f"<div style='padding:4px 0;'>"
-                f"{_year_html(v.get('tp_c'), v.get('up_c'))}</div>",
-                unsafe_allow_html=True,
-            )
+    grid_resp = AgGrid(
+        df,
+        gridOptions=gb.build(),
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        allow_unsafe_jscode=True,
+        theme="alpine",
+        fit_columns_on_grid_load=False,
+        key="wl_aggrid",
+    )
 
-            # 27E 목표가 + 업사이드 (색상)
-            cols[7].markdown(
-                f"<div style='padding:4px 0;'>"
-                f"{_year_html(v.get('tp_n'), v.get('up_n'))}</div>",
-                unsafe_allow_html=True,
-            )
+    # ── 변경 감지 & 자동 저장 ─────────────────────────────────────────────────
+    ret: pd.DataFrame = grid_resp.data
+    if ret is None or ret.empty or "_code" not in ret.columns:
+        _render_bottom()
+        return
 
-            # 삭제 버튼
-            with cols[8]:
-                st.write("")
-                if st.button("✕", key=f"wl_del_{code}",
-                             help=f"{v.get('name', code)} 삭제"):
-                    codes_to_del.append(code)
+    # 유효한 code 목록 (삭제된 행은 ret에서 빠짐)
+    current_codes = [
+        c for c in ret["_code"].tolist()
+        if c and not (isinstance(c, float) and pd.isna(c))
+    ]
 
-    # ── 순서 변경 ────────────────────────────────────────────────────────────
-    if swap_action:
-        a, b = swap_action
-        cl = list(codes)
-        cl[a], cl[b] = cl[b], cl[a]
+    # ── 삭제 감지 ────────────────────────────────────────────────────────────
+    deleted = [c for c in codes if c not in current_codes]
+    if deleted:
+        for c in deleted:
+            for k in [f"wl_m_{c}", f"wl_x_{c}", f"_wlc_{c}"]:
+                st.session_state.pop(k, None)
         new_wl = {
             c: {
                 "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
                 "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
             }
-            for c in cl
+            for c in current_codes if c in watchlist
+        }
+        if save_watchlist(new_wl):
+            st.rerun()
+
+    # ── 방식·배수 변경 감지 ───────────────────────────────────────────────────
+    settings_changed = False
+    for _, row in ret.iterrows():
+        c = row.get("_code", "")
+        if not c or c not in watchlist:
+            continue
+        new_m = str(row.get("평가방식") or "POR(영업익)")
+        try:
+            new_x = float(row.get("목표배수") or 12.0)
+        except (TypeError, ValueError):
+            new_x = 12.0
+        if (st.session_state.get(f"wl_m_{c}") != new_m or
+                abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - new_x) > 0.001):
+            st.session_state[f"wl_m_{c}"] = new_m
+            st.session_state[f"wl_x_{c}"] = new_x
+            settings_changed = True
+
+    # ── 순서 변경 감지 ────────────────────────────────────────────────────────
+    order_changed = current_codes != codes
+
+    if settings_changed or order_changed:
+        new_wl = {
+            c: {
+                "method":   st.session_state.get(f"wl_m_{c}", watchlist.get(c, {}).get("method", "POR(영업익)")),
+                "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist.get(c, {}).get("multiple", 12.0))),
+            }
+            for c in current_codes if c in watchlist
         }
         save_watchlist(new_wl)
-        st.rerun()
+        if settings_changed:
+            st.toast("저장됨", icon="✅")
+            st.rerun()   # 업사이드 재계산
+        else:
+            st.toast("순서 저장됨", icon="✅")
 
-    # ── 삭제 ────────────────────────────────────────────────────────────────
-    if codes_to_del:
-        for code in codes_to_del:
-            watchlist.pop(code, None)
-            for k in [f"wl_m_{code}", f"wl_x_{code}", f"_wlc_{code}"]:
-                st.session_state.pop(k, None)
-        save_watchlist(watchlist)
-        st.rerun()
+    _render_bottom(watchlist)
 
-    # ── 방식·배수 변경 시 자동 저장 ──────────────────────────────────────────
-    if not swap_action and not codes_to_del:
-        changed = any(
-            st.session_state.get(f"wl_m_{c}") != watchlist[c].get("method", "POR(영업익)") or
-            abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - float(watchlist[c].get("multiple", 12.0))) > 0.001
-            for c in codes
-        )
-        if changed:
-            new_wl = {
-                c: {
-                    "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
-                    "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
-                }
-                for c in codes
-            }
-            if save_watchlist(new_wl):
-                st.toast("저장됨", icon="✅")
 
-    st.divider()
-
-    # ── 하단 버튼 ─────────────────────────────────────────────────────────────
-    _, b2 = st.columns([8, 1.5])
-    with b2:
+def _render_bottom(watchlist: dict = None):
+    st.write("")
+    _, col_r = st.columns([8, 1.5])
+    with col_r:
         if st.button("🔄 새로고침", use_container_width=True):
             get_live_price.clear()
-            for code in list(watchlist.keys()):
-                st.session_state.pop(f"_wlc_{code}", None)
+            if watchlist:
+                for code in list(watchlist.keys()):
+                    st.session_state.pop(f"_wlc_{code}", None)
             st.rerun()
