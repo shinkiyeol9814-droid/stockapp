@@ -30,7 +30,10 @@ NEXT_YEAR = CUR_YEAR + 1
 # ── GitHub ─────────────────────────────────────────────────────────────────────
 def _gh_hdrs():
     tok = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", "")
-    return {"Authorization": f"token {tok}", "Accept": "application/vnd.github.v3+json"}
+    hdrs = {"Accept": "application/vnd.github.v3+json"}
+    if tok:
+        hdrs["Authorization"] = f"token {tok}"
+    return hdrs
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_watchlist() -> dict:
@@ -45,6 +48,8 @@ def load_watchlist() -> dict:
 
 def save_watchlist(data: dict) -> bool:
     load_watchlist.clear()
+    if not (st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN")):
+        return False
     b64 = base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode()
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{WATCHLIST_FILE}"
     hdrs = _gh_hdrs()
