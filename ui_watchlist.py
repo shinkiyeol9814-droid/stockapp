@@ -422,7 +422,7 @@ def render_watchlist():
     # ── 변경 감지 & 자동 저장 ─────────────────────────────────────────────────
     ret: pd.DataFrame = grid_resp.data
     if ret is None or ret.empty or "_code" not in ret.columns:
-        _render_bottom(watchlist, codes)
+        _render_bottom(watchlist)
         return
 
     current_codes = [
@@ -486,18 +486,15 @@ def render_watchlist():
         else:
             st.toast("순서 저장됨", icon="✅")
 
-    _render_bottom(watchlist, codes)
+    _render_bottom(watchlist)
 
 
-def _render_bottom(watchlist: dict = None, codes: list = None):
+def _render_bottom(watchlist: dict = None):
     st.write("")
     _, col_r = st.columns([8, 1.5])
     with col_r:
         if st.button("🔄 새로고침", use_container_width=True):
             get_live_price.clear()
-            get_watch_financials.clear()
-            get_hybrid_financials.clear()
-            get_ticker_listing.clear()
             if watchlist:
                 for code in list(watchlist.keys()):
                     st.session_state.pop(f"_wlc_{code}", None)
