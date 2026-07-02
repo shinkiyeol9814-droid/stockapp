@@ -34,5 +34,9 @@
   "161890": {
     "method": "POR(영업익)",
     "multiple": 15.0
+  },
+  "192820": {
+    "method": "POR(영업익)",
+    "multiple": 12.0
   }
 }
