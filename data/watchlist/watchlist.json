@@ -60,7 +60,7 @@
     "sector": "태양광"
   },
   "009830": {
-    "method": "POR(영업익)",
+    "method": "PER(순이익)",
     "multiple": 12.0,
     "sector": "태양광"
   },
