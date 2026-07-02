@@ -14,6 +14,11 @@
     "multiple": 30.0,
     "sector": "반도체"
   },
+  "080220": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "반도체"
+  },
   "192820": {
     "method": "POR(영업익)",
     "multiple": 15.0,
@@ -64,15 +69,10 @@
     "multiple": 40.0,
     "sector": "2차전지"
   },
-  "080220": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "반도체"
-  },
   "009830": {
     "method": "POR(영업익)",
     "multiple": 12.0,
-    "sector": "기타"
+    "sector": "태양광"
   },
   "005490": {
     "method": "POR(영업익)",
