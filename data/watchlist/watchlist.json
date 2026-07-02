@@ -84,6 +84,11 @@
     "multiple": 12.0,
     "sector": "로봇"
   },
+  "005380": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "로봇"
+  },
   "108490": {
     "method": "POR(영업익)",
     "multiple": 12.0,
@@ -108,10 +113,5 @@
     "method": "POR(영업익)",
     "multiple": 12.0,
     "sector": "기타"
-  },
-  "005380": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "로봇"
   }
 }
