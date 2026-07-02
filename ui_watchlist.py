@@ -364,117 +364,118 @@ def render_watchlist():
             f"{NY} 업사이드": _py_upside(fin, stocks, method, mult, p, NY_YRS),
             "삭제":            "",
         })
-    df = pd.DataFrame(rows)
-    # float64 dtype 보장 (None → NaN, aggrid numeric 변환 오류 방지)
-    for _c in ["현재배수", f"{CY} 목표가", f"{CY} 업사이드", f"{NY} 목표가", f"{NY} 업사이드"]:
-        df[_c] = pd.to_numeric(df[_c], errors="coerce")
+    # ── 섹터별 그룹화 ─────────────────────────────────────────────────────────
+    sector_groups: dict[str, list[str]] = {}
+    for c in sorted_codes:
+        s = sector_of[c]
+        if s not in sector_groups:
+            sector_groups[s] = []
+        sector_groups[s].append(c)
 
-    # ── AG Grid 설정 ──────────────────────────────────────────────────────────
-    gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_default_column(
-        resizable=True, filterable=False, sortable=False,
-        suppressMovable=True,
-        cellStyle={"fontSize": "13px", "display": "flex", "alignItems": "center"},
-    )
-
-    # 숨김 열
-    gb.configure_column("_code", hide=True)
-
-    # 종목명 (드래그 핸들)
-    gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
-                        cellStyle={"fontWeight": "700", "fontSize": "13px",
-                                   "display": "flex", "alignItems": "center"})
-
-    # 섹터 (편집 가능 · 정렬 가능 · 섹터 경계는 getRowStyle로 구분)
-    gb.configure_column("섹터", editable=True, cellStyle=_edit_style,
-                        sortable=True, minWidth=72, maxWidth=100)
-
-    gb.configure_column("현재가",  valueFormatter=_price_fmt,  type="numericColumn",
-                        minWidth=95, maxWidth=120)
-    gb.configure_column("등락률",  valueFormatter=_change_fmt, cellStyle=_change_style,
-                        type="numericColumn", minWidth=70, maxWidth=82)
-
-    # 편집 가능 열 (파란색)
-    gb.configure_column("평가방식", editable=True,
-                        cellEditor="agSelectCellEditor",
-                        cellEditorParams={"values": METHODS},
-                        cellStyle=_edit_style, minWidth=128, maxWidth=148)
-    gb.configure_column("목표배수", editable=True,
-                        type=["numericColumn"],
-                        valueFormatter=_mult_fmt,
-                        cellEditorParams={"step": 0.5},
-                        cellStyle=_edit_style, minWidth=68, maxWidth=82)
-
-    # 계산 열 (Python에서 사전 계산, rerun 시 갱신)
+    rows_by_code = {r["_code"]: r for r in rows}
+    NUMERIC_COLS = ["현재배수", f"{CY} 목표가", f"{CY} 업사이드", f"{NY} 목표가", f"{NY} 업사이드"]
     _right = {"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}
-    gb.configure_column("현재배수",
-                        valueFormatter=_mult_fmt, type="numericColumn",
-                        minWidth=68, maxWidth=82,
-                        cellStyle={**_right, "color": "#888"})
-    gb.configure_column(f"{CY} 목표가",
-                        valueFormatter=_tp_fmt, type="numericColumn",
-                        minWidth=95, maxWidth=115,
-                        cellStyle={**_right, "color": "#555"})
-    gb.configure_column(f"{CY} 업사이드",
-                        valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
-    gb.configure_column(f"{NY} 목표가",
-                        valueFormatter=_tp_fmt, type="numericColumn",
-                        minWidth=95, maxWidth=115,
-                        cellStyle={**_right, "color": "#555"})
-    gb.configure_column(f"{NY} 업사이드",
-                        valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
 
-    gb.configure_column("삭제", cellRenderer=_del_btn,
-                        headerName="", width=48, maxWidth=48,
-                        suppressMovable=True, editable=False)
+    # ── 섹터별 테이블 렌더링 ──────────────────────────────────────────────────
+    all_grids: list[tuple[str, list[str], object]] = []
 
-    _sector_sep = JsCode("""
-function(params) {
-    if (!params.data || !params.node || params.node.rowIndex === 0) return null;
-    var prev = params.api.getDisplayedRowAtIndex(params.node.rowIndex - 1);
-    if (prev && prev.data && prev.data['섹터'] !== params.data['섹터']) {
-        return {borderTop: '2px solid #1565C0'};
-    }
-    return null;
-}
-""")
-    gb.configure_grid_options(
-        rowDragManaged=True,
-        animateRows=True,
-        suppressRowClickSelection=True,
-        rowHeight=42,
-        headerHeight=38,
-        domLayout="autoHeight",
-        getRowStyle=_sector_sep,
-    )
+    for sector, sc in sector_groups.items():
+        # 섹터 헤더
+        st.markdown(
+            f"<div style='margin:20px 0 4px 0;font-size:14px;font-weight:700;"
+            f"color:#1565C0;border-left:3px solid #1565C0;padding-left:8px;'>"
+            f"{sector}"
+            f"<span style='font-weight:400;color:#aaa;font-size:12px;margin-left:6px;'>{len(sc)}종목</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-    grid_resp = AgGrid(
-        df,
-        gridOptions=gb.build(),
-        update_mode=GridUpdateMode.MODEL_CHANGED,
-        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-        allow_unsafe_jscode=True,
-        reload_data=force_reload,   # 편집 중 False → 그리드가 편집값 보존; 변경 적용 시만 True
-        theme="alpine",
-        fit_columns_on_grid_load=False,
-        key="wl_aggrid",
-    )
+        df_sec = pd.DataFrame([rows_by_code[c] for c in sc if c in rows_by_code])
+        for _c in NUMERIC_COLS:
+            if _c in df_sec.columns:
+                df_sec[_c] = pd.to_numeric(df_sec[_c], errors="coerce")
 
-    # ── 변경 감지 & 자동 저장 ─────────────────────────────────────────────────
-    ret: pd.DataFrame = grid_resp.data
-    if ret is None or ret.empty or "_code" not in ret.columns:
-        _render_bottom(watchlist)
-        return
+        gb = GridOptionsBuilder.from_dataframe(df_sec)
+        gb.configure_default_column(
+            resizable=True, filterable=False, sortable=False,
+            suppressMovable=True,
+            cellStyle={"fontSize": "13px", "display": "flex", "alignItems": "center"},
+        )
+        gb.configure_column("_code", hide=True)
+        gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
+                            cellStyle={"fontWeight": "700", "fontSize": "13px",
+                                       "display": "flex", "alignItems": "center"})
+        gb.configure_column("섹터", editable=True, cellStyle=_edit_style,
+                            minWidth=70, maxWidth=95,
+                            headerTooltip="클릭해서 섹터 변경 → 다음 저장 시 해당 섹터 테이블로 이동")
+        gb.configure_column("현재가",  valueFormatter=_price_fmt, type="numericColumn",
+                            minWidth=95, maxWidth=120)
+        gb.configure_column("등락률",  valueFormatter=_change_fmt, cellStyle=_change_style,
+                            type="numericColumn", minWidth=70, maxWidth=82)
+        gb.configure_column("평가방식", editable=True,
+                            cellEditor="agSelectCellEditor",
+                            cellEditorParams={"values": METHODS},
+                            cellStyle=_edit_style, minWidth=128, maxWidth=148)
+        gb.configure_column("목표배수", editable=True, type=["numericColumn"],
+                            valueFormatter=_mult_fmt,
+                            cellEditorParams={"step": 0.5},
+                            cellStyle=_edit_style, minWidth=68, maxWidth=82)
+        gb.configure_column("현재배수", valueFormatter=_mult_fmt, type="numericColumn",
+                            minWidth=68, maxWidth=82,
+                            cellStyle={**_right, "color": "#888"})
+        gb.configure_column(f"{CY} 목표가", valueFormatter=_tp_fmt, type="numericColumn",
+                            minWidth=95, maxWidth=115, cellStyle={**_right, "color": "#555"})
+        gb.configure_column(f"{CY} 업사이드", valueFormatter=_upside_fmt, cellStyle=_upside_style,
+                            type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
+        gb.configure_column(f"{NY} 목표가", valueFormatter=_tp_fmt, type="numericColumn",
+                            minWidth=95, maxWidth=115, cellStyle={**_right, "color": "#555"})
+        gb.configure_column(f"{NY} 업사이드", valueFormatter=_upside_fmt, cellStyle=_upside_style,
+                            type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
+        gb.configure_column("삭제", cellRenderer=_del_btn,
+                            headerName="", width=48, maxWidth=48,
+                            suppressMovable=True, editable=False)
+        gb.configure_grid_options(
+            rowDragManaged=True,
+            animateRows=True,
+            suppressRowClickSelection=True,
+            rowHeight=42,
+            headerHeight=38,
+            domLayout="autoHeight",
+        )
 
-    current_codes = [
-        c for c in ret["_code"].tolist()
-        if c and not (isinstance(c, float) and pd.isna(c))
-    ]
+        safe_key = "".join(ch if ch.isalnum() else "_" for ch in sector)
+        grid_resp = AgGrid(
+            df_sec,
+            gridOptions=gb.build(),
+            update_mode=GridUpdateMode.MODEL_CHANGED,
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            allow_unsafe_jscode=True,
+            reload_data=force_reload,
+            theme="alpine",
+            fit_columns_on_grid_load=False,
+            key=f"wl_aggrid_{safe_key}",
+        )
+        all_grids.append((sector, sc, grid_resp))
+
+    # ── 변경 감지 & 자동 저장 (전체 그리드 취합) ─────────────────────────────
+    all_current_codes: list[str] = []
+    all_ret_rows: list = []
+
+    for sector, sc, resp in all_grids:
+        ret: pd.DataFrame = resp.data
+        if ret is None or ret.empty or "_code" not in ret.columns:
+            all_current_codes.extend(sc)   # 그리드 미반응 시 원래 코드 유지
+            continue
+        sec_current = [
+            c for c in ret["_code"].tolist()
+            if c and not (isinstance(c, float) and pd.isna(c))
+        ]
+        all_current_codes.extend(sec_current)
+        for _, row in ret.iterrows():
+            all_ret_rows.append(row)
 
     # 삭제 감지
-    deleted = [c for c in codes if c not in current_codes]
+    deleted = [c for c in codes if c not in all_current_codes]
     if deleted:
         for c in deleted:
             for k in [f"wl_m_{c}", f"wl_x_{c}", f"wl_s_{c}", f"_wlc_{c}"]:
@@ -485,16 +486,16 @@ function(params) {
                 "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
                 "sector":   st.session_state.get(f"wl_s_{c}", watchlist[c].get("sector", "기타")),
             }
-            for c in current_codes if c in watchlist
+            for c in all_current_codes if c in watchlist
         }
         save_watchlist(new_wl)
-        st.session_state["_wl_fresh"] = new_wl  # 즉시 반영
+        st.session_state["_wl_fresh"] = new_wl
         st.rerun()
 
     # 방식·배수·섹터 변경 감지
     settings_changed = False
     new_settings: dict[str, tuple] = {}
-    for _, row in ret.iterrows():
+    for row in all_ret_rows:
         c = row.get("_code", "")
         if not c or c not in watchlist:
             continue
@@ -510,8 +511,8 @@ function(params) {
             new_settings[c] = (new_m, new_x, new_s)
             settings_changed = True
 
-    # 순서 변경 감지 (sector 재정렬 또는 드래그)
-    order_changed = current_codes != sorted_codes
+    # 순서 변경 감지
+    order_changed = all_current_codes != sorted_codes
 
     if settings_changed or order_changed:
         new_wl = {
@@ -523,12 +524,11 @@ function(params) {
                 "sector":   new_settings[c][2] if c in new_settings
                             else st.session_state.get(f"wl_s_{c}", watchlist.get(c, {}).get("sector", "기타")),
             }
-            for c in current_codes if c in watchlist
+            for c in all_current_codes if c in watchlist
         }
         save_watchlist(new_wl)
 
         if settings_changed:
-            # 다음 런에서 df를 올바르게 빌드하도록 pending에 저장 후 재런
             st.session_state["_wl_pending"] = new_settings
             st.toast("저장됨", icon="✅")
             st.rerun()
