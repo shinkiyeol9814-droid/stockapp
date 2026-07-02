@@ -1,46 +1,46 @@
 {
-  "005930": {
-    "method": "PER(순이익)",
-    "multiple": 10.0
-  },
-  "010060": {
-    "method": "PER(순이익)",
-    "multiple": 20.0
-  },
-  "006400": {
-    "method": "PER(순이익)",
-    "multiple": 50.0
-  },
-  "329180": {
+  "278470": {
     "method": "PER(순이익)",
     "multiple": 30.0
-  },
-  "000660": {
-    "method": "PER(순이익)",
-    "multiple": 10.0
   },
   "078600": {
     "method": "PER(순이익)",
     "multiple": 50.0
   },
-  "278470": {
-    "method": "PER(순이익)",
-    "multiple": 30.0
-  },
   "011070": {
     "method": "PER(순이익)",
     "multiple": 30.0
+  },
+  "329180": {
+    "method": "PER(순이익)",
+    "multiple": 30.0
+  },
+  "483650": {
+    "method": "POR(영업익)",
+    "multiple": 25.0
+  },
+  "010060": {
+    "method": "PER(순이익)",
+    "multiple": 20.0
+  },
+  "000660": {
+    "method": "PER(순이익)",
+    "multiple": 10.0
   },
   "161890": {
     "method": "POR(영업익)",
     "multiple": 15.0
   },
+  "006400": {
+    "method": "PER(순이익)",
+    "multiple": 50.0
+  },
   "192820": {
     "method": "POR(영업익)",
     "multiple": 15.0
   },
-  "483650": {
-    "method": "POR(영업익)",
-    "multiple": 25.0
+  "005930": {
+    "method": "PER(순이익)",
+    "multiple": 10.0
   }
 }
