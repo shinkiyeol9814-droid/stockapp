@@ -7,10 +7,6 @@
     "method": "POR(영업익)",
     "multiple": 15.0
   },
-  "006400": {
-    "method": "PER(순이익)",
-    "multiple": 30.0
-  },
   "161890": {
     "method": "POR(영업익)",
     "multiple": 15.0
@@ -42,5 +38,9 @@
   "278470": {
     "method": "PER(순이익)",
     "multiple": 30.0
+  },
+  "006400": {
+    "method": "PER(순이익)",
+    "multiple": 40.0
   }
 }
