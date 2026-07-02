@@ -4,6 +4,11 @@
     "multiple": 10.0,
     "sector": "반도체"
   },
+  "000660": {
+    "method": "PER(순이익)",
+    "multiple": 10.0,
+    "sector": "반도체"
+  },
   "192820": {
     "method": "POR(영업익)",
     "multiple": 15.0,
@@ -14,15 +19,10 @@
     "multiple": 15.0,
     "sector": "화장품"
   },
-  "000660": {
-    "method": "PER(순이익)",
-    "multiple": 10.0,
-    "sector": "반도체"
-  },
   "010060": {
     "method": "PER(순이익)",
     "multiple": 20.0,
-    "sector": "기타"
+    "sector": "태양광"
   },
   "483650": {
     "method": "POR(영업익)",
