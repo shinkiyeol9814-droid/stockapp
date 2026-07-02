@@ -19,20 +19,20 @@
     "multiple": 15.0,
     "sector": "화장품"
   },
-  "010060": {
-    "method": "PER(순이익)",
-    "multiple": 20.0,
-    "sector": "태양광"
-  },
   "483650": {
     "method": "POR(영업익)",
     "multiple": 25.0,
     "sector": "화장품"
   },
+  "010060": {
+    "method": "PER(순이익)",
+    "multiple": 20.0,
+    "sector": "태양광"
+  },
   "329180": {
     "method": "PER(순이익)",
     "multiple": 30.0,
-    "sector": "기타"
+    "sector": "조선"
   },
   "006400": {
     "method": "PER(순이익)",
