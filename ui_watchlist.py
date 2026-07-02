@@ -395,14 +395,14 @@ def render_watchlist():
                         cellStyle={**_right, "color": "#555"})
     gb.configure_column(f"{CY} 업사이드",
                         valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        type="numericColumn", minWidth=85, maxWidth=105)
+                        type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
     gb.configure_column(f"{NY} 목표가",
                         valueFormatter=_tp_fmt, type="numericColumn",
                         minWidth=95, maxWidth=115,
                         cellStyle={**_right, "color": "#555"})
     gb.configure_column(f"{NY} 업사이드",
                         valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                        type="numericColumn", minWidth=85, maxWidth=105)
+                        type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
 
     gb.configure_column("삭제", cellRenderer=_del_btn,
                         headerName="", width=48, maxWidth=48,
