@@ -35,7 +35,7 @@
     "sector": "화장품"
   },
   "278470": {
-    "method": "PER(순이익)",
+    "method": "POR(영업익)",
     "multiple": 30.0,
     "sector": "화장품"
   },
