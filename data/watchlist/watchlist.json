@@ -4,16 +4,6 @@
     "multiple": 10.0,
     "sector": "반도체"
   },
-  "000660": {
-    "method": "PER(순이익)",
-    "multiple": 10.0,
-    "sector": "반도체"
-  },
-  "011070": {
-    "method": "PER(순이익)",
-    "multiple": 30.0,
-    "sector": "반도체"
-  },
   "192820": {
     "method": "POR(영업익)",
     "multiple": 15.0,
@@ -24,30 +14,35 @@
     "multiple": 15.0,
     "sector": "화장품"
   },
-  "483650": {
-    "method": "POR(영업익)",
-    "multiple": 25.0,
-    "sector": "화장품"
-  },
-  "278470": {
-    "method": "PER(순이익)",
-    "multiple": 30.0,
-    "sector": "화장품"
-  },
-  "123330": {
-    "method": "POR(영업익)",
-    "multiple": 15.0,
-    "sector": "화장품"
-  },
   "329180": {
     "method": "PER(순이익)",
     "multiple": 30.0,
     "sector": "조선"
   },
+  "000660": {
+    "method": "PER(순이익)",
+    "multiple": 10.0,
+    "sector": "반도체"
+  },
   "010060": {
     "method": "PER(순이익)",
     "multiple": 20.0,
     "sector": "태양광"
+  },
+  "483650": {
+    "method": "POR(영업익)",
+    "multiple": 25.0,
+    "sector": "화장품"
+  },
+  "011070": {
+    "method": "PER(순이익)",
+    "multiple": 30.0,
+    "sector": "반도체"
+  },
+  "278470": {
+    "method": "PER(순이익)",
+    "multiple": 30.0,
+    "sector": "화장품"
   },
   "078600": {
     "method": "PER(순이익)",
