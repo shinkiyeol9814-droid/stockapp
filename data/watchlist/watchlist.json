@@ -9,6 +9,11 @@
     "multiple": 10.0,
     "sector": "반도체"
   },
+  "011070": {
+    "method": "PER(순이익)",
+    "multiple": 30.0,
+    "sector": "반도체"
+  },
   "192820": {
     "method": "POR(영업익)",
     "multiple": 15.0,
@@ -39,15 +44,10 @@
     "multiple": 40.0,
     "sector": "2차전지"
   },
-  "011070": {
-    "method": "PER(순이익)",
-    "multiple": 30.0,
-    "sector": "반도체"
-  },
   "078600": {
     "method": "PER(순이익)",
     "multiple": 40.0,
-    "sector": "기타"
+    "sector": "2차전지"
   },
   "278470": {
     "method": "PER(순이익)",
