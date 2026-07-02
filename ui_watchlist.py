@@ -245,16 +245,19 @@ def render_watchlist():
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>📋 밸류 워치리스트</div>",
         unsafe_allow_html=True,
     )
-    st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 업사이드 즉시 반영 · 자동 저장")
+    st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 업사이드 즉시 반영 · 자동 저장 · 주가 자동갱신 3분 / 🔄 버튼으로 즉시 갱신")
 
     # ── 직전 편집값 선적용 + watchlist 즉시 반영 (GitHub 캐시 지연 우회) ────
     pending  = st.session_state.pop("_wl_pending", {})
     wl_fresh = st.session_state.pop("_wl_fresh", None)
     # pending이 있거나 fresh watchlist가 있을 때만 그리드 데이터 강제 갱신
     force_reload = bool(pending) or (wl_fresh is not None)
-    for code, (m, x) in pending.items():
+    for code, info in pending.items():
+        m, x = info[0], info[1]
         st.session_state[f"wl_m_{code}"] = m
         st.session_state[f"wl_x_{code}"] = x
+        if len(info) > 2:
+            st.session_state[f"wl_s_{code}"] = info[2]
 
     watchlist = wl_fresh or load_watchlist()
 
@@ -272,7 +275,7 @@ def render_watchlist():
         with c2:
             chosen = st.selectbox("종목 선택", [""] + opts, key="wl_pick")
         with c3:
-            st.write(""); st.write("")
+            st.write("")
             if st.button("추가", type="primary", use_container_width=True, key="wl_add") and chosen:
                 code = chosen.split("(")[-1].rstrip(")")
                 if code not in watchlist:
@@ -280,10 +283,11 @@ def render_watchlist():
                         c: {
                             "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "POR(영업익)")),
                             "multiple": float(st.session_state.get(f"wl_x_{c}", cfg.get("multiple", 12.0))),
+                            "sector":   st.session_state.get(f"wl_s_{c}", cfg.get("sector", "기타")),
                         }
                         for c, cfg in watchlist.items()
                     }
-                    updated[code] = {"method": "POR(영업익)", "multiple": 12.0}
+                    updated[code] = {"method": "POR(영업익)", "multiple": 12.0, "sector": "기타"}
                     if save_watchlist(updated):
                         st.session_state["_wl_fresh"] = updated  # 즉시 반영
                         st.session_state.pop(f"_wlc_{code}", None)
@@ -305,6 +309,8 @@ def render_watchlist():
             st.session_state[f"wl_m_{code}"] = cfg.get("method", "POR(영업익)")
         if f"wl_x_{code}" not in st.session_state:
             st.session_state[f"wl_x_{code}"] = float(cfg.get("multiple", 12.0))
+        if f"wl_s_{code}" not in st.session_state:
+            st.session_state[f"wl_s_{code}"] = cfg.get("sector", "기타")
 
     # ── 병렬 데이터 로딩 ─────────────────────────────────────────────────────
     uncached = [c for c in codes if f"_wlc_{c}" not in st.session_state]
@@ -325,16 +331,28 @@ def render_watchlist():
     CY, NY = f"{CUR_YEAR}E", f"{NEXT_YEAR}E"
     CY_YRS = [CUR_YEAR, CUR_YEAR - 1]    # 2026 → 2025 폴백
     NY_YRS = [NEXT_YEAR, CUR_YEAR]       # 2027 → 2026 폴백
+
+    # 섹터 순서를 유지하며 정렬 (같은 섹터 내에서는 watchlist 원래 순서 보존)
+    sector_of = {c: st.session_state.get(f"wl_s_{c}", "기타") for c in codes}
+    seen_sectors: list[str] = []
+    for c in codes:
+        s = sector_of[c]
+        if s not in seen_sectors:
+            seen_sectors.append(s)
+    sorted_codes = sorted(codes, key=lambda c: (seen_sectors.index(sector_of[c]), codes.index(c)))
+
     rows = []
-    for code in codes:
+    for code in sorted_codes:
         fin, stocks     = get_watch_financials(code)
         price, chg, nm  = get_live_price(code)
         method = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
         mult   = float(st.session_state.get(f"wl_x_{code}", 12.0))
+        sector = sector_of[code]
         p = float(price) if price else None
         rows.append({
             "_code":    code,
             "종목명":   nm or code,
+            "섹터":     sector,
             "현재가":   p,
             "등락률":   float(chg) if chg is not None else None,
             "평가방식": method,
@@ -366,6 +384,10 @@ def render_watchlist():
     gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
                         cellStyle={"fontWeight": "700", "fontSize": "13px",
                                    "display": "flex", "alignItems": "center"})
+
+    # 섹터 (편집 가능 · 정렬 가능 · 섹터 경계는 getRowStyle로 구분)
+    gb.configure_column("섹터", editable=True, cellStyle=_edit_style,
+                        sortable=True, minWidth=72, maxWidth=100)
 
     gb.configure_column("현재가",  valueFormatter=_price_fmt,  type="numericColumn",
                         minWidth=95, maxWidth=120)
@@ -408,6 +430,16 @@ def render_watchlist():
                         headerName="", width=48, maxWidth=48,
                         suppressMovable=True, editable=False)
 
+    _sector_sep = JsCode("""
+function(params) {
+    if (!params.data || !params.node || params.node.rowIndex === 0) return null;
+    var prev = params.api.getDisplayedRowAtIndex(params.node.rowIndex - 1);
+    if (prev && prev.data && prev.data['섹터'] !== params.data['섹터']) {
+        return {borderTop: '2px solid #1565C0'};
+    }
+    return null;
+}
+""")
     gb.configure_grid_options(
         rowDragManaged=True,
         animateRows=True,
@@ -415,6 +447,7 @@ def render_watchlist():
         rowHeight=42,
         headerHeight=38,
         domLayout="autoHeight",
+        getRowStyle=_sector_sep,
     )
 
     grid_resp = AgGrid(
@@ -444,12 +477,13 @@ def render_watchlist():
     deleted = [c for c in codes if c not in current_codes]
     if deleted:
         for c in deleted:
-            for k in [f"wl_m_{c}", f"wl_x_{c}", f"_wlc_{c}"]:
+            for k in [f"wl_m_{c}", f"wl_x_{c}", f"wl_s_{c}", f"_wlc_{c}"]:
                 st.session_state.pop(k, None)
         new_wl = {
             c: {
                 "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
                 "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
+                "sector":   st.session_state.get(f"wl_s_{c}", watchlist[c].get("sector", "기타")),
             }
             for c in current_codes if c in watchlist
         }
@@ -457,7 +491,7 @@ def render_watchlist():
         st.session_state["_wl_fresh"] = new_wl  # 즉시 반영
         st.rerun()
 
-    # 방식·배수 변경 감지
+    # 방식·배수·섹터 변경 감지
     settings_changed = False
     new_settings: dict[str, tuple] = {}
     for _, row in ret.iterrows():
@@ -469,13 +503,15 @@ def render_watchlist():
             new_x = float(row.get("목표배수") or 12.0)
         except (TypeError, ValueError):
             new_x = 12.0
+        new_s = str(row.get("섹터") or "기타")
         if (st.session_state.get(f"wl_m_{c}") != new_m or
-                abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - new_x) > 0.001):
-            new_settings[c] = (new_m, new_x)
+                abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - new_x) > 0.001 or
+                st.session_state.get(f"wl_s_{c}", "기타") != new_s):
+            new_settings[c] = (new_m, new_x, new_s)
             settings_changed = True
 
-    # 순서 변경 감지
-    order_changed = current_codes != codes
+    # 순서 변경 감지 (sector 재정렬 또는 드래그)
+    order_changed = current_codes != sorted_codes
 
     if settings_changed or order_changed:
         new_wl = {
@@ -484,6 +520,8 @@ def render_watchlist():
                             else st.session_state.get(f"wl_m_{c}", watchlist.get(c, {}).get("method", "POR(영업익)")),
                 "multiple": new_settings[c][1] if c in new_settings
                             else float(st.session_state.get(f"wl_x_{c}", watchlist.get(c, {}).get("multiple", 12.0))),
+                "sector":   new_settings[c][2] if c in new_settings
+                            else st.session_state.get(f"wl_s_{c}", watchlist.get(c, {}).get("sector", "기타")),
             }
             for c in current_codes if c in watchlist
         }
@@ -506,7 +544,14 @@ def _render_bottom(watchlist: dict = None):
     with col_r:
         if st.button("🔄 새로고침", use_container_width=True):
             get_live_price.clear()
+            # 가격만 병렬 갱신 (재무데이터 캐시는 유지)
             if watchlist:
-                for code in list(watchlist.keys()):
-                    st.session_state.pop(f"_wlc_{code}", None)
+                codes_to_refresh = list(watchlist.keys())
+                def _rp(c):
+                    get_live_price(c)
+                    return c
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(5, len(codes_to_refresh))
+                ) as exc:
+                    list(exc.map(_rp, codes_to_refresh))
             st.rerun()
