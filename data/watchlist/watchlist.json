@@ -1,46 +1,57 @@
 {
   "005930": {
     "method": "PER(순이익)",
-    "multiple": 10.0
+    "multiple": 10.0,
+    "sector": "반도체"
   },
   "192820": {
     "method": "POR(영업익)",
-    "multiple": 15.0
+    "multiple": 15.0,
+    "sector": "기타"
   },
   "161890": {
     "method": "POR(영업익)",
-    "multiple": 15.0
+    "multiple": 15.0,
+    "sector": "기타"
   },
   "000660": {
     "method": "PER(순이익)",
-    "multiple": 10.0
+    "multiple": 10.0,
+    "sector": "기타"
   },
   "010060": {
     "method": "PER(순이익)",
-    "multiple": 20.0
+    "multiple": 20.0,
+    "sector": "기타"
   },
   "483650": {
     "method": "POR(영업익)",
-    "multiple": 25.0
+    "multiple": 25.0,
+    "sector": "기타"
   },
   "329180": {
     "method": "PER(순이익)",
-    "multiple": 30.0
+    "multiple": 30.0,
+    "sector": "기타"
   },
   "006400": {
     "method": "PER(순이익)",
-    "multiple": 40.0
+    "multiple": 40.0,
+    "sector": "기타"
   },
   "011070": {
     "method": "PER(순이익)",
-    "multiple": 30.0
+    "multiple": 30.0,
+    "sector": "기타"
   },
   "078600": {
     "method": "PER(순이익)",
-    "multiple": 40.0
+    "multiple": 40.0,
+    "sector": "기타"
   },
   "278470": {
     "method": "PER(순이익)",
-    "multiple": 30.0
+    "multiple": 30.0,
+    "sector": "기타"
   }
 }
