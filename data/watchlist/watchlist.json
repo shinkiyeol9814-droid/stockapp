@@ -53,5 +53,10 @@
     "method": "PER(순이익)",
     "multiple": 40.0,
     "sector": "2차전지"
+  },
+  "123330": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "기타"
   }
 }
