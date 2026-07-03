@@ -69,14 +69,14 @@
     "multiple": 40.0,
     "sector": "2차전지"
   },
-  "006400": {
-    "method": "PER(순이익)",
-    "multiple": 40.0,
-    "sector": "2차전지"
-  },
   "005490": {
     "method": "PER(순이익)",
     "multiple": 15.0,
+    "sector": "2차전지"
+  },
+  "006400": {
+    "method": "PER(순이익)",
+    "multiple": 40.0,
     "sector": "2차전지"
   },
   "012330": {
