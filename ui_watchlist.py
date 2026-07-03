@@ -264,7 +264,7 @@ def render_watchlist():
     # ── 종목 추가 ─────────────────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=len(watchlist) == 0):
         listing = get_ticker_listing()
-        c1, c2, c3 = st.columns([3, 2, 1])
+        c1, c2, c3, c4 = st.columns([3, 2.2, 1.4, 0.9])
         with c1:
             q = st.text_input("종목명", key="wl_q", placeholder="삼성전자, SK하이닉스...")
         filtered = (
@@ -275,27 +275,47 @@ def render_watchlist():
         with c2:
             chosen = st.selectbox("종목 선택", [""] + opts, key="wl_pick")
         with c3:
+            # 기존 섹터 목록 수집 (기타를 맨 앞으로)
+            _existing = sorted({cfg.get("sector", "기타") for cfg in watchlist.values()}) if watchlist else []
+            if "기타" in _existing:
+                _existing = ["기타"] + [s for s in _existing if s != "기타"]
+            elif not _existing:
+                _existing = ["기타"]
+            sector_pick = st.selectbox("섹터", _existing + ["✏️ 직접 입력..."], key="wl_sector_pick")
+        with c4:
             st.write("")
-            if st.button("추가", type="primary", use_container_width=True, key="wl_add") and chosen:
-                code = chosen.split("(")[-1].rstrip(")")
-                if code not in watchlist:
-                    updated = {
-                        c: {
-                            "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "POR(영업익)")),
-                            "multiple": float(st.session_state.get(f"wl_x_{c}", cfg.get("multiple", 12.0))),
-                            "sector":   st.session_state.get(f"wl_s_{c}", cfg.get("sector", "기타")),
-                        }
-                        for c, cfg in watchlist.items()
+            add_clicked = st.button("추가", type="primary", use_container_width=True, key="wl_add")
+
+        # 직접 입력 모드
+        if sector_pick == "✏️ 직접 입력...":
+            _ci, _ = st.columns([2, 5])
+            with _ci:
+                _custom = st.text_input("새 섹터명", key="wl_sector_custom",
+                                        placeholder="반도체, 화학, 조선...")
+            new_sector = _custom.strip() or "기타"
+        else:
+            new_sector = sector_pick
+
+        if add_clicked and chosen:
+            code = chosen.split("(")[-1].rstrip(")")
+            if code not in watchlist:
+                updated = {
+                    c: {
+                        "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "POR(영업익)")),
+                        "multiple": float(st.session_state.get(f"wl_x_{c}", cfg.get("multiple", 12.0))),
+                        "sector":   st.session_state.get(f"wl_s_{c}", cfg.get("sector", "기타")),
                     }
-                    updated[code] = {"method": "POR(영업익)", "multiple": 12.0, "sector": "기타"}
-                    if save_watchlist(updated):
-                        st.session_state["_wl_fresh"] = updated  # 즉시 반영
-                        st.session_state.pop(f"_wlc_{code}", None)
-                        st.rerun()
-                    else:
-                        st.error("저장 실패 (GH_PAT 확인)")
+                    for c, cfg in watchlist.items()
+                }
+                updated[code] = {"method": "POR(영업익)", "multiple": 12.0, "sector": new_sector}
+                if save_watchlist(updated):
+                    st.session_state["_wl_fresh"] = updated  # 즉시 반영
+                    st.session_state.pop(f"_wlc_{code}", None)
+                    st.rerun()
                 else:
-                    st.warning("이미 추가된 종목입니다.")
+                    st.error("저장 실패 (GH_PAT 확인)")
+            else:
+                st.warning("이미 추가된 종목입니다.")
 
     if not watchlist:
         st.info("종목을 추가해주세요.")
