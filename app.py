@@ -58,6 +58,7 @@ from ui_report import render_report_summary
 from ui_earnings import render_earnings_menu
 from ui_telegram import render_telegram_viewer
 from ui_watchlist import render_watchlist
+from ui_macro import render_macro
 from streamlit_option_menu import option_menu
 
 # 세션 상태 초기화 (전역)
@@ -80,8 +81,8 @@ if query_stock_code:
 # ==========================================
 menu = option_menu(
     menu_title=None,
-    options=["가치평가", "신고가", "레포트", "실적", "텔레그램", "워치리스트"],
-    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "chat-dots", "list-check"],
+    options=["가치평가", "신고가", "레포트", "실적", "텔레그램", "워치리스트", "매크로"],
+    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "chat-dots", "list-check", "globe"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -142,3 +143,6 @@ elif menu == "텔레그램":
 
 elif menu == "워치리스트":
     render_watchlist()
+
+elif menu == "매크로":
+    render_macro()
