@@ -111,7 +111,7 @@
   },
   "006260": {
     "method": "PER(순이익)",
-    "multiple": 20.0,
+    "multiple": 15.0,
     "sector": "전력"
   }
 }
