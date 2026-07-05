@@ -5,11 +5,9 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
-# (표시명, yfinance ticker, 단위, format_spec)
 MARKET_ITEMS = [
     ("원/달러 환율",  "USDKRW=X", "₩",    ",.0f"),
     ("미국채 10년",   "^TNX",      "%",    ".2f"),
@@ -21,7 +19,6 @@ MARKET_ITEMS = [
     ("SOX(반도체)",   "^SOX",      "pt",   ",.0f"),
 ]
 
-# HS코드 기준 수출 품목
 TRADE_CATS = {
     "반도체":   ["8542"],
     "자동차":   ["8703"],
@@ -31,7 +28,6 @@ TRADE_CATS = {
     "화장품":   ["3304", "3305", "3306"],
 }
 
-# 실데이터 없을 때 표시할 예시 (2024년 연간 평균 월별 수출 추정치, 백만$)
 _DEMO_EXPORT = {
     "반도체":  10_200,
     "자동차":   6_100,
@@ -43,25 +39,22 @@ _DEMO_EXPORT = {
 
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
-def _get_price_history(ticker: str, period: str = "3mo") -> pd.DataFrame | None:
-    """yfinance 가격 이력 (5분 캐시)"""
+def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
     try:
         import yfinance as yf
         hist = yf.Ticker(ticker).history(period=period)
         if hist.empty:
             return None
-        return hist[["Close"]].rename(columns={"Close": "price"})
+        df = hist[["Close"]].rename(columns={"Close": "price"})
+        if df.index.tz is not None:
+            df.index = df.index.tz_convert(None)
+        return df
     except Exception:
         return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_trade_data(year: int, month: int) -> tuple[dict, bool]:
-    """
-    관세청 공공데이터포털 API 수출 실적 조회.
-    Returns (data_dict {품목: 백만달러}, is_real)
-    DATA_GO_KR_KEY 가 secrets에 없으면 예시 데이터 반환.
-    """
     api_key = st.secrets.get("DATA_GO_KR_KEY", "")
     if not api_key:
         return _DEMO_EXPORT, False
@@ -96,11 +89,92 @@ def _get_trade_data(year: int, month: int) -> tuple[dict, bool]:
                         total += float(str(v).replace(",", "") or 0)
             except Exception:
                 pass
-        results[cat] = total / 1_000_000  # 달러 → 백만달러
+        results[cat] = total / 1_000_000
 
     if all(v == 0 for v in results.values()):
         return _DEMO_EXPORT, False
     return results, True
+
+
+# ── 스파크라인 헬퍼 ─────────────────────────────────────────────────────────
+def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str) -> go.Figure:
+    prices = hist["price"]
+    last  = float(prices.iloc[-1])
+    first = float(prices.iloc[0])
+    is_up = last >= first
+    color  = "#ef5350" if is_up else "#1565C0"
+    fill_c = "rgba(239,83,80,0.12)" if is_up else "rgba(21,101,192,0.12)"
+
+    min_val = float(prices.min())
+    max_val = float(prices.max())
+    rng = (max_val - min_val) or abs(max_val) * 0.02 or 1.0
+    base_y = min_val - rng * 0.1
+    top_y  = max_val + rng * 0.1
+
+    # 월 경계 세로선
+    shapes: list = []
+    seen_ym: set = set()
+    for dt in pd.DatetimeIndex(hist.index):
+        ym = (dt.year, dt.month)
+        if ym not in seen_ym:
+            seen_ym.add(ym)
+            if len(seen_ym) > 1:
+                shapes.append(dict(
+                    type="line", xref="x", yref="paper",
+                    x0=dt, x1=dt, y0=0, y1=1,
+                    line=dict(color="rgba(150,150,150,0.22)", width=1, dash="dot"),
+                ))
+
+    # 기간별 x축 월 눈금 간격
+    dtick = {"1mo": "W1", "3mo": "M1", "6mo": "M1", "1y": "M2"}.get(period, "M1")
+    tfmt  = "%d일" if period == "1mo" else "%m월"
+
+    fig = go.Figure()
+    # 동적 Y 범위 — 0 고정 대신 데이터 범위에 맞는 베이스라인으로 tonexty 채움
+    fig.add_trace(go.Scatter(
+        x=hist.index, y=[base_y] * len(hist),
+        mode="lines", line=dict(width=0),
+        showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scatter(
+        x=hist.index, y=prices,
+        mode="lines",
+        line=dict(color=color, width=1.5),
+        fill="tonexty", fillcolor=fill_c,
+        showlegend=False,
+        hovertemplate=f"%{{x|%m/%d}}<br>%{{y:{fmt}}} {unit}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[hist.index[-1]], y=[last],
+        mode="markers", marker=dict(color=color, size=4),
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    fig.update_layout(
+        height=90,
+        margin=dict(l=0, r=2, t=2, b=18),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False,       # 드래그 비활성
+        shapes=shapes,
+        hovermode="x",
+        xaxis=dict(
+            showticklabels=True,
+            tickformat=tfmt,
+            dtick=dtick,
+            tickfont=dict(size=7, color="#aaa"),
+            ticklen=0,
+            showgrid=False,
+            zeroline=False,
+        ),
+        yaxis=dict(
+            range=[base_y, top_y],   # 동적 Y 범위
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+        ),
+    )
+    return fig
 
 
 # ── 렌더링 ────────────────────────────────────────────────────────────────────
@@ -118,99 +192,59 @@ def render_macro():
     # ══════════════════════════════════════════════════════════════════════════
     with tab_mkt:
         period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo", "1년": "1y"}
-        sel_p = st.radio("기간", list(period_map.keys()), index=1,
+        sel_p = st.radio("기간", list(period_map.keys()), index=3,   # 1년 기본
                           horizontal=True, key="macro_period")
         period = period_map[sel_p]
 
-        # 전체 history 일괄 fetch
         with st.spinner("시장 데이터 로딩 중..."):
             hists = {name: _get_price_history(ticker, period)
                      for name, ticker, *_ in MARKET_ITEMS}
 
-        # ── Metric grid (4열 × 2행) — 한국 색상 규칙: +상승=빨강, -하락=파랑 ──
-        cols = st.columns(4)
-        for i, (name, ticker, unit, fmt) in enumerate(MARKET_ITEMS):
-            hist = hists[name]
-            with cols[i % 4]:
-                if hist is None or hist.empty:
+        # ── 4열 × 2행 카드: 수치 바로 아래에 스파크라인 ─────────────────────
+        for row_start in (0, 4):
+            cols = st.columns(4)
+            for ci, (name, ticker, unit, fmt) in enumerate(MARKET_ITEMS[row_start:row_start + 4]):
+                hist = hists[name]
+                with cols[ci]:
+                    if hist is None or hist.empty:
+                        st.markdown(
+                            f"<div style='padding:4px 0 8px;'>"
+                            f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                            f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        continue
+
+                    last  = float(hist["price"].iloc[-1])
+                    prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
+                    chg_p = (last / prev - 1) * 100 if prev else 0
+                    try:
+                        val_str = f"{last:{fmt}} {unit}"
+                    except Exception:
+                        val_str = f"{last:.2f} {unit}"
+                    clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
+                    arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
+
                     st.markdown(
-                        f"<div style='padding:4px 0;'>"
-                        f"<div style='font-size:11px;color:#888;'>{name}</div>"
-                        f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>"
+                        f"<div style='padding:4px 0 2px;'>"
+                        f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>{name}</div>"
+                        f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{val_str}</div>"
+                        f"<div style='font-size:12px;color:{clr};margin-top:2px;'>"
+                        f"{arrow} {chg_p:+.2f}% 전일</div>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
-                    continue
-                last  = float(hist["price"].iloc[-1])
-                prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
-                chg_p = (last / prev - 1) * 100 if prev else 0
-                try:
-                    val_str = f"{last:{fmt}} {unit}"
-                except Exception:
-                    val_str = f"{last:.2f} {unit}"
-                clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
-                arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
-                st.markdown(
-                    f"<div style='padding:4px 0;'>"
-                    f"<div style='font-size:11px;color:#888;margin-bottom:2px;'>{name}</div>"
-                    f"<div style='font-size:18px;font-weight:700;line-height:1.3;'>{val_str}</div>"
-                    f"<div style='font-size:12px;color:{clr};margin-top:3px;'>"
-                    f"{arrow} {chg_p:+.2f}% 전일</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
+                    st.plotly_chart(
+                        _make_sparkline(hist, unit, fmt, period),
+                        use_container_width=True,
+                        config={
+                            "displayModeBar": False,
+                            "scrollZoom": True,   # 휠 확대 허용
+                            "staticPlot": False,
+                        },
+                    )
 
-        st.write("")
-
-        # ── Sparkline 서브플롯 (2×4) ────────────────────────────────────────
-        fig = make_subplots(
-            rows=2, cols=4,
-            subplot_titles=[m[0] for m in MARKET_ITEMS],
-            vertical_spacing=0.22,
-            horizontal_spacing=0.07,
-        )
-        for i, (name, ticker, unit, fmt) in enumerate(MARKET_ITEMS):
-            row, col = i // 4 + 1, i % 4 + 1
-            hist = hists[name]
-            if hist is None or hist.empty:
-                continue
-            first = float(hist["price"].iloc[0])
-            last  = float(hist["price"].iloc[-1])
-            is_up = last >= first
-            color = "#ef5350" if is_up else "#1565C0"
-            fill  = "rgba(239,83,80,0.10)" if is_up else "rgba(21,101,192,0.10)"
-
-            fig.add_trace(go.Scatter(
-                x=hist.index, y=hist["price"],
-                mode="lines",
-                line=dict(color=color, width=1.5),
-                fill="tozeroy", fillcolor=fill,
-                showlegend=False,
-                hovertemplate=f"%{{x|%m/%d}}<br>%{{y:{fmt}}} {unit}<extra>{name}</extra>",
-            ), row=row, col=col)
-            # 마지막 포인트 마커
-            fig.add_trace(go.Scatter(
-                x=[hist.index[-1]], y=[last],
-                mode="markers",
-                marker=dict(color=color, size=5),
-                showlegend=False, hoverinfo="skip",
-            ), row=row, col=col)
-
-        fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
-        fig.update_yaxes(showgrid=False, tickfont=dict(size=9), zeroline=False)
-        for ann in fig.layout.annotations:
-            ann.font.size = 11
-        fig.update_layout(
-            height=420,
-            margin=dict(l=0, r=10, t=45, b=5),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig, use_container_width=True,
-                        config={"displayModeBar": False, "staticPlot": False,
-                                "scrollZoom": False})
-
-        # 새로고침
         _, cr = st.columns([9, 1.5])
         with cr:
             if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
@@ -244,7 +278,6 @@ def render_macro():
             else:
                 st.info("📌 예시 데이터 · `DATA_GO_KR_KEY` 설정 시 실데이터로 전환")
 
-        # ── 차트 ────────────────────────────────────────────────────────────
         df = (
             pd.DataFrame([{"품목": k, "수출금액 (백만$)": v}
                            for k, v in trade_data.items()])
@@ -277,15 +310,13 @@ def render_macro():
         )
         st.plotly_chart(fig_t, use_container_width=True,
                         config={"scrollZoom": True, "displayModeBar": "hover",
-                                "modeBarButtonsToRemove": ["select2d","lasso2d","zoom2d"]})
+                                "modeBarButtonsToRemove": ["select2d", "lasso2d", "zoom2d"]})
 
-        # ── 테이블 ──────────────────────────────────────────────────────────
         df_show = df.copy()
         df_show.index = df_show.index + 1
         df_show["수출금액 (백만$)"] = df_show["수출금액 (백만$)"].map(lambda x: f"${x:,.0f}M")
         st.dataframe(df_show, use_container_width=True)
 
-        # ── 안내 ────────────────────────────────────────────────────────────
         with st.expander("📋 데이터 출처 & 15일 단위 수출 현황 안내"):
             col_a, col_b = st.columns(2)
             with col_a:
