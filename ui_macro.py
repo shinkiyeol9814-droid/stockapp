@@ -127,13 +127,19 @@ def render_macro():
             hists = {name: _get_price_history(ticker, period)
                      for name, ticker, *_ in MARKET_ITEMS}
 
-        # ── Metric grid (4열 × 2행) ─────────────────────────────────────────
+        # ── Metric grid (4열 × 2행) — 한국 색상 규칙: +상승=빨강, -하락=파랑 ──
         cols = st.columns(4)
         for i, (name, ticker, unit, fmt) in enumerate(MARKET_ITEMS):
             hist = hists[name]
             with cols[i % 4]:
                 if hist is None or hist.empty:
-                    st.metric(name, "N/A")
+                    st.markdown(
+                        f"<div style='padding:4px 0;'>"
+                        f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                        f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
                     continue
                 last  = float(hist["price"].iloc[-1])
                 prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
@@ -142,7 +148,17 @@ def render_macro():
                     val_str = f"{last:{fmt}} {unit}"
                 except Exception:
                     val_str = f"{last:.2f} {unit}"
-                st.metric(name, val_str, f"{chg_p:+.2f}% (전일)")
+                clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
+                arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
+                st.markdown(
+                    f"<div style='padding:4px 0;'>"
+                    f"<div style='font-size:11px;color:#888;margin-bottom:2px;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;line-height:1.3;'>{val_str}</div>"
+                    f"<div style='font-size:12px;color:{clr};margin-top:3px;'>"
+                    f"{arrow} {chg_p:+.2f}% 전일</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
         st.write("")
 
