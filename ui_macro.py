@@ -6,6 +6,7 @@ import requests
 import pandas as pd
 import plotly.graph_objects as go
 import concurrent.futures
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ TRADE_CATS = {
     "화장품":   ["3304", "3305", "3306"],
 }
 
-_API_BASE = "https://apis.data.go.kr/1220000/mtitm3/getExptRtm"
+_API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 
 
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
@@ -49,32 +50,35 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
 
 
 
-def _api_call(api_key: str, hs_codes: list, year: int, month: int, search_dt: str | None = None) -> float:
-    """관세청 API 호출. search_dt='YYYYMMDD' 이면 해당일까지 누계, None 이면 월 전체."""
+def _api_call(api_key: str, hs_codes: list, year: int, month: int) -> float:
+    """
+    관세청_품목별 수출입실적(GW) 호출.
+    strtYymm/endYymm = YYYYMM, hsCd = HS 코드 앞 4자리.
+    응답은 XML 전용. 수출금액 필드: expDlr (달러).
+    여러 HS코드 합산 반환 (백만$).
+    """
+    yymm = f"{year}{month:02d}"
     total = 0.0
     for hs in hs_codes:
-        params = {
-            "serviceKey": api_key,
-            "year": str(year),
-            "month": f"{month:02d}",
-            "smitm": hs,
-            "numOfRows": 100,
-            "pageNo": 1,
-            "_type": "json",
-        }
-        if search_dt:
-            params["searchDt"] = search_dt
         try:
-            r = requests.get(_API_BASE, params=params, timeout=10)
+            r = requests.get(
+                _API_BASE,
+                params={
+                    "serviceKey": api_key,
+                    "strtYymm": yymm,
+                    "endYymm": yymm,
+                    "hsCd": hs,
+                    "numOfRows": 9999,
+                    "pageNo": 1,
+                },
+                timeout=15,
+            )
             if r.status_code != 200:
                 continue
-            body = r.json().get("response", {}).get("body", {})
-            items = body.get("items", {}).get("item", [])
-            if isinstance(items, dict):
-                items = [items]
-            for it in items:
-                v = it.get("exptUsd") or it.get("expUsd") or 0
-                total += float(str(v).replace(",", "") or 0)
+            root = ET.fromstring(r.text)
+            for item in root.findall(".//item"):
+                v = item.findtext("expDlr") or "0"
+                total += float(v.replace(",", "") or 0)
         except Exception:
             pass
     return total / 1_000_000
@@ -99,60 +103,20 @@ def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
         total_m = now.year * 12 + (now.month - 1) - i
         month_list.append((total_m // 12, total_m % 12 + 1, i))
 
-    # 병렬 fetch 태스크 구성
-    # 최근 3개월(i≤2) + 현재월: total + cum10 + cum20 세 번 호출
-    # 과거: total 한 번
-    tasks: list[tuple] = []
-    for year, month, i in month_list:
-        tasks.append((year, month, i, "total", None))
-        if i <= 2:
-            tasks.append((year, month, i, "cum10", f"{year}{month:02d}10"))
-            tasks.append((year, month, i, "cum20", f"{year}{month:02d}20"))
-
-    def _fetch(task):
-        year, month, i, ftype, sdt = task
-        return year, month, i, ftype, _api_call(api_key, hs_codes, year, month, sdt)
+    def _fetch(ym):
+        year, month, i = ym
+        return year, month, i, _api_call(api_key, hs_codes, year, month)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        results = list(ex.map(_fetch, tasks))
-
-    # 결과 정리
-    raw: dict[tuple, dict] = {}
-    for year, month, i, ftype, val in results:
-        key = (year, month)
-        if key not in raw:
-            raw[key] = {"i": i, "total": 0.0, "cum10": 0.0, "cum20": 0.0}
-        raw[key][ftype] = val
+        results = list(ex.map(_fetch, month_list))
 
     rows = []
-    for year, month, i in month_list:
-        key = (year, month)
-        d = raw.get(key, {"i": i, "total": 0.0, "cum10": 0.0, "cum20": 0.0})
+    for year, month, i, total_M in sorted(results, key=lambda x: (x[0], x[1])):
         is_cur = (year == now.year and month == now.month)
-        total_M = d["total"]
-        cum10   = d["cum10"]
-        cum20   = d["cum20"]
-
-        if i <= 2 or is_cur:
-            # cum10/cum20이 실제 순별 누계인지 검증 (searchDt 미지원 시 ≈ total)
-            valid_breakdown = (
-                cum10 > 0
-                and cum10 < total_M * 0.7   # 10일치가 전체의 70% 미만이어야 유효
-                and cum20 >= cum10
-            )
-            if valid_breakdown:
-                d10 = cum10
-                d20 = max(0.0, cum20 - cum10)
-                d30 = max(0.0, total_M - cum20)
-            else:
-                d10 = d20 = d30 = 0.0
-        else:
-            d10 = d20 = d30 = 0.0
-
         rows.append(dict(
             label=f"{str(year)[2:]}년{month:02d}월",
             year=year, month=month,
-            d10=d10, d20=d20, d30=d30,
+            d10=0.0, d20=0.0, d30=0.0,
             total=total_M, is_partial=is_cur,
         ))
 
