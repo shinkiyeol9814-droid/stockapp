@@ -5,8 +5,6 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.graph_objects as go
-import math
-import random
 import concurrent.futures
 from datetime import datetime
 
@@ -31,10 +29,7 @@ TRADE_CATS = {
     "화장품":   ["3304", "3305", "3306"],
 }
 
-_DEMO_BASE = {
-    "반도체": 10500, "자동차": 6300, "선박": 1900,
-    "2차전지": 680,  "화장품": 870,  "변압기": 190,
-}
+_API_BASE = "https://apis.data.go.kr/1220000/mtitm3/getExptRtm"
 
 
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
@@ -54,98 +49,113 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
 
 
 
+def _api_call(api_key: str, hs_codes: list, year: int, month: int, search_dt: str | None = None) -> float:
+    """관세청 API 호출. search_dt='YYYYMMDD' 이면 해당일까지 누계, None 이면 월 전체."""
+    total = 0.0
+    for hs in hs_codes:
+        params = {
+            "serviceKey": api_key,
+            "year": str(year),
+            "month": f"{month:02d}",
+            "smitm": hs,
+            "numOfRows": 100,
+            "pageNo": 1,
+            "_type": "json",
+        }
+        if search_dt:
+            params["searchDt"] = search_dt
+        try:
+            r = requests.get(_API_BASE, params=params, timeout=10)
+            if r.status_code != 200:
+                continue
+            body = r.json().get("response", {}).get("body", {})
+            items = body.get("items", {}).get("item", [])
+            if isinstance(items, dict):
+                items = [items]
+            for it in items:
+                v = it.get("exptUsd") or it.get("expUsd") or 0
+                total += float(str(v).replace(",", "") or 0)
+        except Exception:
+            pass
+    return total / 1_000_000
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame:
+def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
     """
-    품목별 월간 수출 추세 (최근 3개월은 10일/20일/말일 구분).
-    d10/d20/d30: 각 10일 구간 수출금액 (백만$)
+    관세청 API 기반 월간 수출 추세.
+    최근 3개월은 searchDt로 순별(10일/20일/말일) 누계를 분해.
+    API 키 없으면 None 반환.
     """
     api_key = st.secrets.get("DATA_GO_KR_KEY", "")
+    if not api_key:
+        return None
+
     hs_codes = TRADE_CATS.get(cat, [])
     now = datetime.today()
 
-    # 월 목록 생성 (오래된 순)
     month_list = []
     for i in range(n_months - 1, -1, -1):
         total_m = now.year * 12 + (now.month - 1) - i
         month_list.append((total_m // 12, total_m % 12 + 1, i))
 
+    # 병렬 fetch 태스크 구성
+    # 최근 3개월(i≤2) + 현재월: total + cum10 + cum20 세 번 호출
+    # 과거: total 한 번
+    tasks: list[tuple] = []
+    for year, month, i in month_list:
+        tasks.append((year, month, i, "total", None))
+        if i <= 2:
+            tasks.append((year, month, i, "cum10", f"{year}{month:02d}10"))
+            tasks.append((year, month, i, "cum20", f"{year}{month:02d}20"))
+
+    def _fetch(task):
+        year, month, i, ftype, sdt = task
+        return year, month, i, ftype, _api_call(api_key, hs_codes, year, month, sdt)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(_fetch, tasks))
+
+    # 결과 정리
+    raw: dict[tuple, dict] = {}
+    for year, month, i, ftype, val in results:
+        key = (year, month)
+        if key not in raw:
+            raw[key] = {"i": i, "total": 0.0, "cum10": 0.0, "cum20": 0.0}
+        raw[key][ftype] = val
+
     rows = []
-
-    # ── 예시 데이터 경로 ─────────────────────────────────────────────────────
-    if not api_key:
-        for year, month, i in month_list:
-            is_cur = (i == 0)
-            rng = random.Random(abs(hash(f"{cat}{year}{month}")) % (2**31))
-
-            base   = _DEMO_BASE.get(cat, 500)
-            seas   = 1.0 + 0.18 * math.sin((month - 5) * math.pi / 6)
-            yoy_f  = 1.0 + 0.08 * (year - 2024) + 0.06 * max(0, year - 2025)
-            noise  = 1.0 + rng.gauss(0, 0.055)
-            full_M = max(10.0, base * seas * yoy_f * noise)
-
-            if is_cur:
-                frac = min(now.day / 30, 1.0)
-                part = full_M * frac
-                d10 = part if now.day <= 10 else full_M * (0.33 + rng.gauss(0, 0.01))
-                d20 = 0.0 if now.day <= 10 else (
-                    max(0.0, part - d10) if now.day <= 20
-                    else full_M * (0.34 + rng.gauss(0, 0.01))
-                )
-                d30 = 0.0 if now.day <= 20 else max(0.0, part - d10 - d20)
-                rows.append(dict(label=f"{str(year)[2:]}년{month:02d}월",
-                                 year=year, month=month,
-                                 d10=d10, d20=d20, d30=d30,
-                                 total=d10+d20+d30, is_partial=True))
-            elif i <= 2:  # 최근 2개월: 10일 구간 표기
-                d10 = full_M * (0.33 + rng.gauss(0, 0.012))
-                d20 = full_M * (0.34 + rng.gauss(0, 0.012))
-                d30 = max(0.0, full_M - d10 - d20)
-                rows.append(dict(label=f"{str(year)[2:]}년{month:02d}월",
-                                 year=year, month=month,
-                                 d10=d10, d20=d20, d30=d30,
-                                 total=full_M, is_partial=False))
-            else:
-                rows.append(dict(label=f"{str(year)[2:]}년{month:02d}월",
-                                 year=year, month=month,
-                                 d10=0.0, d20=0.0, d30=0.0,
-                                 total=full_M, is_partial=False))
-        return pd.DataFrame(rows)
-
-    # ── 실 API 경로 (병렬 fetch) ─────────────────────────────────────────────
-    def _fetch(ym):
-        year, month, i = ym
-        total = 0.0
-        for hs in hs_codes:
-            try:
-                r = requests.get(
-                    "https://apis.data.go.kr/1220000/mtitm3/getExptRtm",
-                    params={"serviceKey": api_key, "year": str(year),
-                            "month": f"{month:02d}", "smitm": hs,
-                            "numOfRows": 100, "pageNo": 1, "_type": "json"},
-                    timeout=8,
-                )
-                if r.status_code == 200:
-                    body = r.json().get("response", {}).get("body", {})
-                    items = body.get("items", {}).get("item", [])
-                    if isinstance(items, dict):
-                        items = [items]
-                    for it in items:
-                        v = it.get("exptUsd") or it.get("expUsd") or 0
-                        total += float(str(v).replace(",", "") or 0)
-            except Exception:
-                pass
-        return year, month, i, total / 1_000_000
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        results = list(ex.map(_fetch, month_list))
-
-    for year, month, i, total_M in sorted(results, key=lambda x: (x[0], x[1])):
+    for year, month, i in month_list:
+        key = (year, month)
+        d = raw.get(key, {"i": i, "total": 0.0, "cum10": 0.0, "cum20": 0.0})
         is_cur = (year == now.year and month == now.month)
-        rows.append(dict(label=f"{str(year)[2:]}년{month:02d}월",
-                         year=year, month=month,
-                         d10=0.0, d20=0.0, d30=0.0,
-                         total=total_M, is_partial=is_cur))
+        total_M = d["total"]
+        cum10   = d["cum10"]
+        cum20   = d["cum20"]
+
+        if i <= 2 or is_cur:
+            # cum10/cum20이 실제 순별 누계인지 검증 (searchDt 미지원 시 ≈ total)
+            valid_breakdown = (
+                cum10 > 0
+                and cum10 < total_M * 0.7   # 10일치가 전체의 70% 미만이어야 유효
+                and cum20 >= cum10
+            )
+            if valid_breakdown:
+                d10 = cum10
+                d20 = max(0.0, cum20 - cum10)
+                d30 = max(0.0, total_M - cum20)
+            else:
+                d10 = d20 = d30 = 0.0
+        else:
+            d10 = d20 = d30 = 0.0
+
+        rows.append(dict(
+            label=f"{str(year)[2:]}년{month:02d}월",
+            year=year, month=month,
+            d10=d10, d20=d20, d30=d30,
+            total=total_M, is_partial=is_cur,
+        ))
+
     return pd.DataFrame(rows)
 
 
@@ -218,7 +228,7 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str) -> go.
 
 
 # ── 차트 헬퍼 ────────────────────────────────────────────────────────────────
-def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, is_demo: bool, now: datetime):
+def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: datetime):
     hist_mask  = (trend_df["d10"] == 0) & (~trend_df["is_partial"])
     brkdn_mask = trend_df["d10"] > 0
 
@@ -273,7 +283,7 @@ def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, is_demo: bool, n
 
     fig.update_layout(
         barmode="stack", height=420,
-        title=dict(text=f"{cat_sel} 월별 수출{'  (예시)' if is_demo else ''}", font=dict(size=13), x=0),
+        title=dict(text=f"{cat_sel} 월별 수출", font=dict(size=13), x=0),
         xaxis=dict(tickfont=dict(size=9), tickangle=-45, showgrid=False),
         yaxis=dict(title="수출금액 (백만$)", tickformat=",.0f",
                    showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
@@ -285,7 +295,7 @@ def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, is_demo: bool, n
                     config={"displayModeBar": False, "scrollZoom": True})
 
 
-def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, is_demo: bool, now: datetime):
+def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: datetime):
     df = trend_df.copy()
     df["quarter"] = ((df["month"] - 1) // 3 + 1).astype(int)
     df["q_label"] = df.apply(lambda r: f"{str(r['year'])[2:]}년Q{r['quarter']}", axis=1)
@@ -354,7 +364,7 @@ def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, is_demo: bool,
 
     fig.update_layout(
         barmode="stack", height=420,
-        title=dict(text=f"{cat_sel} 분기별 수출{'  (예시)' if is_demo else ''}", font=dict(size=13), x=0),
+        title=dict(text=f"{cat_sel} 분기별 수출", font=dict(size=13), x=0),
         xaxis=dict(tickfont=dict(size=10), tickangle=-30, showgrid=False),
         yaxis=dict(title="수출금액 (백만$)", tickformat=",.0f",
                    showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
@@ -437,28 +447,34 @@ def render_macro():
     # TAB 2 — 수출 동향
     # ══════════════════════════════════════════════════════════════════════════
     with tab_trade:
-        is_demo = not bool(st.secrets.get("DATA_GO_KR_KEY", ""))
+        has_key = bool(st.secrets.get("DATA_GO_KR_KEY", ""))
+
+        if not has_key:
+            st.warning(
+                "수출 데이터를 표시하려면 **관세청 공공데이터포털 API 키**가 필요합니다.\n\n"
+                "1. [data.go.kr](https://www.data.go.kr) 에서 **관세청_통관기준 수출입 실적** API 신청\n"
+                "2. 발급된 키를 Streamlit Cloud 시크릿에 추가: `DATA_GO_KR_KEY = \"발급받은키\"`"
+            )
+            st.stop()
 
         st.markdown("#### 📈 품목별 수출 추세")
 
-        cc1, cc2, cc3, cc4 = st.columns([2, 2, 2, 2])
+        cc1, cc2, cc3 = st.columns([2, 2, 2])
         with cc1:
             cat_sel = st.selectbox("품목", list(TRADE_CATS.keys()), key="export_cat")
         with cc2:
             n_mo = st.selectbox("기간", [12, 18, 24], index=1, key="export_nmo")
         with cc3:
             view_mode = st.radio("단위", ["월별", "분기별"], horizontal=True, key="export_view")
-        with cc4:
-            st.write("")
-            if is_demo:
-                st.caption("📌 예시 데이터 — `DATA_GO_KR_KEY` 설정 시 실데이터")
 
         with st.spinner(f"{cat_sel} 추세 데이터 로딩 중..."):
             trend_df = _get_export_trend(cat_sel, n_mo)
 
         now = datetime.today()
 
-        if view_mode == "월별":
-            _render_monthly_chart(trend_df, cat_sel, is_demo, now)
+        if trend_df is None or trend_df.empty:
+            st.error("API에서 데이터를 가져오지 못했습니다. API 키와 네트워크 상태를 확인해주세요.")
+        elif view_mode == "월별":
+            _render_monthly_chart(trend_df, cat_sel, False, now)
         else:
-            _render_quarterly_chart(trend_df, cat_sel, is_demo, now)
+            _render_quarterly_chart(trend_df, cat_sel, False, now)
