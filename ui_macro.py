@@ -52,36 +52,35 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
 
 def _api_call(api_key: str, hs_codes: list, year: int, month: int) -> float:
     """
-    관세청_품목별 수출입실적(GW) 호출.
-    strtYymm/endYymm = YYYYMM, hsCd = HS 코드 앞 4자리.
-    응답은 XML 전용. 수출금액 필드: expDlr (달러).
-    여러 HS코드 합산 반환 (백만$).
+    관세청_품목별 수출입실적(GW).
+    HS코드 파라미터 필터가 미지원이므로 전체(~9700건) 수신 후 prefix 클라이언트 필터링.
+    expDlr 필드 단위: USD → 백만달러 환산 반환.
     """
     yymm = f"{year}{month:02d}"
-    total = 0.0
-    for hs in hs_codes:
-        try:
-            r = requests.get(
-                _API_BASE,
-                params={
-                    "serviceKey": api_key,
-                    "strtYymm": yymm,
-                    "endYymm": yymm,
-                    "hsCd": hs,
-                    "numOfRows": 9999,
-                    "pageNo": 1,
-                },
-                timeout=15,
-            )
-            if r.status_code != 200:
-                continue
-            root = ET.fromstring(r.text)
-            for item in root.findall(".//item"):
-                v = item.findtext("expDlr") or "0"
-                total += float(v.replace(",", "") or 0)
-        except Exception:
-            pass
-    return total / 1_000_000
+    try:
+        r = requests.get(
+            _API_BASE,
+            params={
+                "serviceKey": api_key,
+                "strtYymm": yymm,
+                "endYymm": yymm,
+                "numOfRows": 99999,
+                "pageNo": 1,
+            },
+            timeout=30,
+        )
+        if r.status_code != 200:
+            return 0.0
+        root = ET.fromstring(r.text)
+        total = 0.0
+        for item in root.findall(".//item"):
+            hs = item.findtext("hsCode", "")
+            if any(hs.startswith(prefix) for prefix in hs_codes):
+                v = item.findtext("expDlr", "0").replace(",", "")
+                total += float(v or 0)
+        return total / 1_000_000
+    except Exception:
+        return 0.0
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
