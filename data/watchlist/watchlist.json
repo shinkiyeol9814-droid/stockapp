@@ -19,6 +19,26 @@
     "multiple": 12.0,
     "sector": "반도체"
   },
+  "353200": {
+    "method": "PER(순이익)",
+    "multiple": 12.0,
+    "sector": "반도체"
+  },
+  "000150": {
+    "method": "PER(순이익)",
+    "multiple": 12.0,
+    "sector": "반도체"
+  },
+  "007660": {
+    "method": "PER(순이익)",
+    "multiple": 12.0,
+    "sector": "반도체"
+  },
+  "222800": {
+    "method": "PER(순이익)",
+    "multiple": 12.0,
+    "sector": "반도체"
+  },
   "192820": {
     "method": "POR(영업익)",
     "multiple": 15.0,
@@ -52,6 +72,21 @@
   "329180": {
     "method": "PER(순이익)",
     "multiple": 30.0,
+    "sector": "조선"
+  },
+  "010140": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "조선"
+  },
+  "042660": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "조선"
+  },
+  "009540": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
     "sector": "조선"
   },
   "010060": {
@@ -118,40 +153,5 @@
     "method": "POR(영업익)",
     "multiple": 12.0,
     "sector": "기타"
-  },
-  "010140": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "조선"
-  },
-  "042660": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "조선"
-  },
-  "009540": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "조선"
-  },
-  "353200": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "반도체"
-  },
-  "000150": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "반도체"
-  },
-  "007660": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "반도체"
-  },
-  "222800": {
-    "method": "POR(영업익)",
-    "multiple": 12.0,
-    "sector": "반도체"
   }
 }
