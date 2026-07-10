@@ -143,5 +143,10 @@
     "method": "POR(영업익)",
     "multiple": 12.0,
     "sector": "반도체"
+  },
+  "007660": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "반도체"
   }
 }
