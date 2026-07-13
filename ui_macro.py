@@ -8,6 +8,11 @@ import plotly.graph_objects as go
 import concurrent.futures
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import json
+import os
+import re
+
+_LITHIUM_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lithium_cache.json")
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
 MARKET_ITEMS = [
@@ -17,7 +22,7 @@ MARKET_ITEMS = [
     ("Brent 유가",    "BZ=F",      "$",    ",.2f"),
     ("금",            "GC=F",      "$",    ",.0f"),
     ("구리",          "HG=F",      "$/lb", ".3f"),
-    ("리튬 ETF(LIT)", "LIT",       "$",    ",.2f"),
+    ("리튬 탄산염",    "_LITHIUM_",  "CNY/t",",.0f"),
     ("SOX(반도체)",   "^SOX",      "pt",   ",.0f"),
 ]
 
@@ -48,6 +53,46 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
     except Exception:
         return None
 
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
+    """리튬 탄산염 가격 (CNY/ton) — 캐시 파일 + TE 현재가 스크래핑"""
+    try:
+        with open(_LITHIUM_CACHE, "r") as f:
+            raw = json.load(f)
+        if not raw:
+            return None
+
+        # 현재가 스크래핑 (실패해도 캐시 데이터로 진행)
+        try:
+            r = requests.get(
+                "https://ko.tradingeconomics.com/commodity/lithium",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                         "Accept-Language": "ko-KR,ko;q=0.9"},
+                timeout=10,
+            )
+            m = re.search(r'TEChartsMeta\s*=\s*\[{"value"\s*:\s*([\d.]+)', r.text)
+            if m:
+                current_price = float(m.group(1))
+                today_ms = int(datetime.combine(
+                    datetime.today().date(), datetime.min.time()
+                ).timestamp() * 1000)
+                if raw[-1][0] < today_ms:
+                    raw.append([today_ms, current_price])
+        except Exception:
+            pass
+
+        df = pd.DataFrame(raw, columns=["ts", "price"])
+        df["date"] = pd.to_datetime(df["ts"], unit="ms")
+        df = df.set_index("date").drop(columns=["ts"])
+
+        cutoff_days = {"1y": 365, "6mo": 180, "3mo": 90, "1mo": 30}.get(period, 365)
+        cutoff = pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)
+        df = df[df.index >= cutoff]
+        return df if not df.empty else None
+    except Exception:
+        return None
 
 
 def _api_call(api_key: str, hs_codes: list, year: int, month: int) -> float:
@@ -178,7 +223,7 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str) -> go.
         margin=dict(l=0, r=2, t=2, b=18),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        dragmode=False,
+        dragmode="pan",
         shapes=shapes,
         hovermode="x",
         xaxis=dict(showticklabels=True, tickformat=tfmt, dtick=dtick,
@@ -252,10 +297,14 @@ def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: da
                    showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
         margin=dict(l=0, r=10, t=50, b=80),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode=False,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode="pan",
     )
     st.plotly_chart(fig, use_container_width=True,
-                    config={"displayModeBar": False, "scrollZoom": True})
+                    config={
+                        "scrollZoom": True,
+                        "displaylogo": False,
+                        "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toImage"],
+                    })
 
 
 def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: datetime):
@@ -333,10 +382,14 @@ def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: 
                    showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
         margin=dict(l=0, r=10, t=50, b=60),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode=False,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode="pan",
     )
     st.plotly_chart(fig, use_container_width=True,
-                    config={"displayModeBar": False, "scrollZoom": True})
+                    config={
+                        "scrollZoom": True,
+                        "displaylogo": False,
+                        "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toImage"],
+                    })
 
 
 # ── 렌더링 ────────────────────────────────────────────────────────────────────
@@ -359,8 +412,12 @@ def render_macro():
         period = period_map[sel_p]
 
         with st.spinner("시장 데이터 로딩 중..."):
-            hists = {name: _get_price_history(ticker, period)
-                     for name, ticker, *_ in MARKET_ITEMS}
+            hists = {}
+            for name, ticker, *_ in MARKET_ITEMS:
+                if ticker == "_LITHIUM_":
+                    hists[name] = _get_lithium_price_history(period)
+                else:
+                    hists[name] = _get_price_history(ticker, period)
 
         for row_start in (0, 4):
             cols = st.columns(4)
@@ -404,6 +461,7 @@ def render_macro():
         with cr:
             if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
                 _get_price_history.clear()
+                _get_lithium_price_history.clear()
                 st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════════
