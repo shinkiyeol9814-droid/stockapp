@@ -11,6 +11,7 @@ import json
 import os
 import base64
 import time
+import concurrent.futures
 import plotly.graph_objects as go
 
 # --- 설정 및 상수 ---
@@ -59,7 +60,7 @@ def save_to_github(file_path, content, message):
     except Exception as e:
         return False, f"통신 에러: {str(e)}"
 
-@st.cache_data(ttl=86400)
+@st.cache_resource(ttl=86400)
 def get_ticker_listing():
     for _ in range(3):
         try:
@@ -172,7 +173,7 @@ def fetch_consensus_data(ticker):
         return None
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
     master_dict = {
@@ -182,21 +183,39 @@ def get_hybrid_financials(ticker):
     }
     try:
         main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
-        main_res = requests.get(main_url, headers=HEADERS, timeout=7)
-        encparam = ""
-        match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
-        if match:
-            encparam = match.group(1)
-        ajax_headers = HEADERS.copy()
-        ajax_headers["Referer"] = main_url
 
-        # ── ① cF1001(손익계산서) + cF2001(재무상태표) ──
-        fin_urls = [
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}",
-        ]
-        for url in fin_urls:
-            res = requests.get(url, headers=ajax_headers, timeout=7)
+        # Phase 1: main page(encparam 추출용) + consensus 병렬 요청
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            fut_main      = ex.submit(requests.get, main_url, headers=HEADERS, timeout=7)
+            fut_consensus = ex.submit(fetch_consensus_data, ticker)
+
+            main_res = fut_main.result()
+            encparam = ""
+            match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
+            if match:
+                encparam = match.group(1)
+
+            ajax_headers = HEADERS.copy()
+            ajax_headers["Referer"] = main_url
+
+            # Phase 2: cF1001(손익) + cF2001(재무상태) 병렬 요청 (encparam 필요)
+            fin_url_1 = (
+                f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx"
+                f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+            )
+            fin_url_2 = (
+                f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx"
+                f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+            )
+            fut_f1 = ex.submit(requests.get, fin_url_1, headers=ajax_headers, timeout=7)
+            fut_f2 = ex.submit(requests.get, fin_url_2, headers=ajax_headers, timeout=7)
+
+            res1           = fut_f1.result()
+            res2           = fut_f2.result()
+            consensus_rows = fut_consensus.result()
+
+        # ── ① cF1001 + cF2001 파싱 ──
+        for res in [res1, res2]:
             df_parsed = parse_fin_table(res.text)
             if df_parsed is None:
                 continue
@@ -217,8 +236,7 @@ def get_hybrid_financials(ticker):
                 if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):   master_dict[y]['당기순이익'] = n
                 if pd.isna(master_dict[y]['자본총계'])   and pd.notna(cap): master_dict[y]['자본총계'] = cap
 
-        # ── ② 컨센서스 API (c1050001_data.aspx?flag=2) ──
-        consensus_rows = fetch_consensus_data(ticker)
+        # ── ② 컨센서스 파싱 ──
         if consensus_rows:
             for row_json in consensus_rows:
                 ym = row_json.get('YYMM', '')

@@ -261,9 +261,15 @@ def render_watchlist():
 
     watchlist = wl_fresh or load_watchlist()
 
+    # ── 종목 목록 사전 로딩 (세션 첫 방문 시 스피너 표시) ─────────────────────
+    if "_wl_listing_ready" not in st.session_state:
+        with st.spinner("종목 목록 초기화 중..."):
+            get_ticker_listing()
+        st.session_state["_wl_listing_ready"] = True
+
     # ── 종목 추가 ─────────────────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=len(watchlist) == 0):
-        listing = get_ticker_listing()
+        listing = get_ticker_listing()  # 이미 캐싱됨, 즉시 반환
         c1, c2, c3, c4 = st.columns([3, 2.2, 1.4, 0.9])
         with c1:
             q = st.text_input("종목명", key="wl_q", placeholder="삼성전자, SK하이닉스...")
@@ -335,14 +341,13 @@ def render_watchlist():
     # ── 병렬 데이터 로딩 ─────────────────────────────────────────────────────
     uncached = [c for c in codes if f"_wlc_{c}" not in st.session_state]
     if uncached:
-        get_ticker_listing()  # main thread 캐시 워밍
         def _load_one(code):
             get_watch_financials(code)
             get_live_price(code)
             return code
         with st.spinner(f"데이터 로딩 중... ({len(uncached)}개 종목)"):
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(5, len(uncached))
+                max_workers=min(10, len(uncached))
             ) as executor:
                 for code in executor.map(_load_one, uncached):
                     st.session_state[f"_wlc_{code}"] = True
@@ -571,7 +576,7 @@ def _render_bottom(watchlist: dict = None):
                     get_live_price(c)
                     return c
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(5, len(codes_to_refresh))
+                    max_workers=min(10, len(codes_to_refresh))
                 ) as exc:
                     list(exc.map(_rp, codes_to_refresh))
             st.rerun()
