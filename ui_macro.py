@@ -13,6 +13,7 @@ import os
 import re
 
 _LITHIUM_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lithium_cache.json")
+_DRAM_CACHE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dram_cache.json")
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
 MARKET_ITEMS = [
@@ -23,7 +24,7 @@ MARKET_ITEMS = [
     ("금",            "GC=F",      "$",    ",.0f"),
     ("구리",          "HG=F",      "$/lb", ".3f"),
     ("리튬 탄산염",    "_LITHIUM_",  "CNY/t",",.0f"),
-    ("SOX(반도체)",   "^SOX",      "pt",   ",.0f"),
+    ("DDR5 16Gb Spot", "_DRAM_",    "$",    ",.3f"),
 ]
 
 TRADE_CATS = {
@@ -73,6 +74,52 @@ def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
                 timeout=10,
             )
             m = re.search(r'TEChartsMeta\s*=\s*\[{"value"\s*:\s*([\d.]+)', r.text)
+            if m:
+                current_price = float(m.group(1))
+                today_ms = int(datetime.combine(
+                    datetime.today().date(), datetime.min.time()
+                ).timestamp() * 1000)
+                if raw[-1][0] < today_ms:
+                    raw.append([today_ms, current_price])
+        except Exception:
+            pass
+
+        df = pd.DataFrame(raw, columns=["ts", "price"])
+        df["date"] = pd.to_datetime(df["ts"], unit="ms")
+        df = df.set_index("date").drop(columns=["ts"])
+
+        cutoff_days = {"1y": 365, "6mo": 180, "3mo": 90, "1mo": 30}.get(period, 365)
+        cutoff = pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)
+        df = df[df.index >= cutoff]
+        return df if not df.empty else None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_dram_price_history(period: str = "1y") -> pd.DataFrame | None:
+    """DDR5 16Gb Spot (USD) — 캐시 파일 + DRAMeXchange 현재가 스크래핑"""
+    try:
+        with open(_DRAM_CACHE, "r") as f:
+            raw = json.load(f)
+        if not raw:
+            return None
+
+        try:
+            r = requests.get(
+                "https://www.dramexchange.com/",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                         "Accept-Language": "en-US,en;q=0.9",
+                         "Referer": "https://www.dramexchange.com/"},
+                timeout=10,
+            )
+            # DDR5 16Gb 행에서 5번째 td값 = Spot 평균가
+            m = re.search(
+                r'DDR5 16Gb[^<]*</a>'
+                r'(?:.*?<td[^>]*>[\d.]+</td>){4}'
+                r'.*?<td[^>]*>([\d.]+)</td>',
+                r.text, re.S
+            )
             if m:
                 current_price = float(m.group(1))
                 today_ms = int(datetime.combine(
@@ -416,6 +463,8 @@ def render_macro():
             for name, ticker, *_ in MARKET_ITEMS:
                 if ticker == "_LITHIUM_":
                     hists[name] = _get_lithium_price_history(period)
+                elif ticker == "_DRAM_":
+                    hists[name] = _get_dram_price_history(period)
                 else:
                     hists[name] = _get_price_history(ticker, period)
 
@@ -462,6 +511,7 @@ def render_macro():
             if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
                 _get_price_history.clear()
                 _get_lithium_price_history.clear()
+                _get_dram_price_history.clear()
                 st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════════
