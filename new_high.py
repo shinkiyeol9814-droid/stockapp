@@ -21,9 +21,9 @@ def get_all_reports():
     return sorted(files, reverse=True)
 
 def save_to_github(file_path, content, message):
-    github_token = st.secrets.get("GH_PAT")
+    github_token = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN")
     if not github_token:
-        return False, "Streamlit Secrets에 GH_PAT (GitHub 토큰)가 없습니다."
+        return False, "Streamlit Secrets에 GH_PAT 또는 GITHUB_TOKEN (GitHub 토큰)가 없습니다."
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
     headers = {

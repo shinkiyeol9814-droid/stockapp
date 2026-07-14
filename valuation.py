@@ -29,7 +29,7 @@ API_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 @st.cache_data(ttl=300)
 def load_user_estimates():
     try:
-        github_token = st.secrets.get("GITHUB_TOKEN")
+        github_token = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN")
         if not github_token: return {}
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{ESTIMATES_FILE}?ref={GITHUB_BRANCH}"
         headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
@@ -42,8 +42,8 @@ def load_user_estimates():
 
 def save_to_github(file_path, content, message):
     try:
-        github_token = st.secrets.get("GITHUB_TOKEN")
-        if not github_token: return False, "Streamlit Secrets에 GITHUB_TOKEN가 없습니다."
+        github_token = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN")
+        if not github_token: return False, "Streamlit Secrets에 GH_PAT 또는 GITHUB_TOKEN가 없습니다."
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
         headers = {"Authorization": f"token {github_token}", "Accept": "application/vnd.github.v3+json"}
         res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=7)

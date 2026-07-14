@@ -1,4 +1,5 @@
 import re
+import html
 import streamlit as st
 import asyncio
 import os
@@ -107,16 +108,18 @@ def search_messages(entity_key, query, limit):
 _URL_RE = re.compile(r'(https?://[^\s<>"\']+[^\s<>"\'.,!?)\]])')
 
 def _linkify(text):
+    """HTML 이스케이프 후 URL만 링크로 변환 (텔레그램 메시지는 신뢰할 수 없는 외부 입력)."""
+    escaped = html.escape(text)
     return _URL_RE.sub(
         r'<a href="\1" target="_blank" rel="noopener noreferrer" '
         r'style="color:#0088cc;text-decoration:underline;word-break:break-all;">\1</a>',
-        text
+        escaped
     )
 
 def _render_msg(msg):
     time_str = msg["time_str"]
     text = msg["text"]
-    doc_name = msg["doc_name"]
+    doc_name = html.escape(msg["doc_name"]) if msg["doc_name"] else ""
 
     if doc_name:
         icon = "📄" if doc_name.lower().endswith(".pdf") else "📎"
@@ -133,8 +136,8 @@ def _render_msg(msg):
         """, unsafe_allow_html=True)
 
     elif text:
-        full_html = _linkify(text.replace('\n', '<br>'))
-        preview = text[:120].replace('\n', ' ')
+        full_html = _linkify(text).replace('\n', '<br>')
+        preview = html.escape(text[:120].replace('\n', ' '))
         if len(text) > 120:
             st.markdown(f"""
             <details style='border-left:3px solid #0088cc;background:#f8f9fa;
