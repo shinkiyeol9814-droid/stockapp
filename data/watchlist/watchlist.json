@@ -161,7 +161,7 @@
   },
   "006800": {
     "method": "PBR(자본총계)",
-    "multiple": 12.0,
+    "multiple": 2.0,
     "sector": "증권"
   }
 }
