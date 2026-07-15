@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 
 # --- 💡 [필수] 페이지 기본 설정은 무조건 코드 최상단에 위치해야 합니다! ---
@@ -118,6 +119,46 @@ menu = option_menu(
         },
     }
 )
+
+# ==========================================
+# 💡 상단 메뉴 고정 그리드 강제 (기기 폭에 따라 줄바꿈 위치가 달라지는 문제 방지)
+# option_menu는 iframe 컴포넌트라 CSS가 직접 안 닿으므로, window.parent로 넘어가
+# iframe 내부 문서에 <style>을 주입해 5개씩 고정 wrap 되도록 강제합니다.
+# ==========================================
+components.html("""
+<script>
+(function() {
+    var mainDoc = (window.parent || window).document;
+    function tryInject() {
+        var frame = mainDoc.querySelector('iframe[title="streamlit_option_menu.option_menu"]');
+        if (!frame) return false;
+        var fdoc;
+        try { fdoc = frame.contentDocument; } catch (e) { return false; }
+        if (!fdoc || !fdoc.head) return false;
+        if (fdoc.getElementById('__menu_grid_fix__')) return true;
+        var style = fdoc.createElement('style');
+        style.id = '__menu_grid_fix__';
+        style.textContent = `
+            ul.nav.nav-justified { flex-wrap: wrap !important; }
+            ul.nav.nav-justified > li.nav-item {
+                flex: 0 0 20% !important;
+                max-width: 20% !important;
+                box-sizing: border-box !important;
+            }
+        `;
+        fdoc.head.appendChild(style);
+        return true;
+    }
+    if (!tryInject()) {
+        var tries = 0;
+        var iv = setInterval(function() {
+            tries++;
+            if (tryInject() || tries > 40) clearInterval(iv);
+        }, 150);
+    }
+})();
+</script>
+""", height=0)
 
 # 가치평가 화면이 아닐 때만 파라미터를 지워서 메뉴 꼬임을 방지합니다.
 if menu != "가치평가":
