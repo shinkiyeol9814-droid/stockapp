@@ -13,8 +13,10 @@ from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode, DataRe
 
 from valuation import (
     get_hybrid_financials, get_ticker_listing, get_stocks_count,
-    UNIT, API_HEADERS, GITHUB_REPO, GITHUB_BRANCH,
+    load_user_estimates, UNIT, API_HEADERS, GITHUB_REPO, GITHUB_BRANCH,
 )
+
+_EST_COLS = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
 WATCHLIST_FILE = "data/watchlist/watchlist.json"
 METHODS   = ["POR(영업익)", "PER(순이익)", "PBR(자본총계)", "EV/EBITDA"]
@@ -44,17 +46,40 @@ def load_watchlist() -> dict:
     return {}
 
 def save_watchlist(data: dict) -> bool:
+    """
+    직전 저장 응답의 sha를 세션에 캐싱해 재사용 — 편집할 때마다 매번
+    '현재 sha 조회' GET을 왕복하지 않도록 해 저장 지연을 절반으로 줄인다.
+    캐싱된 sha가 stale이면(409) 한 번만 재조회해 재시도한다.
+    """
     load_watchlist.clear()
     b64 = base64.b64encode(json.dumps(data, ensure_ascii=False, indent=2).encode()).decode()
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{WATCHLIST_FILE}"
     hdrs = _gh_hdrs()
-    res  = requests.get(url, headers=hdrs, params={"ref": GITHUB_BRANCH}, timeout=7)
-    sha  = res.json().get("sha") if res.status_code == 200 else None
+
+    def _fetch_sha():
+        res = requests.get(url, headers=hdrs, params={"ref": GITHUB_BRANCH}, timeout=7)
+        return res.json().get("sha") if res.status_code == 200 else None
+
+    sha = st.session_state.get("_wl_sha") or _fetch_sha()
     payload = {"message": "Update watchlist", "content": b64, "branch": GITHUB_BRANCH}
     if sha:
         payload["sha"] = sha
     r = requests.put(url, headers=hdrs, json=payload, timeout=10)
-    return r.status_code in [200, 201]
+
+    if r.status_code == 409:  # sha가 이미 최신이 아님 → 재조회 후 1회 재시도
+        fresh_sha = _fetch_sha()
+        if fresh_sha:
+            payload["sha"] = fresh_sha
+            r = requests.put(url, headers=hdrs, json=payload, timeout=10)
+
+    ok = r.status_code in [200, 201]
+    if ok:
+        new_sha = r.json().get("content", {}).get("sha")
+        if new_sha:
+            st.session_state["_wl_sha"] = new_sha
+    else:
+        st.session_state.pop("_wl_sha", None)  # 저장 실패 시 캐시 신뢰 불가 → 다음엔 재조회
+    return ok
 
 # ── 데이터 ────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
@@ -88,6 +113,19 @@ def get_watch_financials(code: str):
             return None, 0
         stocks = get_stocks_count(ticker_row, code)
         fin_df = get_hybrid_financials(code)
+
+        # 가치평가 탭에서 저장한 수동 추정치를 스크래핑 데이터가 비어있는 셀에 병합
+        ticker_estimates = load_user_estimates().get(code, {})
+        if ticker_estimates:
+            fin_df = fin_df.copy()
+            for idx, row in fin_df.iterrows():
+                yr = str(row['Year'])
+                if yr not in ticker_estimates:
+                    continue
+                for col in _EST_COLS:
+                    if (pd.isna(row[col]) or row[col] == 0) and col in ticker_estimates[yr]:
+                        fin_df.at[idx, col] = float(ticker_estimates[yr][col])
+
         return fin_df, int(stocks)
     except:
         return None, 0
@@ -552,6 +590,7 @@ def render_watchlist():
             for c in all_current_codes if c in watchlist
         }
         save_watchlist(new_wl)
+        st.session_state["_wl_fresh"] = new_wl  # 저장 직후 재조회(GitHub GET) 생략
 
         if settings_changed:
             st.session_state["_wl_pending"] = new_settings
