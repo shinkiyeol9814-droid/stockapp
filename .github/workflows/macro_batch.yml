@@ -1,0 +1,36 @@
+name: Macro Commodity Price Batch (DRAM/DDR4/Lithium)
+
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'  # 월~금 한국시간 18:00
+  repository_dispatch:
+    types: [run_macro_batch]
+  workflow_dispatch:
+
+jobs:
+  run-batch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Run Script
+        run: python batch_macro.py
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add dram_cache.json ddr4_cache.json lithium_cache.json
+          git commit -m "Auto-update: DRAM/DDR4/Lithium spot price" || echo "No changes to commit"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }}
