@@ -101,13 +101,15 @@ menu = option_menu(
         }, 
         "nav-link": {
             # 💡 [핵심 2] 평소(선택 안 됨) 상태일 때는 변수값을 '빨간색'으로 줍니다.
-            "--icon-color": "#FF4B4B", 
-            "font-size": "12px",  
-            "text-align": "center", 
-            "margin": "0px", 
-            "padding": "10px 2px", 
-            "white-space": "nowrap", 
-            "--hover-color": "#f0f2f6"
+            "--icon-color": "#FF4B4B",
+            "font-size": "12px",
+            "text-align": "center",
+            "margin": "0px",
+            "padding": "10px 2px",
+            "white-space": "nowrap",
+            "--hover-color": "#f0f2f6",
+            "border": "1px solid #ddd",
+            "box-sizing": "border-box"
         },
         "nav-link-selected": {
             # 💡 [핵심 3] 메뉴가 선택되면 변수값을 '하얀색'으로 덮어씌웁니다! (위장술 타파)
