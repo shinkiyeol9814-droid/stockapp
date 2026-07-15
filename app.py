@@ -150,12 +150,13 @@ components.html("""
         fdoc.head.appendChild(style);
         return true;
     }
+    // option_menu 컴포넌트 프론트엔드 로딩이 느릴 수 있어(특히 모바일 콜드스타트)
+    // 재시도 횟수를 제한하지 않고 성공할 때까지 계속 시도합니다.
+    // 이 iframe 자체가 다음 rerun 때 교체되면서 인터벌도 함께 정리되므로 누수 걱정은 없습니다.
     if (!tryInject()) {
-        var tries = 0;
         var iv = setInterval(function() {
-            tries++;
-            if (tryInject() || tries > 40) clearInterval(iv);
-        }, 150);
+            if (tryInject()) clearInterval(iv);
+        }, 300);
     }
 })();
 </script>
