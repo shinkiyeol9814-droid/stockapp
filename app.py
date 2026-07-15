@@ -129,35 +129,40 @@ menu = option_menu(
 components.html("""
 <script>
 (function() {
-    var mainDoc = (window.parent || window).document;
+    // 모든 단계를 try/catch로 감싸 어느 한 줄에서 예외가 나도 스크립트 전체가
+    // 죽지 않고(=재시도 루프가 살아남고) 다음 tick에 다시 시도하도록 합니다.
     function tryInject() {
-        var frame = mainDoc.querySelector('iframe[title="streamlit_option_menu.option_menu"]');
-        if (!frame) return false;
-        var fdoc;
-        try { fdoc = frame.contentDocument; } catch (e) { return false; }
-        if (!fdoc || !fdoc.head) return false;
-        if (fdoc.getElementById('__menu_grid_fix__')) return true;
-        var style = fdoc.createElement('style');
-        style.id = '__menu_grid_fix__';
-        style.textContent = `
-            ul.nav.nav-justified { flex-wrap: wrap !important; }
-            ul.nav.nav-justified > li.nav-item {
-                flex: 0 0 25% !important;
-                max-width: 25% !important;
-                box-sizing: border-box !important;
-            }
-        `;
-        fdoc.head.appendChild(style);
-        return true;
+        try {
+            var mainDoc = (window.parent || window).document;
+            var frame = mainDoc.querySelector('iframe[title="streamlit_option_menu.option_menu"]');
+            if (!frame) return false;
+            var fdoc = frame.contentDocument;
+            if (!fdoc || !fdoc.head) return false;
+            if (fdoc.getElementById('__menu_grid_fix__')) return true;
+            var style = fdoc.createElement('style');
+            style.id = '__menu_grid_fix__';
+            style.textContent = `
+                ul.nav.nav-justified { flex-wrap: wrap !important; }
+                ul.nav.nav-justified > li.nav-item {
+                    flex: 0 0 25% !important;
+                    max-width: 25% !important;
+                    box-sizing: border-box !important;
+                }
+            `;
+            fdoc.head.appendChild(style);
+            return true;
+        } catch (e) {
+            return false;
+        }
     }
     // option_menu 컴포넌트 프론트엔드 로딩이 느릴 수 있어(특히 모바일 콜드스타트)
-    // 재시도 횟수를 제한하지 않고 성공할 때까지 계속 시도합니다.
+    // 재시도 횟수를 제한하지 않고 성공할 때까지 인터벌로 계속 시도합니다.
     // 이 iframe 자체가 다음 rerun 때 교체되면서 인터벌도 함께 정리되므로 누수 걱정은 없습니다.
-    if (!tryInject()) {
+    try {
         var iv = setInterval(function() {
             if (tryInject()) clearInterval(iv);
         }, 300);
-    }
+    } catch (e) {}
 })();
 </script>
 """, height=0)
