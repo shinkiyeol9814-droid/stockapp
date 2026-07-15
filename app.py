@@ -123,7 +123,8 @@ menu = option_menu(
 # ==========================================
 # 💡 상단 메뉴 고정 그리드 강제 (기기 폭에 따라 줄바꿈 위치가 달라지는 문제 방지)
 # option_menu는 iframe 컴포넌트라 CSS가 직접 안 닿으므로, window.parent로 넘어가
-# iframe 내부 문서에 <style>을 주입해 5개씩 고정 wrap 되도록 강제합니다.
+# iframe 내부 문서에 <style>을 주입해 4개씩 고정 wrap 되도록 강제합니다.
+# (7개 항목 → 위 4개 + 아래 3개, 두 줄 모두 칸 폭 25%로 동일)
 # ==========================================
 components.html("""
 <script>
@@ -141,8 +142,8 @@ components.html("""
         style.textContent = `
             ul.nav.nav-justified { flex-wrap: wrap !important; }
             ul.nav.nav-justified > li.nav-item {
-                flex: 0 0 20% !important;
-                max-width: 20% !important;
+                flex: 0 0 25% !important;
+                max-width: 25% !important;
                 box-sizing: border-box !important;
             }
         `;
