@@ -176,16 +176,20 @@ if menu != "가치평가":
 # ==========================================
 # --- 메뉴 라우팅 ---
 # 💡 탭 전환 시 이전 탭의 렌더링 잔상이 남지 않도록 처리합니다.
-# st.empty().container()로 감싸는 것만으로는 Streamlit이 "완성된 뒤 교체"가
-# 아니라 "만들어지는 대로 같은 위치에 순차 반영"하기 때문에, 느린 탭(예:
-# 워치리스트) 로딩 중엔 이전 탭 내용이 계속 보입니다. 탭이 바뀐 시점에
-# menu_content.empty()를 명시적으로 먼저 호출해 "즉시 비우기" 신호를
-# 먼저 보낸 뒤에 새 탭 내용을 채우도록 합니다.
+# Streamlit의 vertical block은 "다 만든 뒤 통째로 교체"가 아니라
+# "with 블록이 끝날 때(=함수가 다 실행돼야) 남은 이전 자식들을 정리"하는
+# 방식이라, menu_content.empty()를 미리 불러도 느린 탭(예: 워치리스트)이
+# 로딩되는 동안엔 이전 탭 콘텐츠가 같은 블록 안에 계속 나란히 남아있음
+# (실측으로 확인됨). 그래서 탭이 바뀐 첫 rerun에서는 빈 블록만 렌더해
+# with 블록을 곧바로 닫아 이전 자식들을 즉시 정리시키고, st.rerun()으로
+# 한 번 더 돌려서 그다음 rerun에 실제(느릴 수 있는) 탭 내용을 채웁니다.
 # ==========================================
 menu_content = st.empty()
 if st.session_state.get("_last_menu") != menu:
-    menu_content.empty()
-st.session_state["_last_menu"] = menu
+    st.session_state["_last_menu"] = menu
+    with menu_content.container():
+        pass  # 빈 블록으로 즉시 렌더 → 이전 탭 잔상 제거
+    st.rerun()
 
 with menu_content.container():
     if menu == "가치평가":
