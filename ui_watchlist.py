@@ -385,7 +385,7 @@ def render_watchlist():
             return code
         with st.spinner(f"데이터 로딩 중... ({len(uncached)}개 종목)"):
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(10, len(uncached))
+                max_workers=min(20, len(uncached))
             ) as executor:
                 for code in executor.map(_load_one, uncached):
                     st.session_state[f"_wlc_{code}"] = True
@@ -615,7 +615,7 @@ def _render_bottom(watchlist: dict = None):
                     get_live_price(c)
                     return c
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(10, len(codes_to_refresh))
+                    max_workers=min(20, len(codes_to_refresh))
                 ) as exc:
                     list(exc.map(_rp, codes_to_refresh))
             st.rerun()
