@@ -28,12 +28,28 @@ from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 
 
+def _normalize_phone(raw: str) -> str:
+    """국제형식(+국가코드)이 아니면 한국 번호(010...)로 간주해 +82를 붙인다."""
+    p = raw.strip().replace(" ", "").replace("-", "")
+    if p.startswith("+"):
+        return p
+    if p.startswith("0"):
+        return "+82" + p[1:]
+    return "+" + p
+
+
 def main():
     api_id = os.environ.get("TELEGRAM_API_ID") or input("API ID: ").strip()
     api_hash = os.environ.get("TELEGRAM_API_HASH") or input("API Hash: ").strip()
 
-    with TelegramClient(StringSession(), int(api_id), api_hash) as client:
-        session_str = client.session.save()
+    raw_phone = input("전화번호 (예: 010-5099-9814 또는 +821050999814): ").strip()
+    phone = _normalize_phone(raw_phone)
+    print(f"→ 국제형식으로 변환: {phone}")
+
+    client = TelegramClient(StringSession(), int(api_id), api_hash)
+    client.start(phone=phone)
+    session_str = client.session.save()
+    client.disconnect()
 
     print("\n" + "=" * 70)
     print("새로 발급된 세션 문자열입니다. 아래 값을 복사해 시크릿에 붙여넣으세요.")
