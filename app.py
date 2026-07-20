@@ -175,24 +175,30 @@ if menu != "가치평가":
     
 # ==========================================
 # --- 메뉴 라우팅 ---
+# 💡 탭 전환 시 이전 탭의 렌더링 잔상이 남지 않도록, 전체를 st.empty()
+# 컨테이너로 감쌉니다. 새로 진입할 때 이 컨테이너 내용이 즉시 비워진 뒤
+# 채워지므로, 느린 탭(예: 워치리스트)이 로딩되는 동안 이전 탭 내용이
+# 그대로 겹쳐 보이는 현상을 막습니다.
 # ==========================================
-if menu == "가치평가":
-    render_valuation_menu()
+menu_content = st.empty()
+with menu_content.container():
+    if menu == "가치평가":
+        render_valuation_menu()
 
-elif menu == "신고가":
-    render_new_high_menu()
+    elif menu == "신고가":
+        render_new_high_menu()
 
-elif menu == "레포트":
-    render_report_summary()  
+    elif menu == "레포트":
+        render_report_summary()
 
-elif menu == "실적":
-    render_earnings_menu()
+    elif menu == "실적":
+        render_earnings_menu()
 
-elif menu == "텔레그램":
-    render_telegram_viewer()
+    elif menu == "텔레그램":
+        render_telegram_viewer()
 
-elif menu == "워치리스트":
-    render_watchlist()
+    elif menu == "워치리스트":
+        render_watchlist()
 
-elif menu == "매크로":
-    render_macro()
+    elif menu == "매크로":
+        render_macro()
