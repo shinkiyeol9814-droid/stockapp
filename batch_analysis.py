@@ -17,7 +17,7 @@ from google import genai
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
-SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
+SESSION_STR = os.environ.get("TELEGRAM_SESSION_BATCH") or os.environ.get("TELEGRAM_SESSION", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)

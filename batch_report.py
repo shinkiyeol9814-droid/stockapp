@@ -16,7 +16,7 @@ import FinanceDataReader as fdr
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
-SESSION_STR = os.environ.get("TELEGRAM_SESSION", "")
+SESSION_STR = os.environ.get("TELEGRAM_SESSION_BATCH") or os.environ.get("TELEGRAM_SESSION", "")
 # 💡 A계정 결제했음. Tier1이므로 통합하여 사용
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "") 
 
