@@ -175,7 +175,7 @@
     "sector": "엔진"
   },
   "071970": {
-    "method": "POR(영업익)",
+    "method": "PER(순이익)",
     "multiple": 12.0,
     "sector": "엔진"
   }
