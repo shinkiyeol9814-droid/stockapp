@@ -76,7 +76,7 @@
   },
   "329180": {
     "method": "PER(순이익)",
-    "multiple": 30.0,
+    "multiple": 20.0,
     "sector": "조선"
   },
   "010140": {
@@ -95,6 +95,11 @@
     "sector": "조선"
   },
   "082740": {
+    "method": "PER(순이익)",
+    "multiple": 20.0,
+    "sector": "조선"
+  },
+  "071970": {
     "method": "PER(순이익)",
     "multiple": 20.0,
     "sector": "조선"
@@ -178,10 +183,5 @@
     "method": "PBR(자본총계)",
     "multiple": 2.0,
     "sector": "증권"
-  },
-  "071970": {
-    "method": "PER(순이익)",
-    "multiple": 20.0,
-    "sector": "조선"
   }
 }
