@@ -170,7 +170,7 @@
     "sector": "증권"
   },
   "082740": {
-    "method": "POR(영업익)",
+    "method": "PER(순이익)",
     "multiple": 20.0,
     "sector": "엔진"
   },
