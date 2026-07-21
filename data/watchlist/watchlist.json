@@ -120,7 +120,7 @@
     "sector": "2차전지"
   },
   "373220": {
-    "method": "PER(순이익)",
+    "method": "PBR(자본총계)",
     "multiple": 12.0,
     "sector": "2차전지"
   },
