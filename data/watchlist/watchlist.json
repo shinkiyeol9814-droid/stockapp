@@ -168,5 +168,10 @@
     "method": "POR(영업익)",
     "multiple": 12.0,
     "sector": "증권"
+  },
+  "082740": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "기타"
   }
 }
