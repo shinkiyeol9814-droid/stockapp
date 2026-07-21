@@ -105,7 +105,7 @@
     "sector": "태양광"
   },
   "006400": {
-    "method": "PER(순이익)",
+    "method": "PBR(자본총계)",
     "multiple": 40.0,
     "sector": "2차전지"
   },
