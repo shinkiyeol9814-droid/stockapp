@@ -178,5 +178,10 @@
     "method": "PER(순이익)",
     "multiple": 20.0,
     "sector": "엔진"
+  },
+  "298040": {
+    "method": "POR(영업익)",
+    "multiple": 12.0,
+    "sector": "전력"
   }
 }
