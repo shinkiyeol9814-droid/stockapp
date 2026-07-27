@@ -57,6 +57,26 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
         return None
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_last_and_prev_close(ticker: str):
+    """
+    야후의 실시간 현재가/전일종가(fast_info)를 직접 사용.
+    일봉 배열의 [-1]/[-2]로 전일종가를 추론하면 장중 진행형 봉이 계속
+    갱신되거나 날짜 경계를 지날 때 기준점이 흔들려 등락률이 튈 수 있어서,
+    변동 없는 전일 공식 종가를 기준으로 삼기 위함.
+    """
+    try:
+        import yfinance as yf
+        fi = yf.Ticker(ticker).fast_info
+        last = float(fi.last_price)
+        prev = float(fi.previous_close)
+        if last <= 0 or prev <= 0:
+            return None, None
+        return last, prev
+    except Exception:
+        return None, None
+
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
@@ -534,6 +554,11 @@ def render_macro():
                         continue
                     last  = float(hist["price"].iloc[-1])
                     prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
+                    if not ticker.startswith("_"):
+                        # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
+                        fi_last, fi_prev = _get_last_and_prev_close(ticker)
+                        if fi_last is not None and fi_prev is not None:
+                            last, prev = fi_last, fi_prev
                     chg_p = (last / prev - 1) * 100 if prev else 0
                     try:
                         val_str = f"{last:{fmt}} {unit}"
