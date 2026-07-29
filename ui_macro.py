@@ -42,19 +42,35 @@ _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 
 
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
+_PERIOD_DAYS = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
-    try:
-        import yfinance as yf
-        hist = yf.Ticker(ticker).history(period=period)
-        if hist.empty:
-            return None
-        df = hist[["Close"]].rename(columns={"Close": "price"})
-        if df.index.tz is not None:
-            df.index = df.index.tz_convert(None)
-        return df
-    except Exception:
-        return None
+    """
+    야후가 가끔 요청한 기간보다 훨씬 짧은(불완전한) 구간만 반환하는 경우가
+    있어(예: 1년 요청했는데 3개월치만 옴), 그런 응답을 그대로 5분간 캐싱해
+    버리면 차트가 앞부분이 잘린 것처럼 보인다. 반환된 구간이 요청 기간의
+    절반에도 못 미치면 불완전한 응답으로 간주하고 재시도한다.
+    """
+    import yfinance as yf
+    expected_days = _PERIOD_DAYS.get(period, 365)
+    last_df = None
+    for attempt in range(3):
+        try:
+            hist = yf.Ticker(ticker).history(period=period)
+            if hist.empty:
+                continue
+            df = hist[["Close"]].rename(columns={"Close": "price"})
+            if df.index.tz is not None:
+                df.index = df.index.tz_convert(None)
+            last_df = df
+            span_days = (df.index[-1] - df.index[0]).days
+            if span_days >= expected_days * 0.5:
+                return df
+        except Exception:
+            continue
+    return last_df
 
 
 _KST = timezone(timedelta(hours=9))
