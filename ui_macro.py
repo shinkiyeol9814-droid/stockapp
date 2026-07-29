@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import concurrent.futures
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import json
 import os
 import re
@@ -57,6 +57,9 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
         return None
 
 
+_KST = timezone(timedelta(hours=9))
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_last_and_prev_close(ticker: str):
     """
@@ -64,17 +67,28 @@ def _get_last_and_prev_close(ticker: str):
     일봉 배열의 [-1]/[-2]로 전일종가를 추론하면 장중 진행형 봉이 계속
     갱신되거나 날짜 경계를 지날 때 기준점이 흔들려 등락률이 튈 수 있어서,
     변동 없는 전일 공식 종가를 기준으로 삼기 위함.
+    regularMarketTime(최종 시세 갱신 시각)도 같이 반환 — 미국채 수익률처럼
+    거래시간이 짧은 지표는 한국 시간대엔 몇 시간 전 값에서 멈춰있을 수 있어
+    "언제 기준 값인지"를 화면에 같이 보여주기 위함.
     """
     try:
         import yfinance as yf
-        fi = yf.Ticker(ticker).fast_info
+        t = yf.Ticker(ticker)
+        fi = t.fast_info
         last = float(fi.last_price)
         prev = float(fi.previous_close)
         if last <= 0 or prev <= 0:
-            return None, None
-        return last, prev
+            return None, None, None
+        last_update = None
+        try:
+            rt = t.get_info().get("regularMarketTime")
+            if rt:
+                last_update = datetime.fromtimestamp(rt, tz=timezone.utc).astimezone(_KST)
+        except Exception:
+            pass
+        return last, prev, last_update
     except Exception:
-        return None, None
+        return None, None, None
 
 
 
@@ -554,11 +568,13 @@ def render_macro():
                         continue
                     last  = float(hist["price"].iloc[-1])
                     prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
+                    last_update = None
                     if not ticker.startswith("_"):
                         # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
-                        fi_last, fi_prev = _get_last_and_prev_close(ticker)
+                        fi_last, fi_prev, fi_time = _get_last_and_prev_close(ticker)
                         if fi_last is not None and fi_prev is not None:
                             last, prev = fi_last, fi_prev
+                            last_update = fi_time
                     chg_p = (last / prev - 1) * 100 if prev else 0
                     try:
                         val_str = f"{last:{fmt}} {unit}"
@@ -566,12 +582,18 @@ def render_macro():
                         val_str = f"{last:.2f} {unit}"
                     clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
                     arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
+                    update_html = (
+                        f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                        f"{last_update:%m/%d %H:%M} 기준</div>"
+                        if last_update else ""
+                    )
                     st.markdown(
                         f"<div style='padding:4px 0 2px;'>"
                         f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>{name}</div>"
                         f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{val_str}</div>"
                         f"<div style='font-size:12px;color:{clr};margin-top:2px;'>"
                         f"{arrow} {chg_p:+.2f}% 전일</div>"
+                        f"{update_html}"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
