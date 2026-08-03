@@ -598,11 +598,20 @@ def render_macro():
                         val_str = f"{last:.2f} {unit}"
                     clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
                     arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
-                    update_html = (
-                        f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                        f"{last_update:%m/%d %H:%M} 기준</div>"
-                        if last_update else ""
-                    )
+                    update_html = ""
+                    if last_update:
+                        age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
+                        if age_hours >= 24:
+                            age_str = f"{age_hours/24:.0f}일 전" if age_hours >= 48 else f"{age_hours:.0f}시간 전"
+                            update_html = (
+                                f"<div style='font-size:10px;color:#e65100;font-weight:600;margin-top:1px;'>"
+                                f"⚠️ {last_update:%m/%d %H:%M} 기준 ({age_str})</div>"
+                            )
+                        else:
+                            update_html = (
+                                f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                                f"{last_update:%m/%d %H:%M} 기준</div>"
+                            )
                     st.markdown(
                         f"<div style='padding:4px 0 2px;'>"
                         f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>{name}</div>"
