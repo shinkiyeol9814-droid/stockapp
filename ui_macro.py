@@ -585,12 +585,16 @@ def render_macro():
                     last  = float(hist["price"].iloc[-1])
                     prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
                     last_update = None
-                    if not ticker.startswith("_"):
+                    is_cache_based = ticker.startswith("_")
+                    if not is_cache_based:
                         # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
                         fi_last, fi_prev, fi_time = _get_last_and_prev_close(ticker)
                         if fi_last is not None and fi_prev is not None:
                             last, prev = fi_last, fi_prev
                             last_update = fi_time
+                    else:
+                        # 캐시 파일 기반(리튬/DDR5/DDR4) — 방금 확인한 값이므로 age 경고 없이 시각만 표시
+                        last_update = hist.index[-1].to_pydatetime()
                     chg_p = (last / prev - 1) * 100 if prev else 0
                     try:
                         val_str = f"{last:{fmt}} {unit}"
@@ -599,7 +603,19 @@ def render_macro():
                     clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
                     arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
                     update_html = ""
-                    if last_update:
+                    if is_cache_based and last_update:
+                        if prev == last and len(hist) > 1:
+                            prev_date = hist.index[-2].to_pydatetime()
+                            update_html = (
+                                f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                                f"{last_update:%m/%d %H:%M} 확인 ({prev_date:%m/%d} 이후 무변동)</div>"
+                            )
+                        else:
+                            update_html = (
+                                f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                                f"{last_update:%m/%d %H:%M} 기준</div>"
+                            )
+                    elif last_update:
                         age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
                         if age_hours >= 24:
                             age_str = f"{age_hours/24:.0f}일 전" if age_hours >= 48 else f"{age_hours:.0f}시간 전"
