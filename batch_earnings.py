@@ -50,24 +50,26 @@ def parse_earnings_text(text):
         
         # 💡 [삭제됨] 너무 깐깐했던 기존 quarter_match 정규식 삭제!
         
-        rev_match = re.search(r'매출액\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^\/]*\/\s*([+-]?\s*\d+)%\))?', text)
+        # 💡 예상치 구분자가 "/"(구 포맷)와 ","(신 포맷) 둘 다 있고, 괴리율도
+        # 정수(-253%)뿐 아니라 소수(-0.7%)로 오는 경우가 있어 둘 다 지원한다.
+        rev_match = re.search(r'매출액\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^,/]*[,/]\s*([+-]?\s*\d+\.?\d*)%\))?', text)
         if rev_match:
             data['매출액'] = rev_match.group(1)
             data['매출괴리율'] = rev_match.group(3).replace(' ', '') if rev_match.group(3) else ""
         else:
             data['매출액'] = "-"
             data['매출괴리율'] = ""
-        
-        op_match = re.search(r'영업익\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^\/]*\/\s*([+-]?\s*\d+)%\))?', text)
+
+        op_match = re.search(r'영업익\s*:\s*([-+]?[\d,]+)억\s*(?:\(예상치\s*:\s*([-+]?[\d,]+)[^,/]*[,/]\s*([+-]?\s*\d+\.?\d*)%\))?', text)
         if op_match:
             data['영업익'] = op_match.group(1)
             data['예상영업익'] = op_match.group(2) if op_match.group(2) else ""
             raw_gap = op_match.group(3)
             data['괴리율'] = raw_gap.replace(' ', '') if raw_gap else ""
-            
+
             if data['예상영업익'] and data['괴리율']:
                 try:
-                    diff = int(data['괴리율'])
+                    diff = float(data['괴리율'])
                     if diff >= 10: data['서프_상태'] = "🔥 어닝서프라이즈"
                     elif diff > 0: data['서프_상태'] = "🔥 컨센상회"
                     elif diff <= -10: data['서프_상태'] = "❄️ 어닝쇼크"
@@ -85,19 +87,20 @@ def parse_earnings_text(text):
         data['해당분기'] = "분기미상" # 기본값
         data['YoY'] = ""
         data['QoQ'] = ""
-        
-        history_match = re.search(r'\*\*최근 실적 추이\*\*\s*(.+?)(?:공시링크|$)', text, re.DOTALL)
+
+        # 💡 헤더가 "**최근 실적 추이**"(구 포맷)와 "* 최근 실적"(신 포맷) 둘 다 온다.
+        history_match = re.search(r'\*+\s*최근\s*실적[^\n]*(.+?)(?:공시링크|$)', text, re.DOTALL)
         if history_match:
             history_text = history_match.group(1)
-            
-            # 💡 [핵심] 숫자나 '억' 글자 유무에 상관없이, 
+
+            # 💡 [핵심] 숫자나 '억' 글자 유무에 상관없이,
             # 이 구역에서 가장 먼저 등장하는 '2025.4Q' 같은 패턴을 무조건 잡아냅니다!
             q_match = re.search(r'(\d{4}\.\d[Qq])', history_text)
             if q_match:
                 data['해당분기'] = q_match.group(1).upper()
-                
-            # YoY, QoQ 계산 로직은 기존 유지
-            hist_lines = re.findall(r'(\d{4}\.\d[Qq])\s+([-+]?[\d,]+)억\s*/\s*([-+]?[\d,]+)억', history_text)
+
+            # YoY, QoQ 계산 로직은 기존 유지 (분기 뒤 ":" 유무 둘 다 허용)
+            hist_lines = re.findall(r'(\d{4}\.\d[Qq])\s*:?\s*([-+]?[\d,]+)억\s*/\s*([-+]?[\d,]+)억', history_text)
             if len(hist_lines) >= 2:
                 data['QoQ'] = calc_growth(hist_lines[0][2], hist_lines[1][2])
             if len(hist_lines) >= 5:
@@ -140,7 +143,10 @@ async def main():
     
     try:
         async for message in client.iter_messages(TARGET_CHANNEL, limit=None):
-            msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
+            # 💡 텔레그램 메시지를 "수정(edit)"하면 message.date(최초 전송 시각)는
+            # 그대로라, date만 보면 정정된 메시지를 놓친다. edit_date가 있으면
+            # 그걸 기준으로 신선도를 판단해서 수정분도 다시 수집되게 한다.
+            msg_time_kst = (message.edit_date or message.date).replace(tzinfo=None) + timedelta(hours=9)
             
             # 제일 최신 메시지의 시간을 기록해 둡니다.
             if msg_time_kst > max_seen_time:
