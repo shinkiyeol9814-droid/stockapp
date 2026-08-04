@@ -592,6 +592,14 @@ def render_macro():
                         if fi_last is not None and fi_prev is not None:
                             last, prev = fi_last, fi_prev
                             last_update = fi_time
+                            # 일부 티커(예: ^TNX)는 차트용 일별 시계열이 fast_info보다
+                            # 며칠 뒤처져 올 수 있다. "현재가"와 차트가 다른 날을
+                            # 보여주는 어긋남이 없도록, 더 최신이면 이어붙인다.
+                            if last_update.date() > hist.index[-1].date():
+                                new_row = pd.DataFrame(
+                                    {"price": [last]}, index=[pd.Timestamp(last_update.date())]
+                                )
+                                hist = pd.concat([hist, new_row])
                     else:
                         # 캐시 파일 기반(리튬/DDR5/DDR4) — 방금 확인한 값이므로 age 경고 없이 시각만 표시
                         last_update = hist.index[-1].to_pydatetime()
