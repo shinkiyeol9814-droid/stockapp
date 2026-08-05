@@ -74,11 +74,6 @@
     "multiple": 12.0,
     "sector": "화장품"
   },
-  "009540": {
-    "method": "PER(순이익)",
-    "multiple": 7.0,
-    "sector": "조선"
-  },
   "071970": {
     "method": "PER(순이익)",
     "multiple": 20.0,
@@ -89,6 +84,11 @@
     "multiple": 20.0,
     "sector": "조선"
   },
+  "009540": {
+    "method": "PER(순이익)",
+    "multiple": 7.0,
+    "sector": "조선"
+  },
   "329180": {
     "method": "PER(순이익)",
     "multiple": 20.0,
@@ -96,7 +96,7 @@
   },
   "010140": {
     "method": "PER(순이익)",
-    "multiple": 12.0,
+    "multiple": 20.0,
     "sector": "조선"
   },
   "042660": {
