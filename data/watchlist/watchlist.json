@@ -1,25 +1,15 @@
 {
-  "009150": {
+  "005930": {
     "method": "PER(순이익)",
-    "multiple": 70.0,
+    "multiple": 10.0,
     "sector": "반도체"
   },
-  "222800": {
+  "000660": {
     "method": "PER(순이익)",
-    "multiple": 30.0,
+    "multiple": 10.0,
     "sector": "반도체"
   },
-  "007660": {
-    "method": "PER(순이익)",
-    "multiple": 30.0,
-    "sector": "반도체"
-  },
-  "353200": {
-    "method": "PER(순이익)",
-    "multiple": 30.0,
-    "sector": "반도체"
-  },
-  "000150": {
+  "011070": {
     "method": "PER(순이익)",
     "multiple": 30.0,
     "sector": "반도체"
@@ -29,19 +19,29 @@
     "multiple": 20.0,
     "sector": "반도체"
   },
-  "011070": {
+  "000150": {
     "method": "PER(순이익)",
     "multiple": 30.0,
     "sector": "반도체"
   },
-  "000660": {
+  "353200": {
     "method": "PER(순이익)",
-    "multiple": 10.0,
+    "multiple": 30.0,
     "sector": "반도체"
   },
-  "005930": {
+  "007660": {
     "method": "PER(순이익)",
-    "multiple": 10.0,
+    "multiple": 30.0,
+    "sector": "반도체"
+  },
+  "222800": {
+    "method": "PER(순이익)",
+    "multiple": 30.0,
+    "sector": "반도체"
+  },
+  "009150": {
+    "method": "PER(순이익)",
+    "multiple": 70.0,
     "sector": "반도체"
   },
   "192820": {
