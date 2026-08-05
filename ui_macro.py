@@ -18,15 +18,17 @@ _DDR4_CACHE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ddr4_
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
 MARKET_ITEMS = [
-    ("원/달러 환율",  "USDKRW=X", "₩",    ",.0f"),
-    ("미국채 10년",   "^TNX",      "%",    ".2f"),
-    ("WTI 유가",      "CL=F",      "$",    ",.2f"),
-    ("Brent 유가",    "BZ=F",      "$",    ",.2f"),
-    ("금",            "GC=F",      "$",    ",.0f"),
-    ("구리",          "HG=F",      "$/lb", ".3f"),
-    ("리튬 탄산염",    "_LITHIUM_",  "CNY/t",",.0f"),
-    ("DDR5 16Gb Spot", "_DRAM_",    "$",    ",.3f"),
-    ("DDR4 16Gb Spot", "_DDR4_",    "$",    ",.3f"),
+    # (이름, 티커, 단위, 포맷, 표시배수 — 원/100엔처럼 관례상 배수 적용해 보여줄 때 사용)
+    ("원/달러 환율",   "USDKRW=X", "₩",    ",.0f", 1),
+    ("원/100엔 환율",  "JPYKRW=X", "₩",    ",.1f", 100),
+    ("미국채 10년",    "^TNX",      "%",    ".2f", 1),
+    ("WTI 유가",       "CL=F",      "$",    ",.2f", 1),
+    ("Brent 유가",     "BZ=F",      "$",    ",.2f", 1),
+    ("금",             "GC=F",      "$",    ",.0f", 1),
+    ("구리",           "HG=F",      "$/lb", ".3f", 1),
+    ("리튬 탄산염",     "_LITHIUM_",  "CNY/t",",.0f", 1),
+    ("DDR5 16Gb Spot", "_DRAM_",    "$",    ",.3f", 1),
+    ("DDR4 16Gb Spot", "_DDR4_",    "$",    ",.3f", 1),
 ]
 
 TRADE_CATS = {
@@ -568,9 +570,9 @@ def render_macro():
                 else:
                     hists[name] = _get_price_history(ticker, period)
 
-        for row_start in (0, 3, 6):
+        for row_start in range(0, len(MARKET_ITEMS), 3):
             cols = st.columns(3)
-            for ci, (name, ticker, unit, fmt) in enumerate(MARKET_ITEMS[row_start:row_start + 3]):
+            for ci, (name, ticker, unit, fmt, mult) in enumerate(MARKET_ITEMS[row_start:row_start + 3]):
                 hist = hists[name]
                 with cols[ci]:
                     if hist is None or hist.empty:
@@ -582,6 +584,9 @@ def render_macro():
                             unsafe_allow_html=True,
                         )
                         continue
+                    if mult != 1:
+                        hist = hist.copy()
+                        hist["price"] = hist["price"] * mult
                     last  = float(hist["price"].iloc[-1])
                     prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
                     last_update = None
@@ -590,7 +595,7 @@ def render_macro():
                         # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
                         fi_last, fi_prev, fi_time = _get_last_and_prev_close(ticker)
                         if fi_last is not None and fi_prev is not None:
-                            last, prev = fi_last, fi_prev
+                            last, prev = fi_last * mult, fi_prev * mult
                             last_update = fi_time
                             # 일부 티커(예: ^TNX)는 차트용 일별 시계열이 fast_info보다
                             # 며칠 뒤처져 올 수 있다. "현재가"와 차트가 다른 날을
