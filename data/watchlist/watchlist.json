@@ -134,6 +134,11 @@
     "multiple": 3.0,
     "sector": "2차전지"
   },
+  "108490": {
+    "method": "PER(순이익)",
+    "multiple": 20.0,
+    "sector": "로봇"
+  },
   "012330": {
     "method": "PER(순이익)",
     "multiple": 15.0,
@@ -142,11 +147,6 @@
   "005380": {
     "method": "PER(순이익)",
     "multiple": 15.0,
-    "sector": "로봇"
-  },
-  "108490": {
-    "method": "PER(순이익)",
-    "multiple": 20.0,
     "sector": "로봇"
   },
   "006260": {
