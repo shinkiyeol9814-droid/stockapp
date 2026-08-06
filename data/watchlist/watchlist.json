@@ -149,9 +149,19 @@
     "multiple": 20.0,
     "sector": "로봇"
   },
+  "267260": {
+    "method": "PER(순이익)",
+    "multiple": 40.0,
+    "sector": "전력"
+  },
   "010120": {
     "method": "PER(순이익)",
     "multiple": 70.0,
+    "sector": "전력"
+  },
+  "298040": {
+    "method": "PER(순이익)",
+    "multiple": 40.0,
     "sector": "전력"
   },
   "062040": {
@@ -159,19 +169,9 @@
     "multiple": 40.0,
     "sector": "전력"
   },
-  "267260": {
-    "method": "PER(순이익)",
-    "multiple": 40.0,
-    "sector": "전력"
-  },
   "006260": {
     "method": "PER(순이익)",
     "multiple": 20.0,
-    "sector": "전력"
-  },
-  "298040": {
-    "method": "PER(순이익)",
-    "multiple": 40.0,
     "sector": "전력"
   },
   "016360": {
