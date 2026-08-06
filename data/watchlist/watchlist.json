@@ -84,17 +84,17 @@
     "multiple": 20.0,
     "sector": "조선"
   },
+  "010140": {
+    "method": "PER(순이익)",
+    "multiple": 20.0,
+    "sector": "조선"
+  },
   "009540": {
     "method": "PER(순이익)",
     "multiple": 7.0,
     "sector": "조선"
   },
   "329180": {
-    "method": "PER(순이익)",
-    "multiple": 20.0,
-    "sector": "조선"
-  },
-  "010140": {
     "method": "PER(순이익)",
     "multiple": 20.0,
     "sector": "조선"
