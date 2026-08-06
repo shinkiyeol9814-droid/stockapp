@@ -206,7 +206,9 @@ def _py_upside(fin_df, stocks, method, mult, price, years):
     return (tp / price - 1) * 100
 
 # 포매터
-def _jsnull(v): return f"({v} == null || (typeof {v} === 'number' && isNaN({v})))"
+# 💡 v가 null/undefined/NaN뿐 아니라 문자열 등 숫자가 아닌 타입일 때도 걸러야
+# 아래 포맷터들의 v.toFixed()가 "v.toFixed is not a function"으로 죽지 않는다.
+def _jsnull(v): return f"({v} == null || typeof {v} !== 'number' || isNaN({v}))"
 
 _upside_style = JsCode(f"""
 function(params) {{
