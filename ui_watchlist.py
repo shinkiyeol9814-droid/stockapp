@@ -347,13 +347,13 @@ def render_watchlist():
             if code not in watchlist:
                 updated = {
                     c: {
-                        "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "POR(영업익)")),
+                        "method":   st.session_state.get(f"wl_m_{c}", cfg.get("method", "PER(순이익)")),
                         "multiple": float(st.session_state.get(f"wl_x_{c}", cfg.get("multiple", 12.0))),
                         "sector":   st.session_state.get(f"wl_s_{c}", cfg.get("sector", "기타")),
                     }
                     for c, cfg in watchlist.items()
                 }
-                updated[code] = {"method": "POR(영업익)", "multiple": 12.0, "sector": new_sector}
+                updated[code] = {"method": "PER(순이익)", "multiple": 12.0, "sector": new_sector}
                 if save_watchlist(updated):
                     st.session_state["_wl_fresh"] = updated  # 즉시 반영
                     st.session_state.pop(f"_wlc_{code}", None)
@@ -372,7 +372,7 @@ def render_watchlist():
     # ── 세션 상태 초기화 ─────────────────────────────────────────────────────
     for code, cfg in watchlist.items():
         if f"wl_m_{code}" not in st.session_state:
-            st.session_state[f"wl_m_{code}"] = cfg.get("method", "POR(영업익)")
+            st.session_state[f"wl_m_{code}"] = cfg.get("method", "PER(순이익)")
         if f"wl_x_{code}" not in st.session_state:
             st.session_state[f"wl_x_{code}"] = float(cfg.get("multiple", 12.0))
         if f"wl_s_{code}" not in st.session_state:
@@ -392,12 +392,11 @@ def render_watchlist():
                 for code in executor.map(_load_one, uncached):
                     st.session_state[f"_wlc_{code}"] = True
 
-    # ── DataFrame 구성 ────────────────────────────────────────────────────────
+    # ── 섹터 그룹화 (섹터 순서를 유지하며 정렬, 같은 섹터 내 원래 순서 보존) ──
     CY, NY = f"{CUR_YEAR}E", f"{NEXT_YEAR}E"
     CY_YRS = [CUR_YEAR, CUR_YEAR - 1]    # 2026 → 2025 폴백
     NY_YRS = [NEXT_YEAR, CUR_YEAR]       # 2027 → 2026 폴백
 
-    # 섹터 순서를 유지하며 정렬 (같은 섹터 내에서는 watchlist 원래 순서 보존)
     sector_of = {c: st.session_state.get(f"wl_s_{c}", "기타") for c in codes}
     seen_sectors: list[str] = []
     for c in codes:
@@ -406,18 +405,53 @@ def render_watchlist():
             seen_sectors.append(s)
     sorted_codes = sorted(codes, key=lambda c: (seen_sectors.index(sector_of[c]), codes.index(c)))
 
+    sector_groups: dict[str, list[str]] = {}
+    for c in sorted_codes:
+        s = sector_of[c]
+        if s not in sector_groups:
+            sector_groups[s] = []
+        sector_groups[s].append(c)
+
+    # ── 섹터별 테이블 렌더링 (각각 독립 재실행되는 fragment) ─────────────────
+    # 💡 예전엔 편집 하나(평가방식/배수 변경)에도 8개 섹터 그리드 전체를
+    # 다시 그렸다(캐시 워밍 상태에서도 매번 ~5~7초). 섹터마다 fragment로
+    # 분리하면 같은 섹터 안에서 끝나는 편집(방식/배수/순서)은 그 섹터
+    # 그리드 하나만 재실행되어 체감 지연이 절반 이하로 줄어든다.
+    # 종목 삭제나 "섹터" 값 자체를 바꿔 다른 테이블로 옮기는 경우는 다른
+    # 섹터 구성에도 영향을 주므로, 그 경우만 전체 페이지를 재실행한다.
+    for sector, sc in sector_groups.items():
+        _render_sector_table(sector, sc, watchlist, CY, NY, CY_YRS, NY_YRS, force_reload)
+
+    _render_bottom(watchlist)
+
+
+_right = {"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}
+
+
+@st.fragment
+def _render_sector_table(sector, sc, watchlist, CY, NY, CY_YRS, NY_YRS, force_reload):
+    # 섹터 헤더
+    st.markdown(
+        f"<div style='margin:20px 0 4px 0;font-size:14px;font-weight:700;"
+        f"color:#1565C0;border-left:3px solid #1565C0;padding-left:8px;'>"
+        f"{sector}"
+        f"<span style='font-weight:400;color:#aaa;font-size:12px;margin-left:6px;'>{len(sc)}종목</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
     rows = []
-    for code in sorted_codes:
+    for code in sc:
         fin, stocks     = get_watch_financials(code)
         price, chg, nm  = get_live_price(code)
-        method = st.session_state.get(f"wl_m_{code}", "POR(영업익)")
+        method = st.session_state.get(f"wl_m_{code}", "PER(순이익)")
         mult   = float(st.session_state.get(f"wl_x_{code}", 12.0))
-        sector = sector_of[code]
+        cur_sector = st.session_state.get(f"wl_s_{code}", "기타")
         p = float(price) if price else None
         rows.append({
             "_code":    code,
             "종목명":   nm or code,
-            "섹터":     sector,
+            "섹터":     cur_sector,
             "현재가":   p,
             "등락률":   float(chg) if chg is not None else None,
             "평가방식": method,
@@ -429,179 +463,143 @@ def render_watchlist():
             f"{NY} 업사이드": _py_upside(fin, stocks, method, mult, p, NY_YRS),
             "삭제":            "",
         })
-    # ── 섹터별 그룹화 ─────────────────────────────────────────────────────────
-    sector_groups: dict[str, list[str]] = {}
-    for c in sorted_codes:
-        s = sector_of[c]
-        if s not in sector_groups:
-            sector_groups[s] = []
-        sector_groups[s].append(c)
 
-    rows_by_code = {r["_code"]: r for r in rows}
-    NUMERIC_COLS = ["현재배수", f"{CY} 목표가", f"{CY} 업사이드", f"{NY} 목표가", f"{NY} 업사이드"]
-    _right = {"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}
+    df_sec = pd.DataFrame(rows)
+    numeric_cols = ["현재배수", f"{CY} 목표가", f"{CY} 업사이드", f"{NY} 목표가", f"{NY} 업사이드"]
+    for _c in numeric_cols:
+        if _c in df_sec.columns:
+            df_sec[_c] = pd.to_numeric(df_sec[_c], errors="coerce")
 
-    # ── 섹터별 테이블 렌더링 ──────────────────────────────────────────────────
-    all_grids: list[tuple[str, list[str], object]] = []
+    gb = GridOptionsBuilder.from_dataframe(df_sec)
+    gb.configure_default_column(
+        resizable=True, filterable=False, sortable=False,
+        suppressMovable=True,
+        cellStyle={"fontSize": "13px", "display": "flex", "alignItems": "center"},
+    )
+    gb.configure_column("_code", hide=True)
+    gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
+                        cellStyle={"fontWeight": "700", "fontSize": "13px",
+                                   "display": "flex", "alignItems": "center"})
+    gb.configure_column("섹터", editable=True, cellStyle=_edit_style,
+                        minWidth=70, maxWidth=95,
+                        headerTooltip="클릭해서 섹터 변경 → 다음 저장 시 해당 섹터 테이블로 이동")
+    gb.configure_column("현재가",  valueFormatter=_price_fmt, type="numericColumn",
+                        minWidth=95, maxWidth=120)
+    gb.configure_column("등락률",  valueFormatter=_change_fmt, cellStyle=_change_style,
+                        type="numericColumn", minWidth=70, maxWidth=82)
+    gb.configure_column("평가방식", editable=True,
+                        cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": METHODS},
+                        cellStyle=_edit_style, minWidth=128, maxWidth=148)
+    gb.configure_column("목표배수", editable=True, type=["numericColumn"],
+                        valueFormatter=_mult_fmt,
+                        cellEditorParams={"step": 0.5},
+                        cellStyle=_edit_style, minWidth=68, maxWidth=82)
+    gb.configure_column("현재배수", valueFormatter=_mult_fmt, type="numericColumn",
+                        minWidth=68, maxWidth=82,
+                        cellStyle={**_right, "color": "#888"})
+    gb.configure_column(f"{CY} 목표가", valueFormatter=_tp_fmt, type="numericColumn",
+                        minWidth=95, maxWidth=115, cellStyle={**_right, "color": "#555"})
+    gb.configure_column(f"{CY} 업사이드", valueFormatter=_upside_fmt, cellStyle=_upside_style,
+                        type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
+    gb.configure_column(f"{NY} 목표가", valueFormatter=_tp_fmt, type="numericColumn",
+                        minWidth=95, maxWidth=115, cellStyle={**_right, "color": "#555"})
+    gb.configure_column(f"{NY} 업사이드", valueFormatter=_upside_fmt, cellStyle=_upside_style,
+                        type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
+    gb.configure_column("삭제", cellRenderer=_del_btn,
+                        headerName="", width=48, maxWidth=48,
+                        suppressMovable=True, editable=False)
+    gb.configure_grid_options(
+        rowDragManaged=True,
+        animateRows=True,
+        suppressRowClickSelection=True,
+        rowHeight=42,
+        headerHeight=38,
+        domLayout="autoHeight",
+    )
 
-    for sector, sc in sector_groups.items():
-        # 섹터 헤더
-        st.markdown(
-            f"<div style='margin:20px 0 4px 0;font-size:14px;font-weight:700;"
-            f"color:#1565C0;border-left:3px solid #1565C0;padding-left:8px;'>"
-            f"{sector}"
-            f"<span style='font-weight:400;color:#aaa;font-size:12px;margin-left:6px;'>{len(sc)}종목</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+    # 이 섹터 자체가 방금 편집돼 fragment만 재실행된 경우에도 강제 새로고침
+    frag_reload = st.session_state.pop(f"_wl_frag_reload_{sector}", False)
+    safe_key = "".join(ch if ch.isalnum() else "_" for ch in sector)
+    grid_resp = AgGrid(
+        df_sec,
+        gridOptions=gb.build(),
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        allow_unsafe_jscode=True,
+        reload_data=force_reload or frag_reload,
+        theme="alpine",
+        fit_columns_on_grid_load=False,
+        key=f"wl_aggrid_{safe_key}",
+    )
 
-        df_sec = pd.DataFrame([rows_by_code[c] for c in sc if c in rows_by_code])
-        for _c in NUMERIC_COLS:
-            if _c in df_sec.columns:
-                df_sec[_c] = pd.to_numeric(df_sec[_c], errors="coerce")
+    # ── 변경 감지 & 자동 저장 (이 섹터 그리드만) ─────────────────────────────
+    ret: pd.DataFrame = grid_resp.data
+    if ret is None or ret.empty or "_code" not in ret.columns:
+        return
 
-        gb = GridOptionsBuilder.from_dataframe(df_sec)
-        gb.configure_default_column(
-            resizable=True, filterable=False, sortable=False,
-            suppressMovable=True,
-            cellStyle={"fontSize": "13px", "display": "flex", "alignItems": "center"},
-        )
-        gb.configure_column("_code", hide=True)
-        gb.configure_column("종목명", rowDrag=True, minWidth=110, maxWidth=160,
-                            cellStyle={"fontWeight": "700", "fontSize": "13px",
-                                       "display": "flex", "alignItems": "center"})
-        gb.configure_column("섹터", editable=True, cellStyle=_edit_style,
-                            minWidth=70, maxWidth=95,
-                            headerTooltip="클릭해서 섹터 변경 → 다음 저장 시 해당 섹터 테이블로 이동")
-        gb.configure_column("현재가",  valueFormatter=_price_fmt, type="numericColumn",
-                            minWidth=95, maxWidth=120)
-        gb.configure_column("등락률",  valueFormatter=_change_fmt, cellStyle=_change_style,
-                            type="numericColumn", minWidth=70, maxWidth=82)
-        gb.configure_column("평가방식", editable=True,
-                            cellEditor="agSelectCellEditor",
-                            cellEditorParams={"values": METHODS},
-                            cellStyle=_edit_style, minWidth=128, maxWidth=148)
-        gb.configure_column("목표배수", editable=True, type=["numericColumn"],
-                            valueFormatter=_mult_fmt,
-                            cellEditorParams={"step": 0.5},
-                            cellStyle=_edit_style, minWidth=68, maxWidth=82)
-        gb.configure_column("현재배수", valueFormatter=_mult_fmt, type="numericColumn",
-                            minWidth=68, maxWidth=82,
-                            cellStyle={**_right, "color": "#888"})
-        gb.configure_column(f"{CY} 목표가", valueFormatter=_tp_fmt, type="numericColumn",
-                            minWidth=95, maxWidth=115, cellStyle={**_right, "color": "#555"})
-        gb.configure_column(f"{CY} 업사이드", valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                            type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
-        gb.configure_column(f"{NY} 목표가", valueFormatter=_tp_fmt, type="numericColumn",
-                            minWidth=95, maxWidth=115, cellStyle={**_right, "color": "#555"})
-        gb.configure_column(f"{NY} 업사이드", valueFormatter=_upside_fmt, cellStyle=_upside_style,
-                            type="numericColumn", sortable=True, minWidth=85, maxWidth=105)
-        gb.configure_column("삭제", cellRenderer=_del_btn,
-                            headerName="", width=48, maxWidth=48,
-                            suppressMovable=True, editable=False)
-        gb.configure_grid_options(
-            rowDragManaged=True,
-            animateRows=True,
-            suppressRowClickSelection=True,
-            rowHeight=42,
-            headerHeight=38,
-            domLayout="autoHeight",
-        )
+    current_codes = [
+        c for c in ret["_code"].tolist()
+        if c and not (isinstance(c, float) and pd.isna(c))
+    ]
+    deleted = [c for c in sc if c not in current_codes]
 
-        safe_key = "".join(ch if ch.isalnum() else "_" for ch in sector)
-        grid_resp = AgGrid(
-            df_sec,
-            gridOptions=gb.build(),
-            update_mode=GridUpdateMode.MODEL_CHANGED,
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            allow_unsafe_jscode=True,
-            reload_data=force_reload,
-            theme="alpine",
-            fit_columns_on_grid_load=False,
-            key=f"wl_aggrid_{safe_key}",
-        )
-        all_grids.append((sector, sc, grid_resp))
-
-    # ── 변경 감지 & 자동 저장 (전체 그리드 취합) ─────────────────────────────
-    all_current_codes: list[str] = []
-    all_ret_rows: list = []
-
-    for sector, sc, resp in all_grids:
-        ret: pd.DataFrame = resp.data
-        if ret is None or ret.empty or "_code" not in ret.columns:
-            all_current_codes.extend(sc)   # 그리드 미반응 시 원래 코드 유지
-            continue
-        sec_current = [
-            c for c in ret["_code"].tolist()
-            if c and not (isinstance(c, float) and pd.isna(c))
-        ]
-        all_current_codes.extend(sec_current)
-        for _, row in ret.iterrows():
-            all_ret_rows.append(row)
-
-    # 삭제 감지
-    deleted = [c for c in codes if c not in all_current_codes]
-    if deleted:
-        for c in deleted:
-            for k in [f"wl_m_{c}", f"wl_x_{c}", f"wl_s_{c}", f"_wlc_{c}"]:
-                st.session_state.pop(k, None)
-        new_wl = {
-            c: {
-                "method":   st.session_state.get(f"wl_m_{c}", watchlist[c].get("method", "POR(영업익)")),
-                "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist[c].get("multiple", 12.0))),
-                "sector":   st.session_state.get(f"wl_s_{c}", watchlist[c].get("sector", "기타")),
-            }
-            for c in all_current_codes if c in watchlist
-        }
-        save_watchlist(new_wl)
-        st.session_state["_wl_fresh"] = new_wl
-        st.rerun()
-
-    # 방식·배수·섹터 변경 감지
     settings_changed = False
+    sector_moved = False  # "섹터" 셀 자체를 바꿔 다른 테이블로 옮기려는 경우
     new_settings: dict[str, tuple] = {}
-    for row in all_ret_rows:
+    for _, row in ret.iterrows():
         c = row.get("_code", "")
         if not c or c not in watchlist:
             continue
-        new_m = str(row.get("평가방식") or "POR(영업익)")
+        new_m = str(row.get("평가방식") or "PER(순이익)")
         try:
             new_x = float(row.get("목표배수") or 12.0)
         except (TypeError, ValueError):
             new_x = 12.0
         new_s = str(row.get("섹터") or "기타")
+        if new_s != sector:
+            sector_moved = True
         if (st.session_state.get(f"wl_m_{c}") != new_m or
                 abs(float(st.session_state.get(f"wl_x_{c}", 12.0)) - new_x) > 0.001 or
                 st.session_state.get(f"wl_s_{c}", "기타") != new_s):
             new_settings[c] = (new_m, new_x, new_s)
             settings_changed = True
 
-    # 순서 변경 감지
-    order_changed = all_current_codes != sorted_codes
+    order_changed = current_codes != sc
 
-    if settings_changed or order_changed:
-        new_wl = {
-            c: {
-                "method":   new_settings[c][0] if c in new_settings
-                            else st.session_state.get(f"wl_m_{c}", watchlist.get(c, {}).get("method", "POR(영업익)")),
-                "multiple": new_settings[c][1] if c in new_settings
-                            else float(st.session_state.get(f"wl_x_{c}", watchlist.get(c, {}).get("multiple", 12.0))),
-                "sector":   new_settings[c][2] if c in new_settings
-                            else st.session_state.get(f"wl_s_{c}", watchlist.get(c, {}).get("sector", "기타")),
-            }
-            for c in all_current_codes if c in watchlist
+    if not (deleted or sector_moved or settings_changed or order_changed):
+        return  # 변경 없음 — 저장/재실행 불필요
+
+    for c in deleted:
+        for k in [f"wl_m_{c}", f"wl_x_{c}", f"wl_s_{c}", f"_wlc_{c}"]:
+            st.session_state.pop(k, None)
+    for c, (m, x, s) in new_settings.items():
+        st.session_state[f"wl_m_{c}"] = m
+        st.session_state[f"wl_x_{c}"] = x
+        st.session_state[f"wl_s_{c}"] = s
+
+    new_wl = {
+        c: {
+            "method":   st.session_state.get(f"wl_m_{c}", watchlist.get(c, {}).get("method", "PER(순이익)")),
+            "multiple": float(st.session_state.get(f"wl_x_{c}", watchlist.get(c, {}).get("multiple", 12.0))),
+            "sector":   st.session_state.get(f"wl_s_{c}", watchlist.get(c, {}).get("sector", "기타")),
         }
-        save_watchlist(new_wl)
-        st.session_state["_wl_fresh"] = new_wl  # 저장 직후 재조회(GitHub GET) 생략
+        for c in watchlist if c not in deleted
+    }
+    save_watchlist(new_wl)
+    st.session_state["_wl_fresh"] = new_wl  # 저장 직후 재조회(GitHub GET) 생략
 
-        if settings_changed:
-            st.session_state["_wl_pending"] = new_settings
-            st.toast("저장됨", icon="✅")
-            st.rerun()
-        else:
-            st.toast("순서 저장됨", icon="✅")
-
-    _render_bottom(watchlist)
+    if deleted or sector_moved:
+        # 다른 섹터 테이블 구성에도 영향 → 이 fragment만으론 부족, 전체 재실행
+        st.toast("저장됨", icon="✅")
+        st.rerun()
+    elif settings_changed:
+        # 이 섹터 안에서 끝나는 변경 → 이 그리드만 재실행
+        st.session_state[f"_wl_frag_reload_{sector}"] = True
+        st.toast("저장됨", icon="✅")
+        st.rerun(scope="fragment")
+    else:
+        st.toast("순서 저장됨", icon="✅")
 
 
 def _render_bottom(watchlist: dict = None):
