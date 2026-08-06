@@ -114,19 +114,14 @@
     "multiple": 15.0,
     "sector": "태양광"
   },
-  "006400": {
-    "method": "PBR(자본총계)",
-    "multiple": 2.0,
-    "sector": "2차전지"
-  },
   "005490": {
     "method": "PBR(자본총계)",
     "multiple": 15.0,
     "sector": "2차전지"
   },
-  "078600": {
+  "006400": {
     "method": "PBR(자본총계)",
-    "multiple": 5.0,
+    "multiple": 2.0,
     "sector": "2차전지"
   },
   "373220": {
@@ -134,9 +129,14 @@
     "multiple": 3.0,
     "sector": "2차전지"
   },
-  "108490": {
+  "078600": {
+    "method": "PBR(자본총계)",
+    "multiple": 5.0,
+    "sector": "2차전지"
+  },
+  "005380": {
     "method": "PER(순이익)",
-    "multiple": 20.0,
+    "multiple": 15.0,
     "sector": "로봇"
   },
   "012330": {
@@ -144,9 +144,9 @@
     "multiple": 15.0,
     "sector": "로봇"
   },
-  "005380": {
+  "108490": {
     "method": "PER(순이익)",
-    "multiple": 15.0,
+    "multiple": 20.0,
     "sector": "로봇"
   },
   "006260": {
