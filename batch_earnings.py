@@ -14,6 +14,20 @@ TARGET_CHANNEL = "https://t.me/darthacking"
 DATA_FILE = "data/earnings/earnings_data.json"
 SYNC_FILE = "data/earnings/last_sync.txt" # 💡 마지막 수집 시간을 기억할 메모장!
 
+def _report_priority(entry):
+    """
+    연결(consolidated) > 라벨 없음(모호) > 개별(standalone) 순으로 신뢰도를 매긴다.
+    자회사가 많은 회사(예: 네이버)는 개별 매출이 연결의 절반 이하로 나올 수 있어서,
+    같은 분기에 개별 잠정공시가 연결보다 늦게 올라오면 그대로 덮어써 버려 실적이
+    실제보다 훨씬 나쁘게(혹은 이상하게) 보이는 문제가 있었다.
+    """
+    title = entry.get('보고서명', '') or ''
+    if '연결' in title:
+        return 2
+    if '개별' in title:
+        return 0
+    return 1  # 라벨이 아예 없는 경우 (모호) — 연결/개별 어느 쪽인지 제목만으로는 알 수 없음
+
 def calc_growth(cur_val, prev_val):
     try:
         cur = int(cur_val.replace(',', ''))
@@ -163,6 +177,14 @@ async def main():
                     code = parsed_data['코드']
                     if code not in current_run_seen:
                         current_run_seen.add(code)
+                        existing = earnings_dict.get(code)
+                        # 같은 분기에 대해 신뢰도가 더 낮은(예: 개별) 데이터가 나중에
+                        # 와도 기존(연결/모호)을 덮어쓰지 않는다. 동일 신뢰도거나 더
+                        # 높으면 기존과 동일하게 "최신이 이긴다"로 갱신한다.
+                        if (existing and existing.get('해당분기') == parsed_data.get('해당분기')
+                                and _report_priority(parsed_data) < _report_priority(existing)):
+                            print(f"⏭️ 건너뜀 (신뢰도 낮음, 기존 유지): {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d %H:%M')}")
+                            continue
                         earnings_dict[code] = parsed_data
                         new_count += 1
                         print(f"✅ 신규/갱신 수집: {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d %H:%M')}")
