@@ -103,6 +103,62 @@ async def _fetch_messages(api_id, api_hash, session_str, entity_key, limit, quer
         await client.disconnect()
     return msgs
 
+async def _search_one_channel(client, entity_key, name, query, limit):
+    try:
+        entity = int(entity_key)
+    except ValueError:
+        entity = entity_key
+    out = []
+    try:
+        async for m in client.iter_messages(entity, search=query, limit=limit):
+            if not (m.text or m.document):
+                continue
+            doc_name = ""
+            if m.document:
+                try:
+                    doc_name = m.document.attributes[0].file_name
+                except Exception:
+                    doc_name = f"file_{m.id}"
+            out.append((m.date, name, entity_key, m.text or "", doc_name))
+    except Exception:
+        pass
+    return out
+
+async def _fetch_search_all(api_id, api_hash, session_str, channels, query, limit_per_channel):
+    """channels: [(entity_key, name), ...] — 폴더 안 모든 채널을 동시에 검색해 최신순으로 합친다."""
+    client = TelegramClient(StringSession(session_str), api_id, api_hash)
+    await client.start()
+    try:
+        results = await asyncio.gather(
+            *[_search_one_channel(client, ek, nm, query, limit_per_channel) for ek, nm in channels]
+        )
+        flat = [row for chunk in results for row in chunk]
+        flat.sort(key=lambda r: r[0], reverse=True)
+        msgs = []
+        for dt, name, entity_key, text, doc_name in flat:
+            kst = dt.replace(tzinfo=None) + timedelta(hours=9)
+            msgs.append({
+                "time_str": kst.strftime("%m/%d %H:%M"),
+                "text": text,
+                "doc_name": doc_name,
+                "channel_name": name,
+                "channel_key": entity_key,
+            })
+        return msgs
+    finally:
+        await client.disconnect()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def search_all_channels(channels: tuple, query: str, limit_per_channel: int):
+    """channels: ((entity_key, name), ...) 튜플 — 폴더 안 채널 전체에서 동시 검색."""
+    api_id, api_hash, session, _ = _get_config()
+    if not api_id or not session:
+        return []
+    try:
+        return _run(_fetch_search_all(api_id, api_hash, session, channels, query, limit_per_channel))
+    except Exception:
+        return []
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_dialogs():
     api_id, api_hash, session, folder = _get_config()
@@ -179,12 +235,21 @@ def _render_msg(msg):
     text = msg["text"]
     doc_name = html.escape(msg["doc_name"]) if msg["doc_name"] else ""
 
+    # 전체 채널 검색 결과일 때만 어느 채널에서 나온 메시지인지 배지로 표시
+    channel_name = msg.get("channel_name")
+    badge = (
+        f"<div style='font-size:11.5px;font-weight:600;color:#3390ec;margin:2px 0 3px 2px;'>"
+        f"{_avatar_dot(channel_name)} {html.escape(channel_name)}</div>"
+        if channel_name else ""
+    )
+
     if doc_name:
         icon = "📄" if doc_name.lower().endswith(".pdf") else "📎"
         caption_raw = text[:120].replace(chr(10), ' ') if text else ""
         caption = (f"<div style='font-size:13px;color:#555;margin-top:4px;'>"
                    f"{_linkify(caption_raw)}</div>") if caption_raw else ""
         st.markdown(f"""
+        {badge}
         <div style='{_BUBBLE_OPEN}'>
             <div style='display:flex;align-items:center;gap:8px;'>
                 <div style='font-size:22px;'>{icon}</div>
@@ -200,6 +265,7 @@ def _render_msg(msg):
         preview = html.escape(text[:120].replace('\n', ' '))
         if len(text) > 120:
             st.markdown(f"""
+            {badge}
             <details style='{_BUBBLE_OPEN}'>
                 <summary style='cursor:pointer;list-style:none;outline:none;font-size:14px;color:#333;line-height:1.5;'>
                     {preview}…
@@ -210,6 +276,7 @@ def _render_msg(msg):
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
+            {badge}
             <div style='{_BUBBLE_OPEN}'>
                 <div style='font-size:14px;color:#1a1a1a;line-height:1.5;'>{full_html}</div>
                 {_TIME_HTML.format(t=time_str)}
@@ -328,22 +395,30 @@ def render_telegram_viewer():
                 search_messages.clear()
                 st.rerun()
 
-        query = st.text_input(
-            "검색", placeholder="🔍 채널 내 단어 검색...",
-            label_visibility="collapsed", key="tg_search",
-        )
+        sc1, sc2 = st.columns([4, 1.5])
+        with sc1:
+            query = st.text_input(
+                "검색", placeholder="🔍 단어 검색...",
+                label_visibility="collapsed", key="tg_search",
+            )
+        with sc2:
+            search_all = st.checkbox("전체 채널", key="tg_search_all",
+                                     help=f"'{folder_name}' 폴더의 모든 채널에서 동시 검색")
 
         is_search = bool(query and query.strip())
 
-        with st.spinner("메시지 로딩..." if not is_search else f"'{query}' 검색 중..."):
-            if is_search:
+        if is_search and search_all:
+            with st.spinner(f"전체 채널에서 '{query}' 검색 중..."):
+                channels = tuple((d["entity_key"], d["name"]) for d in dialogs)
+                messages = search_all_channels(channels, query.strip(), 8)  # 채널당 최대 8개
+            st.caption(f"🔍 전체 채널에서 **'{query}'** 검색 결과 {len(messages)}개")
+        elif is_search:
+            with st.spinner(f"'{query}' 검색 중..."):
                 messages = search_messages(selected["entity_key"], query.strip(), limit)
-            else:
-                messages = load_messages(selected["entity_key"], limit)
-
-        if is_search:
             st.caption(f"🔍 **'{query}'** 검색 결과 {len(messages)}개")
         else:
+            with st.spinner("메시지 로딩..."):
+                messages = load_messages(selected["entity_key"], limit)
             st.caption(f"최근 {len(messages)}개 · 3분 자동 갱신")
         st.divider()
 
