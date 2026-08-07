@@ -220,17 +220,33 @@ components.html("""
     }
 
     function waitForRunFinish() {
+        // 💡 "Stop" 텍스트로 실행중 여부를 판단했었는데, Streamlit 버전이 올라가며
+        // 그 표시 방식이 바뀌어 더 이상 감지가 안 됐다 — 그 결과 항상 세이프티넷
+        // 시간(그때는 20초)까지 꽉 채워 대기하는 바람에, 원래 빠르던 탭 전환까지
+        // 전부 느려 보이는 역효과가 났다. Streamlit 내부 UI 문구/구조에 기대지
+        // 않도록, 대신 "DOM이 더 이상 안 바뀌는 시점"을 실행 완료 신호로 쓴다.
         var doc = mainDoc();
-        var sawRunning = false, tries = 0;
+        var lastMutation = Date.now();
+        var startedAt = Date.now();
+        var mo = new MutationObserver(function() { lastMutation = Date.now(); });
+        try {
+            mo.observe(doc.body, {childList: true, subtree: true, attributes: true, characterData: true});
+        } catch (e) {}
+
         var iv = setInterval(function() {
-            tries++;
-            var running = doc.body.innerText.indexOf('Stop') !== -1;
-            if (running) sawRunning = true;
-            if ((sawRunning && !running) || tries > 200) {  // 최대 약 20초 세이프티넷
+            var now = Date.now();
+            var quietFor = now - lastMutation;
+            var elapsed = now - startedAt;
+            // 최소 300ms는 무조건 떠 있어(너무 짧으면 깜빡임), 600ms 동안 DOM 변화가
+            // 없으면 렌더 완료로 간주. 감지가 완전히 실패해도 화면이 영영 안 가려져
+            // 있진 않도록 60초를 최후의 세이프티넷으로 둔다(콜드 캐시로 워치리스트가
+            // 60~100초 걸리는 경우가 있어 너무 짧게 잡으면 로딩 중에 먼저 걷혀버림).
+            if ((elapsed > 300 && quietFor > 600) || elapsed > 60000) {
                 clearInterval(iv);
+                mo.disconnect();
                 hideOverlay();
             }
-        }, 100);
+        }, 150);
     }
 
     function attachListeners() {
