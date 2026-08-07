@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 import json
 import os
 import re
+import html
+import urllib.parse
 
 _LITHIUM_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lithium_cache.json")
 _DRAM_CACHE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dram_cache.json")
@@ -29,6 +31,11 @@ MARKET_ITEMS = [
     ("DDR5 16Gb Spot", "_DRAM_",    "$",    ",.3f", 1),
     ("DDR4 16Gb Spot", "_DDR4_",    "$",    ",.3f", 1),
 ]
+
+# 카드 밑에 관련 뉴스 헤드라인을 붙일 티커 → 검색어. 지금은 WTI만 (요청 범위).
+_NEWS_QUERY = {
+    "CL=F": "WTI 유가",
+}
 
 TRADE_CATS = {
     "반도체":   ["8542"],
@@ -107,6 +114,30 @@ def _get_last_and_prev_close(ticker: str):
     except Exception:
         return None, None, None
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _get_commodity_news(query: str, n: int = 2):
+    """
+    구글 뉴스 RSS에서 관련 헤드라인 상위 n개를 (제목, 링크) 리스트로 반환.
+    batch_analysis.py의 get_google_news()와 같은 방식 — 금융 뉴스 헤드라인은
+    보통 등락 사유가 제목에 그대로 들어있어(예: "WTI, OPEC+ 감산 소식에 급등")
+    AI 요약 없이 헤드라인만 보여줘도 충분하고, API 키도 필요 없다.
+    30분 캐시 — 뉴스는 시세만큼 자주 안 바뀌어도 됨.
+    """
+    try:
+        encoded = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+        res = requests.get(url, timeout=5)
+        root = ET.fromstring(res.text)
+        items = []
+        for item in root.findall(".//item")[:n]:
+            title_el = item.find("title")
+            link_el = item.find("link")
+            if title_el is not None and link_el is not None and title_el.text and link_el.text:
+                items.append((title_el.text, link_el.text))
+        return items
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -655,6 +686,20 @@ def render_macro():
                         use_container_width=True,
                         config={"displayModeBar": False, "scrollZoom": True, "staticPlot": False},
                     )
+
+                    news_query = _NEWS_QUERY.get(ticker)
+                    if news_query:
+                        news_items = _get_commodity_news(news_query)
+                        if news_items:
+                            # 구글 뉴스는 외부 입력이므로 HTML 이스케이프 후 삽입 (XSS 방지)
+                            news_html = "".join(
+                                f"<div style='font-size:11px;color:#555;margin-top:2px;overflow:hidden;"
+                                f"text-overflow:ellipsis;white-space:nowrap;'>"
+                                f"📰 <a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
+                                f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>"
+                                for title, link in news_items
+                            )
+                            st.markdown(news_html, unsafe_allow_html=True)
 
         _, cr = st.columns([9, 1.5])
         with cr:
