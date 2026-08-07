@@ -174,41 +174,111 @@ if menu != "가치평가":
     st.query_params.clear()
     
 # ==========================================
-# --- 메뉴 라우팅 ---
 # 💡 탭 전환 시 이전 탭의 렌더링 잔상이 남지 않도록 처리합니다.
-# Streamlit의 vertical block은 "다 만든 뒤 통째로 교체"가 아니라
-# "with 블록이 끝날 때(=함수가 다 실행돼야) 남은 이전 자식들을 정리"하는
-# 방식이라, menu_content.empty()를 미리 불러도 느린 탭(예: 워치리스트)이
-# 로딩되는 동안엔 이전 탭 콘텐츠가 같은 블록 안에 계속 나란히 남아있음
-# (실측으로 확인됨). 그래서 탭이 바뀐 첫 rerun에서는 빈 블록만 렌더해
-# with 블록을 곧바로 닫아 이전 자식들을 즉시 정리시키고, st.rerun()으로
-# 한 번 더 돌려서 그다음 rerun에 실제(느릴 수 있는) 탭 내용을 채웁니다.
+# st.empty()/컨테이너로 "즉시 비우기"를 시도해봤지만 효과가 없었습니다 —
+# Streamlit이 vertical block의 남은 자식을 정리하는 시점 자체가 "그 블록을
+# 담당하는 with문이 끝날 때(=느린 탭이면 그 함수가 다 실행된 뒤)"라서,
+# 파이썬 쪽에서 미리 비워봐야 프레임워크가 실제로 반영해주지 않습니다
+# (Streamlit 자체의 알려진 동작/버그 — 커뮤니티에도 같은 사례가 있음).
+# 그래서 파이썬이 아니라 프론트엔드 쪽에서 해결합니다: 메뉴를 클릭하는
+# "즉시" 전체 화면 로딩 오버레이를 띄워 이전 탭 잔상을 가려버리고,
+# 새 탭 렌더링이 끝나면(=러닝 표시가 사라지면) 오버레이를 걷어냅니다.
 # ==========================================
-menu_content = st.empty()
-if st.session_state.get("_last_menu") != menu:
-    st.session_state["_last_menu"] = menu
-    with menu_content.container():
-        pass  # 빈 블록으로 즉시 렌더 → 이전 탭 잔상 제거
-    st.rerun()
+components.html("""
+<script>
+(function() {
+    function mainDoc() { return (window.parent || window).document; }
 
-with menu_content.container():
-    if menu == "가치평가":
-        render_valuation_menu()
+    function ensureOverlay() {
+        var doc = mainDoc();
+        var ov = doc.getElementById('__tab_loading_overlay__');
+        if (ov) return ov;
+        if (!doc.getElementById('__tab_spin_style__')) {
+            var style = doc.createElement('style');
+            style.id = '__tab_spin_style__';
+            style.textContent = '@keyframes __tab_spin__ { to { transform: rotate(360deg); } }';
+            doc.head.appendChild(style);
+        }
+        ov = doc.createElement('div');
+        ov.id = '__tab_loading_overlay__';
+        ov.style.cssText = 'display:none;position:fixed;inset:0;z-index:99999;'
+            + 'background:rgba(255,255,255,0.94);flex-direction:column;'
+            + 'align-items:center;justify-content:center;';
+        ov.innerHTML =
+            '<div style="border:4px solid #f0f0f0;border-top:4px solid #FF4B4B;'
+            + 'border-radius:50%;width:40px;height:40px;'
+            + 'animation:__tab_spin__ 0.8s linear infinite;"></div>'
+            + '<div style="margin-top:12px;color:#666;font-size:14px;">불러오는 중...</div>';
+        doc.body.appendChild(ov);
+        return ov;
+    }
 
-    elif menu == "신고가":
-        render_new_high_menu()
+    function showOverlay() { ensureOverlay().style.display = 'flex'; }
+    function hideOverlay() {
+        var ov = mainDoc().getElementById('__tab_loading_overlay__');
+        if (ov) ov.style.display = 'none';
+    }
 
-    elif menu == "레포트":
-        render_report_summary()
+    function waitForRunFinish() {
+        var doc = mainDoc();
+        var sawRunning = false, tries = 0;
+        var iv = setInterval(function() {
+            tries++;
+            var running = doc.body.innerText.indexOf('Stop') !== -1;
+            if (running) sawRunning = true;
+            if ((sawRunning && !running) || tries > 200) {  // 최대 약 20초 세이프티넷
+                clearInterval(iv);
+                hideOverlay();
+            }
+        }, 100);
+    }
 
-    elif menu == "실적":
-        render_earnings_menu()
+    function attachListeners() {
+        try {
+            var menuFrame = mainDoc().querySelector('iframe[title="streamlit_option_menu.option_menu"]');
+            if (!menuFrame) return false;
+            var fdoc = menuFrame.contentDocument;
+            if (!fdoc) return false;
+            var links = fdoc.querySelectorAll('a.nav-link');
+            if (!links.length) return false;
+            links.forEach(function(a) {
+                if (a.dataset.tabOverlayBound) return;
+                a.dataset.tabOverlayBound = '1';
+                a.addEventListener('click', function() {
+                    showOverlay();
+                    waitForRunFinish();
+                });
+            });
+            return true;
+        } catch (e) { return false; }
+    }
 
-    elif menu == "텔레그램":
-        render_telegram_viewer()
+    // 메뉴 iframe이 rerun마다 새로 생기므로 계속 재확인하며 리스너를 다시 붙인다.
+    setInterval(attachListeners, 400);
+})();
+</script>
+""", height=0)
 
-    elif menu == "워치리스트":
-        render_watchlist()
+# ==========================================
+# --- 메뉴 라우팅 ---
+# ==========================================
+if menu == "가치평가":
+    render_valuation_menu()
 
-    elif menu == "매크로":
-        render_macro()
+elif menu == "신고가":
+    render_new_high_menu()
+
+elif menu == "레포트":
+    render_report_summary()
+
+elif menu == "실적":
+    render_earnings_menu()
+
+elif menu == "텔레그램":
+    render_telegram_viewer()
+
+elif menu == "워치리스트":
+    render_watchlist()
+
+elif menu == "매크로":
+    render_macro()
