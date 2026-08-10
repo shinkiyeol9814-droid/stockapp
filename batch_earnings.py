@@ -129,11 +129,14 @@ def parse_earnings_text(text):
 async def main():
     print("=== 실적 스크리닝 수집 시작 ===")
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    # 💡 예전엔 종목코드 하나만 키로 써서 종목당 최신 분기 하나만 남았다
+    # (2Q가 들어오면 1Q 항목이 통째로 덮어써져 사라짐). 분기까지 합친
+    # (코드, 해당분기) 키로 바꿔 분기별 이력이 계속 쌓이도록 한다.
     earnings_dict = {}
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             old_list = json.load(f)
-            earnings_dict = {item['코드']: item for item in old_list}
+            earnings_dict = {(item['코드'], item.get('해당분기')): item for item in old_list}
 
     client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH, connection_retries=5, timeout=20)
     await client.start()
@@ -175,17 +178,17 @@ async def main():
                 parsed_data = parse_earnings_text(message.text)
                 if parsed_data:
                     code = parsed_data['코드']
-                    if code not in current_run_seen:
-                        current_run_seen.add(code)
-                        existing = earnings_dict.get(code)
+                    key = (code, parsed_data.get('해당분기'))
+                    if key not in current_run_seen:
+                        current_run_seen.add(key)
+                        existing = earnings_dict.get(key)
                         # 같은 분기에 대해 신뢰도가 더 낮은(예: 개별) 데이터가 나중에
                         # 와도 기존(연결/모호)을 덮어쓰지 않는다. 동일 신뢰도거나 더
                         # 높으면 기존과 동일하게 "최신이 이긴다"로 갱신한다.
-                        if (existing and existing.get('해당분기') == parsed_data.get('해당분기')
-                                and _report_priority(parsed_data) < _report_priority(existing)):
+                        if existing and _report_priority(parsed_data) < _report_priority(existing):
                             print(f"⏭️ 건너뜀 (신뢰도 낮음, 기존 유지): {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d %H:%M')}")
                             continue
-                        earnings_dict[code] = parsed_data
+                        earnings_dict[key] = parsed_data
                         new_count += 1
                         print(f"✅ 신규/갱신 수집: {parsed_data['종목명']} ({parsed_data.get('해당분기')}) - {msg_time_kst.strftime('%m/%d %H:%M')}")
                         
