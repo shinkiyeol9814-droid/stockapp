@@ -589,16 +589,39 @@ def render_macro():
         period = period_map[sel_p]
 
         with st.spinner("시장 데이터 로딩 중..."):
+            # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
+            # 티커당 차트용 history() + 실시간가 fast_info/get_info()까지 최대
+            # 2~3번 왕복이라, 콜드 캐시일 때 다 더하면 꽤 오래 걸렸다. 워치리스트와
+            # 같은 패턴으로 전부 스레드풀에서 동시에 가져오도록 바꾼다.
             hists = {}
-            for name, ticker, *_ in MARKET_ITEMS:
-                if ticker == "_LITHIUM_":
-                    hists[name] = _get_lithium_price_history(period)
-                elif ticker == "_DRAM_":
-                    hists[name] = _get_dram_price_history(period)
-                elif ticker == "_DDR4_":
-                    hists[name] = _get_ddr4_price_history(period)
+            last_prev_map = {}
+
+            def _fetch_hist(item):
+                nm, tk = item[0], item[1]
+                if tk == "_LITHIUM_":
+                    return nm, _get_lithium_price_history(period)
+                elif tk == "_DRAM_":
+                    return nm, _get_dram_price_history(period)
+                elif tk == "_DDR4_":
+                    return nm, _get_ddr4_price_history(period)
                 else:
-                    hists[name] = _get_price_history(ticker, period)
+                    return nm, _get_price_history(tk, period)
+
+            def _fetch_last_prev(item):
+                nm, tk = item[0], item[1]
+                if tk.startswith("_"):
+                    return nm, (None, None, None)
+                return nm, _get_last_and_prev_close(tk)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(MARKET_ITEMS) * 2) as ex:
+                hist_futures = [ex.submit(_fetch_hist, item) for item in MARKET_ITEMS]
+                lp_futures = [ex.submit(_fetch_last_prev, item) for item in MARKET_ITEMS]
+                for f in hist_futures:
+                    nm, h = f.result()
+                    hists[nm] = h
+                for f in lp_futures:
+                    nm, lp = f.result()
+                    last_prev_map[nm] = lp
 
         for row_start in range(0, len(MARKET_ITEMS), 3):
             cols = st.columns(3)
@@ -623,7 +646,8 @@ def render_macro():
                     is_cache_based = ticker.startswith("_")
                     if not is_cache_based:
                         # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
-                        fi_last, fi_prev, fi_time = _get_last_and_prev_close(ticker)
+                        # 이미 위에서 병렬로 가져와둔 값을 그대로 조회만 한다 (재요청 없음)
+                        fi_last, fi_prev, fi_time = last_prev_map.get(name, (None, None, None))
                         if fi_last is not None and fi_prev is not None:
                             last, prev = fi_last * mult, fi_prev * mult
                             last_update = fi_time
