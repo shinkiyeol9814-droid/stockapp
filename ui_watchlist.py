@@ -430,15 +430,35 @@ _right = {"textAlign": "right", "display": "flex", "alignItems": "center", "just
 
 @st.fragment
 def _render_sector_table(sector, sc, watchlist, CY, NY, CY_YRS, NY_YRS, force_reload):
-    # 섹터 헤더
-    st.markdown(
-        f"<div style='margin:20px 0 4px 0;font-size:14px;font-weight:700;"
-        f"color:#1565C0;border-left:3px solid #1565C0;padding-left:8px;'>"
-        f"{sector}"
-        f"<span style='font-weight:400;color:#aaa;font-size:12px;margin-left:6px;'>{len(sc)}종목</span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    # 💡 섹터마다 AgGrid를 하나씩(총 9개) 즉시 마운트하면 웜 캐시 상태에서도
+    # 탭 진입에 15~20초가 걸렸다 — 병목은 데이터 조회가 아니라 AgGrid iframe
+    # 인스턴스 9개를 한꺼번에 띄우는 렌더링 비용이었다. st.expander는 접혀
+    # 있어도 내부 파이썬 코드가 그대로 실행돼(프론트엔드에서 CSS로만 숨김)
+    # 효과가 없어서, session_state로 실제 열림/닫힘을 추적해 닫힌 섹터는
+    # AgGrid 생성 자체를 건너뛴다.
+    open_key = f"_wl_open_{sector}"
+    if open_key not in st.session_state:
+        st.session_state[open_key] = False
+    is_open = st.session_state[open_key]
+
+    hc1, hc2 = st.columns([11, 1.4])
+    with hc1:
+        st.markdown(
+            f"<div style='margin:20px 0 4px 0;font-size:14px;font-weight:700;"
+            f"color:#1565C0;border-left:3px solid #1565C0;padding-left:8px;'>"
+            f"{sector}"
+            f"<span style='font-weight:400;color:#aaa;font-size:12px;margin-left:6px;'>{len(sc)}종목</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with hc2:
+        if st.button("접기 🔼" if is_open else "펼치기 🔽", key=f"_wl_toggle_{sector}",
+                     use_container_width=True):
+            st.session_state[open_key] = not is_open
+            st.rerun(scope="fragment")
+
+    if not is_open:
+        return
 
     rows = []
     for code in sc:
