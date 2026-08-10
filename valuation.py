@@ -61,20 +61,33 @@ def save_to_github(file_path, content, message):
         return False, f"통신 에러: {str(e)}"
 
 @st.cache_resource(ttl=86400)
-def get_ticker_listing():
+def _cached_ticker_listing():
+    """
+    실패하면 예외를 던져 st.cache_resource가 결과를 저장하지 않게 한다.
+    예전엔 실패해도 빈 DF를 그대로 반환해서 캐시됐는데, 장 마감 직후처럼
+    데이터 소스(KRX/fdr)가 잠깐 흔들리는 순간에 이 함수가 (재배포 등으로)
+    캐시가 빈 상태에서 호출되면 빈 DF가 24시간 그대로 캐시되어 그날 내내
+    가치평가 조회가 전부 실패하는 문제가 있었다.
+    """
     for _ in range(3):
         try:
             df = fdr.StockListing('KRX')
             if not df.empty and 'Name' in df.columns: return df
         except: pass
+    url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
+    res = requests.get(url, headers=HEADERS, timeout=10)
+    df = pd.read_html(io.StringIO(res.text), header=0)[0]
+    df = df.rename(columns={'회사명': 'Name', '종목코드': 'Code'})
+    df['Code'] = df['Code'].astype(str).str.zfill(6)
+    if df.empty or 'Name' not in df.columns:
+        raise RuntimeError("종목 리스트 조회 실패 (KRX/fdr 모두 실패)")
+    return df
+
+def get_ticker_listing():
     try:
-        url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-        res = requests.get(url, headers=HEADERS, timeout=10)
-        df = pd.read_html(io.StringIO(res.text), header=0)[0]
-        df = df.rename(columns={'회사명': 'Name', '종목코드': 'Code'})
-        df['Code'] = df['Code'].astype(str).str.zfill(6)
-        return df
-    except: return pd.DataFrame(columns=['Code', 'Name'])
+        return _cached_ticker_listing()
+    except Exception:
+        return pd.DataFrame(columns=['Code', 'Name'])
 
 def get_stocks_count(ticker_row, ticker):
     try:
