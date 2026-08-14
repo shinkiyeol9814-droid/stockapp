@@ -40,13 +40,16 @@ def _spotlight_card(row):
     up = row["등락률_num"] > 0
     clr = "#ef5350" if up else ("#1565C0" if row["등락률_num"] < 0 else "#888")
     arrow = "▲" if up else ("▼" if row["등락률_num"] < 0 else "─")
-    return f"""
-    <div style="display:flex;justify-content:space-between;align-items:center;
-                padding:8px 12px;border-bottom:1px solid #f0f0f0;">
-        <span style="font-size:13.5px;font-weight:600;color:#333;">{row['업종명']}</span>
-        <span style="font-size:13.5px;font-weight:700;color:{clr};">{arrow} {row['등락률']}</span>
-    </div>
-    """
+    # 💡 마크다운은 4칸 이상 들여쓰기된 줄을 코드블록으로 인식해 HTML을 그대로
+    # 텍스트로 찍어버린다 — 여러 줄에 걸친 들여쓰기 f-string 대신 들여쓰기
+    # 없는 한 줄짜리 문자열로 만들어야 카드 전체가 실제 HTML로 렌더링된다.
+    return (
+        f'<div style="display:flex;justify-content:space-between;align-items:center;'
+        f'padding:8px 12px;border-bottom:1px solid #f0f0f0;">'
+        f'<span style="font-size:13.5px;font-weight:600;color:#333;">{row["업종명"]}</span>'
+        f'<span style="font-size:13.5px;font-weight:700;color:{clr};">{arrow} {row["등락률"]}</span>'
+        f'</div>'
+    )
 
 
 def render_sector_menu():
