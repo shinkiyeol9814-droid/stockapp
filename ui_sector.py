@@ -120,7 +120,7 @@ def render_sector_menu():
         )
 
     st.divider()
-    st.markdown("#### 📋 전체 업종 (행 클릭 시 소속 종목 표시)")
+    st.markdown("#### 📋 전체 업종")
 
     display_df = df[["업종명", "등락률", "상승", "보합", "하락"]].rename(
         columns={"등락률": "등락률(%)", "상승": "상승종목", "보합": "보합종목", "하락": "하락종목"}
@@ -138,18 +138,15 @@ def render_sector_menu():
         return ""
 
     styled = display_df.style.map(_color_change, subset=["등락률(%)"])
-    event = st.dataframe(
-        styled, use_container_width=True, hide_index=True, height=560,
-        on_select="rerun", selection_mode="single-row", key="sector_table_select",
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=560)
+
+    # 💡 st.dataframe의 행 선택 UI는 체크박스 열이 강제로 붙고 없앨 옵션이
+    # 없다 — 대신 별도 드롭다운으로 업종을 골라 소속 종목을 보여준다.
+    sel_name = st.selectbox(
+        "🔍 소속 종목을 볼 업종 선택", df["업종명"].tolist(), key="sector_pick",
     )
-
-    selected_rows = event["selection"]["rows"] if event else []
-    if not selected_rows:
-        st.caption("👆 업종 행을 클릭하면 소속 종목별 현재가/등락률이 아래에 표시됩니다.")
-        return
-
-    sel = df.iloc[selected_rows[0]]
-    sel_name, sel_no = sel["업종명"], sel["업종코드"]
+    sel = df[df["업종명"] == sel_name].iloc[0]
+    sel_no = sel["업종코드"]
 
     st.markdown(f"#### 🔍 {sel_name} — 소속 종목")
     if not sel_no or (isinstance(sel_no, float) and pd.isna(sel_no)):
