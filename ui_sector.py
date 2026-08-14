@@ -7,19 +7,26 @@ import streamlit as st
 import pandas as pd
 import requests
 import io
+import re
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
 SECTOR_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
+SECTOR_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={no}"
 
 
 @st.cache_data(ttl=180, show_spinner=False)
 def get_sector_performance():
-    """업종명 / 등락률 / 상승·보합·하락 종목수. 실패하면 None."""
+    """업종명 / 업종코드(no) / 등락률 / 상승·보합·하락 종목수. 실패하면 None."""
     try:
         res = requests.get(SECTOR_URL, headers=HEADERS, timeout=10)
         res.encoding = "euc-kr"
+        # pd.read_html은 <a> 링크를 버려서 업종코드(no=)를 못 가져오므로,
+        # 업종 상세 드릴다운에 필요한 업종명→업종코드 매핑을 정규식으로 따로 추출한다.
+        name_to_no = dict(re.findall(r'sise_group_detail\.naver\?type=upjong&no=(\d+)">([^<]+)<', res.text))
+        no_by_name = {name: no for no, name in name_to_no.items()}
+
         tables = pd.read_html(io.StringIO(res.text))
         df = tables[0]
         df.columns = ["업종명", "등락률", "전체", "상승", "보합", "하락", "그래프"]
@@ -30,6 +37,23 @@ def get_sector_performance():
         )
         for c in ["전체", "상승", "보합", "하락"]:
             df[c] = df[c].fillna(0).astype(int)
+        df["업종코드"] = df["업종명"].map(no_by_name)
+        df = df.sort_values("등락률_num", ascending=False).reset_index(drop=True)
+        return df
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def get_sector_stocks(no: str):
+    """해당 업종코드 소속 종목명 / 현재가 / 등락률. 실패하면 None."""
+    try:
+        res = requests.get(SECTOR_DETAIL_URL.format(no=no), headers=HEADERS, timeout=10)
+        res.encoding = "euc-kr"
+        tables = pd.read_html(io.StringIO(res.text))
+        df = tables[2].dropna(subset=["종목명"]).copy()
+        df = df[["종목명", "현재가", "등락률"]]
+        df["등락률_num"] = df["등락률"].astype(str).str.extract(r"([+-]?\d+\.?\d*)").astype(float)
         df = df.sort_values("등락률_num", ascending=False).reset_index(drop=True)
         return df
     except Exception:
@@ -96,7 +120,7 @@ def render_sector_menu():
         )
 
     st.divider()
-    st.markdown("#### 📋 전체 업종")
+    st.markdown("#### 📋 전체 업종 (행 클릭 시 소속 종목 표시)")
 
     display_df = df[["업종명", "등락률", "상승", "보합", "하락"]].rename(
         columns={"등락률": "등락률(%)", "상승": "상승종목", "보합": "보합종목", "하락": "하락종목"}
@@ -114,4 +138,34 @@ def render_sector_menu():
         return ""
 
     styled = display_df.style.map(_color_change, subset=["등락률(%)"])
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=560)
+    event = st.dataframe(
+        styled, use_container_width=True, hide_index=True, height=560,
+        on_select="rerun", selection_mode="single-row", key="sector_table_select",
+    )
+
+    selected_rows = event["selection"]["rows"] if event else []
+    if not selected_rows:
+        st.caption("👆 업종 행을 클릭하면 소속 종목별 현재가/등락률이 아래에 표시됩니다.")
+        return
+
+    sel = df.iloc[selected_rows[0]]
+    sel_name, sel_no = sel["업종명"], sel["업종코드"]
+
+    st.markdown(f"#### 🔍 {sel_name} — 소속 종목")
+    if not sel_no or (isinstance(sel_no, float) and pd.isna(sel_no)):
+        st.warning("이 업종은 종목 상세를 가져올 수 없습니다.")
+        return
+
+    with st.spinner(f"{sel_name} 종목 로딩 중..."):
+        stock_df = get_sector_stocks(sel_no)
+
+    if stock_df is None or stock_df.empty:
+        st.error("❌ 종목 데이터를 가져오지 못했습니다.")
+        return
+
+    stock_display = stock_df[["종목명", "현재가", "등락률"]].copy()
+    stock_display["현재가"] = stock_display["현재가"].map(
+        lambda v: f"{int(v):,}원" if pd.notna(v) else "-"
+    )
+    stock_styled = stock_display.style.map(_color_change, subset=["등락률"])
+    st.dataframe(stock_styled, use_container_width=True, hide_index=True, height=min(400, 40 + 35 * len(stock_display)))
