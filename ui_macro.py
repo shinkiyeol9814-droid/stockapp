@@ -577,12 +577,22 @@ def render_macro():
     )
     st.caption("시장 지표 5분 자동갱신 · 수출 데이터 1시간 캐시")
 
-    tab_mkt, tab_trade = st.tabs(["📊 시장 지표", "🚢 수출 동향"])
+    # 💡 st.tabs()는 클릭으로 탭을 바꿔도 서버 재실행이 없는 순수 프론트엔드
+    # 토글이라, 두 탭의 내용을 애초에 "둘 다" 미리 계산해서 보내둬야 한다.
+    # 그래서 수출 동향(정부 API 호출 + 차트 렌더링)을 한 번도 안 봐도 매크로
+    # 탭에 들어갈 때마다 그 비용을 그대로 지불하고 있었다. 실제로 선택된
+    # 뷰만 계산하도록 st.radio + session_state 기반 토글로 바꾼다(워치리스트
+    # 섹션 접기와 같은 패턴).
+    MKT_LABEL, TRADE_LABEL = "📊 시장 지표", "🚢 수출 동향"
+    view_choice = st.radio(
+        "매크로 뷰 선택", [MKT_LABEL, TRADE_LABEL],
+        horizontal=True, label_visibility="collapsed", key="macro_view",
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 1 — 시장 지표
     # ══════════════════════════════════════════════════════════════════════════
-    with tab_mkt:
+    if view_choice == MKT_LABEL:
         period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo", "1년": "1y"}
         sel_p = st.radio("기간", list(period_map.keys()), index=3,
                           horizontal=True, key="macro_period")
@@ -737,7 +747,7 @@ def render_macro():
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 2 — 수출 동향
     # ══════════════════════════════════════════════════════════════════════════
-    with tab_trade:
+    elif view_choice == TRADE_LABEL:
         has_key = bool(st.secrets.get("DATA_GO_KR_KEY", ""))
 
         if not has_key:
