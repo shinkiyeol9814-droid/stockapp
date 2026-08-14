@@ -60,6 +60,7 @@ from ui_earnings import render_earnings_menu
 from ui_telegram import render_telegram_viewer
 from ui_watchlist import render_watchlist
 from ui_macro import render_macro
+from ui_sector import render_sector_menu
 from streamlit_option_menu import option_menu
 
 # 세션 상태 초기화 (전역)
@@ -82,8 +83,11 @@ if query_stock_code:
 # ==========================================
 menu = option_menu(
     menu_title=None,
-    options=["가치평가", "신고가", "레포트", "실적", "텔레그램", "워치리스트", "매크로"],
-    icons=["graph-up-arrow", "rocket", "newspaper", "bar-chart-line", "chat-dots", "list-check", "globe"],
+    # 💡 2줄로 감싸지는 메뉴라(4개씩) 순서가 곧 화면 배치: 리스트의 앞 4개가
+    # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/워치리스트/레포트/텔레그램,
+    # 아랫줄 = 섹터별/신고가/실적/매크로.
+    options=["가치평가", "워치리스트", "레포트", "텔레그램", "섹터별", "신고가", "실적", "매크로"],
+    icons=["graph-up-arrow", "list-check", "newspaper", "chat-dots", "pie-chart", "rocket", "bar-chart-line", "globe"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -281,20 +285,23 @@ components.html("""
 if menu == "가치평가":
     render_valuation_menu()
 
-elif menu == "신고가":
-    render_new_high_menu()
+elif menu == "워치리스트":
+    render_watchlist()
 
 elif menu == "레포트":
     render_report_summary()
 
-elif menu == "실적":
-    render_earnings_menu()
-
 elif menu == "텔레그램":
     render_telegram_viewer()
 
-elif menu == "워치리스트":
-    render_watchlist()
+elif menu == "섹터별":
+    render_sector_menu()
+
+elif menu == "신고가":
+    render_new_high_menu()
+
+elif menu == "실적":
+    render_earnings_menu()
 
 elif menu == "매크로":
     render_macro()
