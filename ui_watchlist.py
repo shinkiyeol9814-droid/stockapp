@@ -105,29 +105,41 @@ def get_live_price(code: str):
         return None, None, code
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_watch_financials(code: str):
+    """
+    재무데이터를 하나도 못 가져오면 예외를 던져 st.cache_data가 실패 결과를
+    저장하지 않게 한다 (valuation.py의 _fetch_hybrid_financials와 동일한 이유 —
+    장 마감 직후처럼 wisereport 응답이 잠깐 불안정할 때 실패가 1시간 캐싱되는
+    것을 막는다).
+    """
+    listing    = get_ticker_listing()
+    ticker_row = listing[listing["Code"].astype(str).str.zfill(6) == code.zfill(6)]
+    if ticker_row.empty:
+        raise RuntimeError(f"상장정보 없음: {code}")
+    stocks = get_stocks_count(ticker_row, code)
+    fin_df = get_hybrid_financials(code)
+    if fin_df[_EST_COLS].isna().all().all():
+        raise RuntimeError(f"재무데이터 조회 실패: {code}")
+
+    # 가치평가 탭에서 저장한 수동 추정치를 스크래핑 데이터가 비어있는 셀에 병합
+    ticker_estimates = load_user_estimates().get(code, {})
+    if ticker_estimates:
+        fin_df = fin_df.copy()
+        for idx, row in fin_df.iterrows():
+            yr = str(row['Year'])
+            if yr not in ticker_estimates:
+                continue
+            for col in _EST_COLS:
+                if (pd.isna(row[col]) or row[col] == 0) and col in ticker_estimates[yr]:
+                    fin_df.at[idx, col] = float(ticker_estimates[yr][col])
+
+    return fin_df, int(stocks)
+
+
 def get_watch_financials(code: str):
     try:
-        listing    = get_ticker_listing()
-        ticker_row = listing[listing["Code"].astype(str).str.zfill(6) == code.zfill(6)]
-        if ticker_row.empty:
-            return None, 0
-        stocks = get_stocks_count(ticker_row, code)
-        fin_df = get_hybrid_financials(code)
-
-        # 가치평가 탭에서 저장한 수동 추정치를 스크래핑 데이터가 비어있는 셀에 병합
-        ticker_estimates = load_user_estimates().get(code, {})
-        if ticker_estimates:
-            fin_df = fin_df.copy()
-            for idx, row in fin_df.iterrows():
-                yr = str(row['Year'])
-                if yr not in ticker_estimates:
-                    continue
-                for col in _EST_COLS:
-                    if (pd.isna(row[col]) or row[col] == 0) and col in ticker_estimates[yr]:
-                        fin_df.at[idx, col] = float(ticker_estimates[yr][col])
-
-        return fin_df, int(stocks)
-    except:
+        return _fetch_watch_financials(code)
+    except Exception:
         return None, 0
 
 # ── 재무 계산 헬퍼 (JS valueGetter용 사전 계산) ────────────────────────────────

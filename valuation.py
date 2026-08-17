@@ -186,91 +186,119 @@ def fetch_consensus_data(ticker):
         return None
 
 
+_FIN_TARGET_YEARS = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+
+
+def _empty_financials_df():
+    rows = []
+    for y in _FIN_TARGET_YEARS:
+        rows.append({
+            '매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
+            '자본총계': np.nan, 'EV/EBITDA': np.nan,
+            'Year': y, 'Plot_Date': pd.to_datetime(f"{y}-12-28"), 'Label': f"{y}년",
+        })
+    return pd.DataFrame(rows)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_hybrid_financials(ticker):
-    target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+def _fetch_hybrid_financials(ticker):
+    """
+    데이터를 한 건도 못 가져오면 예외를 던져 st.cache_data가 결과를 저장하지
+    않게 한다. 예전엔 실패해도 전부 NaN인 DataFrame을 그대로 반환해서 캐시됐는데,
+    장 마감 직후처럼 wisereport 응답이 잠깐 불안정한 순간에 한 번 실패하면
+    빈 데이터가 1시간(ttl=3600) 그대로 캐시되어 그 시간 내내 재무 데이터가
+    전부 비어 보이는 문제가 있었다. (_cached_ticker_listing과 동일한 유형의 버그)
+    """
+    target_years = _FIN_TARGET_YEARS
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
             '자본총계': np.nan, 'EV/EBITDA': np.nan}
         for y in target_years
     }
-    try:
-        main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
+    got_any_data = False
+    main_url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
 
-        # Phase 1: main page(encparam 추출용) + consensus 병렬 요청
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-            fut_main      = ex.submit(requests.get, main_url, headers=HEADERS, timeout=7)
-            fut_consensus = ex.submit(fetch_consensus_data, ticker)
+    # Phase 1: main page(encparam 추출용) + consensus 병렬 요청
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        fut_main      = ex.submit(requests.get, main_url, headers=HEADERS, timeout=7)
+        fut_consensus = ex.submit(fetch_consensus_data, ticker)
 
-            main_res = fut_main.result()
-            encparam = ""
-            match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
-            if match:
-                encparam = match.group(1)
+        main_res = fut_main.result()
+        encparam = ""
+        match = re.search(r"encparam\s*:\s*'([^']+)'", main_res.text)
+        if match:
+            encparam = match.group(1)
 
-            ajax_headers = HEADERS.copy()
-            ajax_headers["Referer"] = main_url
+        ajax_headers = HEADERS.copy()
+        ajax_headers["Referer"] = main_url
 
-            # Phase 2: cF1001(손익) + cF2001(재무상태) 병렬 요청 (encparam 필요)
-            fin_url_1 = (
-                f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx"
-                f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
-            )
-            fin_url_2 = (
-                f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx"
-                f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
-            )
-            fut_f1 = ex.submit(requests.get, fin_url_1, headers=ajax_headers, timeout=7)
-            fut_f2 = ex.submit(requests.get, fin_url_2, headers=ajax_headers, timeout=7)
+        # Phase 2: cF1001(손익) + cF2001(재무상태) 병렬 요청 (encparam 필요)
+        fin_url_1 = (
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx"
+            f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+        )
+        fin_url_2 = (
+            f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx"
+            f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
+        )
+        fut_f1 = ex.submit(requests.get, fin_url_1, headers=ajax_headers, timeout=7)
+        fut_f2 = ex.submit(requests.get, fin_url_2, headers=ajax_headers, timeout=7)
 
-            res1           = fut_f1.result()
-            res2           = fut_f2.result()
-            consensus_rows = fut_consensus.result()
+        res1           = fut_f1.result()
+        res2           = fut_f2.result()
+        consensus_rows = fut_consensus.result()
 
-        # ── ① cF1001 + cF2001 파싱 ──
-        for res in [res1, res2]:
-            df_parsed = parse_fin_table(res.text)
-            if df_parsed is None:
+    # ── ① cF1001 + cF2001 파싱 ──
+    for res in [res1, res2]:
+        df_parsed = parse_fin_table(res.text)
+        if df_parsed is None:
+            continue
+        for c in df_parsed.columns:
+            m = re.search(r'(20\d{2})', str(c))
+            if not m:
                 continue
-            for c in df_parsed.columns:
-                m = re.search(r'(20\d{2})', str(c))
-                if not m:
-                    continue
-                y = int(m.group(1))
-                if y not in target_years:
-                    continue
-                r   = get_val(df_parsed, r'^(매출액|영업수익)', c)
-                o   = get_val(df_parsed, r'^영업이익$', c)
-                if pd.isna(o): o = get_val(df_parsed, r'^영업이익\(발표기준\)', c)
-                n   = get_val(df_parsed, r'^(당기순이익|지배주주순이익)', c)
-                cap = get_val(df_parsed, r'^(자본총계|지배주주지분)', c)
-                if pd.isna(master_dict[y]['매출액'])     and pd.notna(r):   master_dict[y]['매출액']   = r
-                if pd.isna(master_dict[y]['영업이익'])   and pd.notna(o):   master_dict[y]['영업이익'] = o
-                if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):   master_dict[y]['당기순이익'] = n
-                if pd.isna(master_dict[y]['자본총계'])   and pd.notna(cap): master_dict[y]['자본총계'] = cap
+            y = int(m.group(1))
+            if y not in target_years:
+                continue
+            r   = get_val(df_parsed, r'^(매출액|영업수익)', c)
+            o   = get_val(df_parsed, r'^영업이익$', c)
+            if pd.isna(o): o = get_val(df_parsed, r'^영업이익\(발표기준\)', c)
+            n   = get_val(df_parsed, r'^(당기순이익|지배주주순이익)', c)
+            cap = get_val(df_parsed, r'^(자본총계|지배주주지분)', c)
+            if pd.isna(master_dict[y]['매출액'])     and pd.notna(r):
+                master_dict[y]['매출액'] = r; got_any_data = True
+            if pd.isna(master_dict[y]['영업이익'])   and pd.notna(o):
+                master_dict[y]['영업이익'] = o; got_any_data = True
+            if pd.isna(master_dict[y]['당기순이익']) and pd.notna(n):
+                master_dict[y]['당기순이익'] = n; got_any_data = True
+            if pd.isna(master_dict[y]['자본총계'])   and pd.notna(cap):
+                master_dict[y]['자본총계'] = cap; got_any_data = True
 
-        # ── ② 컨센서스 파싱 ──
-        if consensus_rows:
-            for row_json in consensus_rows:
-                ym = row_json.get('YYMM', '')
-                m = re.search(r'(20\d{2})', ym)
-                if not m:
-                    continue
-                y = int(m.group(1))
-                if y not in target_years:
-                    continue
-                sales = parse_consensus_value(row_json.get('SALES'))
-                op    = parse_consensus_value(row_json.get('OP'))
-                np_v  = parse_consensus_value(row_json.get('NP'))
-                ev    = parse_consensus_value(row_json.get('EV'))
-                if pd.isna(master_dict[y]['매출액'])     and pd.notna(sales): master_dict[y]['매출액']     = sales
-                if pd.isna(master_dict[y]['영업이익'])   and pd.notna(op):    master_dict[y]['영업이익']   = op
-                if pd.isna(master_dict[y]['당기순이익']) and pd.notna(np_v):  master_dict[y]['당기순이익'] = np_v
-                if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev) and ev > 0:
-                    master_dict[y]['EV/EBITDA'] = ev
+    # ── ② 컨센서스 파싱 ──
+    if consensus_rows:
+        for row_json in consensus_rows:
+            ym = row_json.get('YYMM', '')
+            m = re.search(r'(20\d{2})', ym)
+            if not m:
+                continue
+            y = int(m.group(1))
+            if y not in target_years:
+                continue
+            sales = parse_consensus_value(row_json.get('SALES'))
+            op    = parse_consensus_value(row_json.get('OP'))
+            np_v  = parse_consensus_value(row_json.get('NP'))
+            ev    = parse_consensus_value(row_json.get('EV'))
+            if pd.isna(master_dict[y]['매출액'])     and pd.notna(sales):
+                master_dict[y]['매출액'] = sales; got_any_data = True
+            if pd.isna(master_dict[y]['영업이익'])   and pd.notna(op):
+                master_dict[y]['영업이익'] = op; got_any_data = True
+            if pd.isna(master_dict[y]['당기순이익']) and pd.notna(np_v):
+                master_dict[y]['당기순이익'] = np_v; got_any_data = True
+            if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev) and ev > 0:
+                master_dict[y]['EV/EBITDA'] = ev; got_any_data = True
 
-    except:
-        pass
+    if not got_any_data:
+        raise RuntimeError(f"재무데이터 조회 실패: {ticker} (wisereport 응답 없음/파싱 실패)")
 
     rows = []
     for y in target_years:
@@ -280,6 +308,13 @@ def get_hybrid_financials(ticker):
         row['Label']     = f"{y}년"
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def get_hybrid_financials(ticker):
+    try:
+        return _fetch_hybrid_financials(ticker)
+    except Exception:
+        return _empty_financials_df()
 
 
 def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
@@ -513,7 +548,7 @@ def render_valuation_menu():
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
                             if success:
                                 st.success("✅ 추정치가 성공적으로 저장되었습니다! 화면을 즉시 갱신합니다.")
-                                get_hybrid_financials.clear()
+                                _fetch_hybrid_financials.clear()
                                 load_user_estimates.clear()
                                 time.sleep(0.7)
                                 st.rerun()
