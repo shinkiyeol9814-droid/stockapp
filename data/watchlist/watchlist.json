@@ -238,5 +238,10 @@
     "method": "PER(순이익)",
     "multiple": 12.0,
     "sector": "반도체-후공정"
+  },
+  "253590": {
+    "method": "PER(순이익)",
+    "multiple": 12.0,
+    "sector": "반도체-후공정"
   }
 }
