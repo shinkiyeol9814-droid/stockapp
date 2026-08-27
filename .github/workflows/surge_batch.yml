@@ -40,6 +40,10 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
+          # 💡 장이 닫혀있으면 스크립트가 상태 파일을 아예 안 만들고 끝나서
+          # data/surge_alert/ 디렉터리 자체가 없을 수 있다 — mkdir -p로 먼저
+          # 만들어두지 않으면 git add가 "그런 경로 없음"으로 매번 실패한다.
+          mkdir -p data/surge_alert/
           git add data/surge_alert/
           git commit -m "Auto-update: Surge alert state" || echo "No changes to commit"
           git pull --rebase origin ${{ github.ref_name }}
