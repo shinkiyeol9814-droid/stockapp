@@ -380,6 +380,8 @@ def render_valuation_menu():
     if 'active_val_type'    not in st.session_state: st.session_state.active_val_type    = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
+    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)", "EV/EBITDA"]
+
     is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
@@ -391,8 +393,14 @@ def render_valuation_menu():
         st.session_state['ui_target_mult_float'] = float(st.session_state.active_target_mult)
     elif not is_float_type and 'ui_target_mult_int' not in st.session_state:
         st.session_state['ui_target_mult_int'] = int(st.session_state.active_target_mult)
-    if 'ui_val_type' not in st.session_state:
-        st.session_state['ui_val_type'] = st.session_state.active_val_type
+    # 💡 key="ui_val_type"로 위젯을 만들면서 동시에 index=로도 초기값을 주면
+    # "세션스테이트 API로도 값을 설정했는데 default value도 줬다"는 경고가
+    # 뜬다 — 위젯 생성 전에 session_state 값만 정규화해두고, 위젯 자체에는
+    # index를 넘기지 않는다(session_state가 이미 현재값의 단일 출처가 됨).
+    if 'ui_val_type' not in st.session_state or st.session_state['ui_val_type'] not in val_options:
+        st.session_state['ui_val_type'] = (
+            st.session_state.active_val_type if st.session_state.active_val_type in val_options else val_options[1]
+        )
 
     st.markdown("""
         <style>
@@ -403,15 +411,12 @@ def render_valuation_menu():
     """, unsafe_allow_html=True)
     st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
 
-    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)", "EV/EBITDA"]
-
     with st.form("search_form", border=False):
         col1, col2, col3, col4 = st.columns([2, 1.5, 1.2, 1])
         with col1:
             st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
         with col2:
-            idx = val_options.index(st.session_state.ui_val_type) if st.session_state.ui_val_type in val_options else 1
-            st.selectbox("평가방식", val_options, index=idx, key="ui_val_type")
+            st.selectbox("평가방식", val_options, key="ui_val_type")
         with col3:
             if is_float_type: st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
             else: st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
