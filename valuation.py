@@ -187,7 +187,7 @@ def fetch_consensus_data(ticker):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_hybrid_financials(ticker):
+def _cached_hybrid_financials(ticker):
     target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
@@ -279,7 +279,34 @@ def get_hybrid_financials(ticker):
         row['Plot_Date'] = pd.to_datetime(f"{y}-12-28")
         row['Label']     = f"{y}년"
         rows.append(row)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+
+    # 💡 get_ticker_listing()과 같은 문제: 위스리포트가 잠깐 흔들려(네트워크
+    # 에러, encparam 파싱 실패 등) 전부 실패하면 이 함수는 그냥 전부 NaN인
+    # DataFrame을 "정상 결과"처럼 반환했고, 그게 1시간(ttl=3600) 그대로
+    # 캐시돼서 그 종목의 목표가/POR밴드가 한 시간 내내 N/A로 나오는 문제가
+    # 있었다(예: 현대건설). 값이 하나도 없는 완전 실패일 때만 예외를 던져
+    # 캐시에 안 남도록 하고, 다음 호출에서 바로 재시도되게 한다.
+    numeric_cols = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
+    if df[numeric_cols].isna().all().all():
+        raise RuntimeError(f"재무 데이터 조회 실패 (전부 NaN): {ticker}")
+    return df
+
+
+def get_hybrid_financials(ticker):
+    try:
+        return _cached_hybrid_financials(ticker)
+    except Exception:
+        target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+        rows = [
+            {
+                '매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
+                '자본총계': np.nan, 'EV/EBITDA': np.nan,
+                'Year': y, 'Plot_Date': pd.to_datetime(f"{y}-12-28"), 'Label': f"{y}년",
+            }
+            for y in target_years
+        ]
+        return pd.DataFrame(rows)
 
 
 def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
@@ -518,7 +545,7 @@ def render_valuation_menu():
                             success, msg = save_to_github(ESTIMATES_FILE, json.dumps(new_estimates, indent=4, ensure_ascii=False), f"Update {corp_name} estimates")
                             if success:
                                 st.success("✅ 추정치가 성공적으로 저장되었습니다! 화면을 즉시 갱신합니다.")
-                                get_hybrid_financials.clear()
+                                _cached_hybrid_financials.clear()
                                 load_user_estimates.clear()
                                 time.sleep(0.7)
                                 st.rerun()
