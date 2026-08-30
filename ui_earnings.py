@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import os
 import re
+import html
 from pathlib import Path
 from github import Github
 
@@ -14,8 +15,11 @@ LOCAL_BATCH_CONFIG_FILE = BASE_DIR / "data" / "earnings" / "batch_config.json"
 
 @st.cache_resource
 def get_github_repo():
-    token = st.secrets.get("GITHUB_TOKEN", "")
-    repo_name = st.secrets.get("GITHUB_REPO", "")
+    # 다른 모듈(valuation/new_high/ui_watchlist)과 동일하게 GH_PAT을 우선 인식하고,
+    # 레포명 시크릿이 없으면 하드코딩 기본값으로 폴백 — 시크릿 하나만 설정돼도
+    # 실적 탭 저장이 조용히 실패하던 문제 방지.
+    token = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", "")
+    repo_name = st.secrets.get("GITHUB_REPO", "") or "shinkiyeol9814-droid/stockapp"
     if token and repo_name:
         g = Github(token)
         return g.get_repo(repo_name)
@@ -278,9 +282,10 @@ def render_earnings_menu():
                     if success: st.rerun()
                     else: st.error(f"❌ 저장 실패: {err_msg}")
 
-        raw_text_html = raw_text.replace('\n', '<br>')
+        # 💡 원문은 텔레그램에서 온 신뢰 불가 입력 — HTML 이스케이프 후 <br>/링크만 허용 (XSS 방지)
+        raw_text_html = html.escape(raw_text).replace('\n', '<br>')
         url_pattern = re.compile(r'(https?://[^\s<]+)')
-        raw_text_html = url_pattern.sub(r'<a href="\1" target="_blank" style="color: #1E90FF; font-weight: bold; text-decoration: underline;">\1</a>', raw_text_html)
+        raw_text_html = url_pattern.sub(r'<a href="\1" target="_blank" rel="noopener noreferrer" style="color: #1E90FF; font-weight: bold; text-decoration: underline;">\1</a>', raw_text_html)
 
         status_color = "#FF0000" if "서프라이즈" in surf_status or "상회" in surf_status else \
                        "#1E90FF" if "쇼크" in surf_status or "하회" in surf_status else "#555555"
@@ -302,7 +307,7 @@ def render_earnings_menu():
             <summary style='cursor: pointer; list-style: none; outline: none; padding: 12px 12px 12px 42px; box-sizing: border-box;'>
                 <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>
                     <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>
-                        <span style='font-size: 16px; font-weight: bold; color: #222;'>{corp_name}</span>
+                        <span style='font-size: 16px; font-weight: bold; color: #222;'>{html.escape(corp_name)}</span>
                         <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>
                         <span style='font-size: 11px; color: #aaa;'>{short_time}</span>
                     </div>

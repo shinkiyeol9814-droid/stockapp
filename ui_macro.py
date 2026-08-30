@@ -664,7 +664,10 @@ def render_macro():
                             # 일부 티커(예: ^TNX)는 차트용 일별 시계열이 fast_info보다
                             # 며칠 뒤처져 올 수 있다. "현재가"와 차트가 다른 날을
                             # 보여주는 어긋남이 없도록, 더 최신이면 이어붙인다.
-                            if last_update.date() > hist.index[-1].date():
+                            # 💡 get_info()가 실패하면 fi_time이 None으로 온다
+                            # (fast_info는 성공한 경우) — 그대로 .date()를 부르면
+                            # AttributeError로 매크로 탭 전체가 죽으므로 먼저 방어한다.
+                            if last_update is not None and last_update.date() > hist.index[-1].date():
                                 new_row = pd.DataFrame(
                                     {"price": [last]}, index=[pd.Timestamp(last_update.date())]
                                 )

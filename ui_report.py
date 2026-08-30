@@ -4,6 +4,7 @@ import json
 import os
 import glob
 import re
+import html
 
 # 💡 하이브리드 포맷 리더: 신규/구형 파일 모두 호환하여 예쁜 옵션 리스트 생성
 @st.cache_data(ttl=60)
@@ -114,31 +115,34 @@ def render_report_summary():
                     elif upside_val > 0: fire, up_color = "🔥", "#FF8C00"
                     else: fire, up_color = "💧", "#1E90FF"
 
+                    # 💡 카드 내용은 AI(Gemini)가 외부 레포트 텍스트에서 추출한 값 —
+                    # 신뢰 불가 입력이므로 HTML 삽입 전 모두 이스케이프한다 (XSS 방지).
+                    _e = lambda v: html.escape(str(v))
                     points = row.get('투자포인트', [])
-                    points_html = "".join([f"<li style='margin-bottom: 4px;'>{p}</li>" for p in points]) if isinstance(points, list) else f"<li>{points}</li>"
+                    points_html = "".join([f"<li style='margin-bottom: 4px;'>{_e(p)}</li>" for p in points]) if isinstance(points, list) else f"<li>{_e(points)}</li>"
 
                     card_html = (
                         f"<details style='border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
                         f"<summary style='cursor: pointer; list-style: none; outline: none;'>"
                         f"<div style='margin-bottom: 6px;'>"
-                        f"<span style='font-size: 16px; font-weight: bold; color: #222;'>{row.get('종목명', 'N/A')}</span> "
-                        f"<span style='font-size: 13px; color: #666;'>({row.get('증권사', 'N/A')})</span>"
+                        f"<span style='font-size: 16px; font-weight: bold; color: #222;'>{_e(row.get('종목명', 'N/A'))}</span> "
+                        f"<span style='font-size: 13px; color: #666;'>({_e(row.get('증권사', 'N/A'))})</span>"
                         f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
-                        f"<span style='font-size: 14px; color: #444;'>{title}</span>"
+                        f"<span style='font-size: 14px; color: #444;'>{_e(title)}</span>"
                         f"<span style='font-size: 14px; color: #ccc;'> &nbsp;|&nbsp; </span>"
-                        f"<span style='font-size: 13px; color: #888;'>{report_date}</span>" 
+                        f"<span style='font-size: 13px; color: #888;'>{_e(report_date)}</span>"
                         f"</div>"
                         f"<div style='font-size: 14px; color: #555;'>"
                         f"<span style='color: {up_color}; font-weight: bold;'>🚀 Upside: {upside_str} {fire}</span>"
                         f"<span style='color: #ccc;'> &nbsp;|&nbsp; </span>"
-                        f"📊 {curr_price} ({curr_mc}) ➡️ <b>{tgt_price} ({tgt_mc})</b>"
+                        f"📊 {_e(curr_price)} ({_e(curr_mc)}) ➡️ <b>{_e(tgt_price)} ({_e(tgt_mc)})</b>"
                         f"</div>"
                         f"</summary>"
                         f"<div style='margin-top: 12px; padding-top: 12px; border-top: 1px dashed #eee; font-size: 14px; color: #333;'>"
                         f"<b style='color: #0056b3;'>💡 핵심 투자 포인트</b>"
                         f"<ul style='margin-top: 6px; padding-left: 20px;'>{points_html}</ul>"
                         f"<div style='margin-top: 10px; font-size: 12px; color: #888; background-color: #f9f9f9; padding: 8px; border-radius: 4px;'>"
-                        f"<b>평가 방식:</b> {row.get('평가방식', 'N/A')}"
+                        f"<b>평가 방식:</b> {_e(row.get('평가방식', 'N/A'))}"
                         f"</div>"
                         f"</div>"
                         f"</details>"
