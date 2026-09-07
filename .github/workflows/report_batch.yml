@@ -6,6 +6,14 @@ on:
     types: [run_report_batch] # 👈 cron-job.org에서 이 암구호를 외칠 겁니다.
   workflow_dispatch: # 수동 실행 버튼은 살려둡니다.
 
+# 💡 동시 실행 방어. 이게 없어서 예정 실행(repository_dispatch)과
+# 수동 실행이 겹치면 두 실행이 같은 날짜 파일을 각자 만들어
+# push 단계에서 add/add 충돌로 죽었다 (실제로 발생함).
+# earnings/surge 배치에는 원래 있던 설정을 나머지에도 맞춘다.
+concurrency:
+  group: "broker-report-batch"
+  cancel-in-progress: false   # 돌고 있으면 새 작업은 대기
+
 jobs:
   run-batch:
     runs-on: ubuntu-latest
@@ -46,7 +54,20 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add data/
-          git commit -m "Auto-update: Broker report & AI analysis" || echo "No changes to commit"
-          git pull --rebase origin ${{ github.ref_name }}
-          git push origin ${{ github.ref_name }}
+          # 💡 예전엔 `git add data/` 로 data 폴더 전체를 담았다. 그러면 이 배치가
+          # 만들지도 않은 다른 배치의 상태 파일(급등알림 alerted_today.json 등)까지
+          # 커밋에 끌려들어와, 5분마다 도는 급등 배치와 불필요하게 충돌했다.
+          # 이 배치가 실제로 쓰는 경로만 스테이징한다.
+          git add data/broker_report/ data/api_usage_log.json
+          git commit -m "Auto-update: Broker report & AI analysis" || { echo "No changes to commit"; exit 0; }
+          # 💡 다른 배치가 그 사이 push 했으면 rebase 후 재시도한다.
+          # 급등 배치가 5분 간격이라 몇 분 걸리는 배치는 경합이 흔하다.
+          BR="${{ github.ref_name }}"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
+              echo "push 성공 (시도 $i)"; exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1

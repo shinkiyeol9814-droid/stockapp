@@ -42,11 +42,20 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          # 💡 장이 닫혀있으면 스크립트가 상태 파일을 아예 안 만들고 끝나서
-          # data/surge_alert/ 디렉터리 자체가 없을 수 있다 — mkdir -p로 먼저
-          # 만들어두지 않으면 git add가 "그런 경로 없음"으로 매번 실패한다.
-          mkdir -p data/surge_alert/
+          # 💡 예전엔 `git add data/` 로 data 폴더 전체를 담았다. 그러면 이 배치가
+          # 만들지도 않은 다른 배치의 상태 파일(급등알림 alerted_today.json 등)까지
+          # 커밋에 끌려들어와, 5분마다 도는 급등 배치와 불필요하게 충돌했다.
+          # 이 배치가 실제로 쓰는 경로만 스테이징한다.
           git add data/surge_alert/
-          git commit -m "Auto-update: Surge alert state" || echo "No changes to commit"
-          git pull --rebase origin ${{ github.ref_name }}
-          git push origin ${{ github.ref_name }}
+          git commit -m "Auto-update: Surge alert state" || { echo "No changes to commit"; exit 0; }
+          # 💡 다른 배치가 그 사이 push 했으면 rebase 후 재시도한다.
+          # 급등 배치가 5분 간격이라 몇 분 걸리는 배치는 경합이 흔하다.
+          BR="${{ github.ref_name }}"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
+              echo "push 성공 (시도 $i)"; exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
