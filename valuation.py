@@ -14,6 +14,8 @@ import time
 import concurrent.futures
 import plotly.graph_objects as go
 
+from krx_listing import fetch_krx_listing
+
 # --- 설정 및 상수 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main"
@@ -38,7 +40,7 @@ def load_user_estimates():
             content = base64.b64decode(res.json()['content']).decode('utf-8')
             return json.loads(content)
         return {}
-    except: return {}
+    except Exception: return {}
 
 def save_to_github(file_path, content, message):
     try:
@@ -60,33 +62,31 @@ def save_to_github(file_path, content, message):
     except Exception as e:
         return False, f"통신 에러: {str(e)}"
 
-@st.cache_resource(ttl=86400)
+# 💡 st.cache_resource → st.cache_data 로 변경.
+# cache_resource는 반환 객체를 복사하지 않고 모든 세션이 "같은" DataFrame을
+# 공유한다 — 지금 호출부는 필터링(사본 생성)만 하지만, 누가 반환값을 직접
+# 수정하면 전 세션에 전파되는 잠재 버그였다. cache_data는 호출마다 사본을
+# 주므로 안전하고, 3천 행짜리 슬림 DF라 복사 비용도 무의미하다.
+#
+# 실패 시 예외를 던지는 것은 그대로 유지 — Streamlit 캐시는 예외를 저장하지
+# 않으므로, 빈 결과가 24시간 캐시되어 그날 내내 조회가 죽는 일을 막는다.
+@st.cache_data(ttl=86400, show_spinner=False)
 def _cached_ticker_listing():
     """
-    실패하면 예외를 던져 st.cache_resource가 결과를 저장하지 않게 한다.
-    예전엔 실패해도 빈 DF를 그대로 반환해서 캐시됐는데, 장 마감 직후처럼
-    데이터 소스(KRX/fdr)가 잠깐 흔들리는 순간에 이 함수가 (재배포 등으로)
-    캐시가 빈 상태에서 호출되면 빈 DF가 24시간 그대로 캐시되어 그날 내내
-    가치평가 조회가 전부 실패하는 문제가 있었다.
+    종목 목록 조회는 krx_listing 모듈에 위임한다.
+    거기서 fdr → fdr 캐시리포(날짜 되짚기) → KIND → 디스크 캐시 4단으로
+    폴백하며, "장 마감 직후 검색 불가"의 근본 원인(fdr이 당일 CSV 404에
+    이전 날짜 폴백을 하지 않는 문제)을 처리한다. 상세 배경은 krx_listing.py.
     """
-    for _ in range(3):
-        try:
-            df = fdr.StockListing('KRX')
-            if not df.empty and 'Name' in df.columns: return df
-        except: pass
-    url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-    res = requests.get(url, headers=HEADERS, timeout=10)
-    df = pd.read_html(io.StringIO(res.text), header=0)[0]
-    df = df.rename(columns={'회사명': 'Name', '종목코드': 'Code'})
-    df['Code'] = df['Code'].astype(str).str.zfill(6)
-    if df.empty or 'Name' not in df.columns:
-        raise RuntimeError("종목 리스트 조회 실패 (KRX/fdr 모두 실패)")
-    return df
+    return fetch_krx_listing()
 
 def get_ticker_listing():
     try:
         return _cached_ticker_listing()
-    except Exception:
+    except Exception as e:
+        # 예전엔 조용히 빈 DF를 돌려줘서 "종목을 찾을 수 없습니다"만 뜨고
+        # 원인을 알 수 없었다 — 최소한 로그에는 남긴다.
+        print(f"[valuation] 종목 목록 조회 실패: {type(e).__name__}: {e}")
         return pd.DataFrame(columns=['Code', 'Name'])
 
 def get_stocks_count(ticker_row, ticker):
@@ -94,30 +94,79 @@ def get_stocks_count(ticker_row, ticker):
         if 'Stocks' in ticker_row.columns:
             sc = pd.to_numeric(ticker_row['Stocks'].values[0], errors='coerce')
             if pd.notna(sc) and sc > 0: return sc
-    except: pass
+    except Exception: pass
     try:
         url = f"https://m.stock.naver.com/api/stock/{ticker}/integration"
         res = requests.get(url, headers=API_HEADERS, timeout=5).json()
         return int(res['stockEndType']['totalInfo']['stockCount'])
-    except: pass
+    except Exception: pass
     try:
         url = f"https://finance.naver.com/item/main.naver?code={ticker}"
         res = requests.get(url, headers=API_HEADERS, timeout=5)
         match = re.search(r'상장주식수<.*?<em>([\d,]+)</em>', res.text, re.DOTALL)
         if match: return int(match.group(1).replace(',', ''))
-    except: pass
+    except Exception: pass
     try:
         if 'Marcap' in ticker_row.columns and 'Close' in ticker_row.columns:
             marcap  = pd.to_numeric(ticker_row['Marcap'].values[0], errors='coerce')
             close_p = pd.to_numeric(ticker_row['Close'].values[0],  errors='coerce')
             if pd.notna(marcap) and pd.notna(close_p) and marcap > 0 and close_p > 0:
                 return int(marcap / close_p)
-    except: pass
+    except Exception: pass
     return 1
 
+def _naver_price_history(ticker, start_date, end_date):
+    """
+    fdr의 국내 주가 리더는 내부적으로 이 엔드포인트를 쓰는데
+    `requests.get(url)`에 **timeout이 없다** — 네이버가 응답을 안 주면
+    Streamlit 세션이 그대로 매달린다. 같은 소스를 timeout을 걸어 직접
+    호출하는 폴백을 둬서, 최소한 멈추지 않고 에러로 떨어지게 한다.
+    """
+    url = (
+        "https://fchart.stock.naver.com/sise.nhn"
+        f"?timeframe=day&count=6000&requestType=0&symbol={ticker}"
+    )
+    res = requests.get(url, headers=API_HEADERS, timeout=10)
+    rows = re.findall(r'<item data="(.*?)" />', res.text, re.DOTALL)
+    if not rows:
+        return pd.DataFrame()
+    df = pd.read_csv(
+        io.StringIO("\n".join(rows)), delimiter="|", header=None, dtype={0: str}
+    )
+    df.columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d")
+    df = df.set_index("Date").sort_index()
+    df["Change"] = df["Close"].pct_change()
+    return df.loc[start_date:end_date]
+
+
 def get_stock_price_data(ticker, start_date, end_date):
-    try: return fdr.DataReader(ticker, start_date, end_date)
-    except: return pd.DataFrame()
+    """
+    주가 조회 — fdr 2회 시도 후 네이버 직접 호출로 폴백.
+    예전엔 단 한 번 실패하면 곧바로 빈 DF를 반환해서, 일시적인 네트워크
+    흔들림에도 "주가 데이터를 불러오는 데 실패했습니다"가 떴다.
+    """
+    last_err = None
+    for attempt in range(2):
+        try:
+            df = fdr.DataReader(ticker, start_date, end_date)
+            if df is not None and not df.empty:
+                return df
+        except Exception as e:
+            last_err = e
+        if attempt == 0:
+            time.sleep(0.4)  # 순간적인 흔들림이면 짧은 대기로 회복된다
+
+    try:
+        df = _naver_price_history(ticker, start_date, end_date)
+        if df is not None and not df.empty:
+            print(f"[valuation] {ticker} 주가: 네이버 직접 폴백 사용")
+            return df
+    except Exception as e:
+        last_err = e
+
+    print(f"[valuation] {ticker} 주가 조회 실패: {type(last_err).__name__}: {last_err}")
+    return pd.DataFrame()
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -125,7 +174,7 @@ def get_stock_price_data(ticker, start_date, end_date):
 # ────────────────────────────────────────────────────────────────────────────────
 def parse_fin_table(html):
     """IFRS 포함 재무제표 테이블 파싱 (cF1001 손익계산서, cF2001 재무상태표)"""
-    try:
+    try:  # 실패는 호출부에서 None으로 처리 (소스가 구조를 바꾸면 여기가 먼저 깨진다)
         dfs = pd.read_html(io.StringIO(html))
         for df in dfs:
             if 'IFRS' in " ".join([str(c) for c in df.columns]):
@@ -133,7 +182,7 @@ def parse_fin_table(html):
                 df.index = df.iloc[:, 0].astype(str).str.strip().str.replace(' ', '')
                 date_cols = [c for c in df.columns if re.search(r'\d{4}', str(c))]
                 return df[date_cols]
-    except:
+    except Exception:
         pass
     return None
 
@@ -150,7 +199,7 @@ def get_val(df_parsed, row_pattern, col):
                 cleaned = re.sub(r'[^\d\.-]', '', str(val))
                 if cleaned and cleaned not in ['-', '.', '-.']:
                     return float(cleaned)
-            except:
+            except Exception:
                 pass
     return np.nan
 
@@ -164,7 +213,7 @@ def parse_consensus_value(s):
         return np.nan
     try:
         return float(s_clean)
-    except:
+    except Exception:
         return np.nan
 
 
@@ -182,7 +231,8 @@ def fetch_consensus_data(ticker):
         if res.status_code != 200:
             return None
         return res.json().get('JsonData', [])
-    except:
+    except Exception as e:
+        print(f"[valuation] {ticker} 컨센서스 조회 실패: {type(e).__name__}: {e}")
         return None
 
 
@@ -269,8 +319,11 @@ def _cached_hybrid_financials(ticker):
                 if pd.isna(master_dict[y]['EV/EBITDA']) and pd.notna(ev) and ev > 0:
                     master_dict[y]['EV/EBITDA'] = ev
 
-    except:
-        pass
+    except Exception as e:
+        # 💡 예전엔 그냥 pass여서, 위스리포트가 HTML 구조를 바꾸거나 encparam
+        # 추출이 깨졌을 때 화면에는 "N/A"만 뜨고 원인을 전혀 알 수 없었다.
+        # 로그에는 남겨서 다음에 같은 증상이 나면 바로 짚을 수 있게 한다.
+        print(f"[valuation] {ticker} 재무 스크래핑 예외: {type(e).__name__}: {e}")
 
     rows = []
     for y in target_years:
@@ -661,7 +714,7 @@ def render_valuation_menu():
                         try:
                             f = float(v)
                             return "N/A" if (np.isnan(f) or f == 0) else (f"{f:,.1f}x" if "EBITDA" in val_type else f"{f:,.0f}억")
-                        except: return "N/A"
+                        except Exception: return "N/A"
 
                     # ────────────────────────────────────────────────────────────
                     # EV/EBITDA 모드: 주가 밴드(fig1) 건너뛰고 배수 추이만 표시

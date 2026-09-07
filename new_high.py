@@ -31,19 +31,25 @@ def save_to_github(file_path, content, message):
         "Accept": "application/vnd.github.v3+json"
     }
     
-    res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH})
-    sha = res.json().get('sha') if res.status_code == 200 else None
-    
-    payload = {
-        "message": message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
-        "branch": GITHUB_BRANCH
-    }
-    if sha: payload["sha"] = sha
-    
-    put_res = requests.put(url, headers=headers, json=payload)
-    if put_res.status_code in [200, 201]: return True, "성공"
-    else: return False, put_res.text 
+    # 💡 timeout이 없으면 GitHub이 응답을 안 줄 때 Streamlit 세션이 그대로
+    # 매달린다 — 신고가 탭 "저장"이 영원히 안 끝나는 형태로 나타난다.
+    # 다른 모듈(valuation/ui_watchlist)은 이미 timeout을 걸고 있어 여기만 누락.
+    try:
+        res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=7)
+        sha = res.json().get('sha') if res.status_code == 200 else None
+
+        payload = {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+            "branch": GITHUB_BRANCH
+        }
+        if sha: payload["sha"] = sha
+
+        put_res = requests.put(url, headers=headers, json=payload, timeout=10)
+        if put_res.status_code in [200, 201]: return True, "성공"
+        return False, put_res.text
+    except requests.RequestException as e:
+        return False, f"통신 에러: {type(e).__name__}: {e}"
 
 def render_new_high_menu():
     # 💡 [수동 갱신] 즉시 갱신 버튼 추가
@@ -65,7 +71,7 @@ def render_new_high_menu():
             # report_ 또는 newhigh_ 문구 삭제
             date_part = f.replace("report_", "").replace("newhigh_", "").replace(".json", "")
             return f"{date_part[:4]}년 {date_part[4:6]}월 {date_part[6:8]}일 {date_part[9:11]}:{date_part[11:13]} 분석본"
-        except: return f
+        except Exception: return f
         
     selected_file = st.selectbox("📅 분석 일자 선택", report_files, format_func=format_filename)
     

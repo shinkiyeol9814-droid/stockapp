@@ -38,7 +38,7 @@ jobs:
         if: steps.check_flag.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install Dependencies
         if: steps.check_flag.outputs.skip != 'true'
@@ -54,6 +54,7 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
           TELEGRAM_SESSION_BATCH: ${{ secrets.TELEGRAM_SESSION_BATCH }}
+          EARNINGS_CHANNEL: ${{ secrets.EARNINGS_CHANNEL }}
         run: python batch_earnings.py
         
       - name: Commit and Push

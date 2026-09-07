@@ -8,7 +8,17 @@ AI 코딩 에이전트(Claude Code, Cursor 등)를 위한 프로젝트 가이드
 ## 프로젝트 개요
 
 Streamlit 기반 한국 주식 투자 보조 도구.
-Streamlit Cloud (Python 3.14)에서 호스팅. 실시간 주가·재무·수출 데이터 취합.
+Streamlit Cloud에서 호스팅. 실시간 주가·재무·수출 데이터 취합.
+
+### Python 버전 (실측 기준)
+| 환경 | 버전 | 비고 |
+|------|------|------|
+| GitHub Actions 배치 | **3.12** | 모든 워크플로우에 핀 고정 |
+| 로컬 개발 | 3.13 | |
+| Streamlit Cloud | 앱 설정에서 지정 | 대시보드에서 확인 필요 |
+
+> ⚠️ 이 문서에 한동안 "Python 3.14"로 적혀 있었으나 근거가 확인되지 않았다.
+> 배치는 3.12로 통일했고, Cloud 런타임은 Streamlit 앱 설정에서 직접 확인할 것.
 
 ---
 
@@ -54,6 +64,10 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `ui_report.py` | 레포트 탭 |
 | `ui_telegram.py` | 텔레그램 뷰어 탭 |
 | `new_high.py` | 신고가 탭 |
+| `ui_sector.py` | 섹터별 등락률 탭 |
+| `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
+| `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
+| `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
 
 ---
 
@@ -67,14 +81,56 @@ streamlit-aggrid==0.3.4.post3    # 워치리스트 테이블
 streamlit-option-menu            # 상단 탭 메뉴
 ```
 
-### Python 3.14 + pandas 2.x 호환 주의사항 (aggrid)
+### pandas 2.x 호환 주의사항 (aggrid)
 - `valueGetter` (JS) 대신 **Python 사전 계산** 사용
 - `type="numericColumn"` 컬럼은 반드시 `float64` dtype (None → `float("nan")`)
 - aggrid `reload_data=True` 는 편집값을 초기화하므로 변경 시에만 사용
 
 ---
 
+## ⚠️ 종목목록 조회는 반드시 `krx_listing`을 쓸 것
+
+`fdr.StockListing('KRX')`를 **직접 호출하지 말 것.** fdr은 KRX가 알려주는
+최종 영업일 CSV를 서드파티 캐시 리포지토리에서 받아오는데, 장 마감 직후
+그 리포에 당일 파일이 아직 없으면 404로 하드 실패하고 **이전 날짜 폴백이
+없다**. 이게 "장 끝나면 가치평가 검색이 안 되는" 증상의 원인이었다.
+
+```python
+from krx_listing import fetch_krx_listing   # fdr → 캐시리포(날짜 되짚기) → KIND → 디스크
+```
+
+앱에서는 `valuation.get_ticker_listing()`을 쓰면 위 체인이 캐시와 함께 적용된다.
+`data/listing/krx_listing.csv`가 최후의 방어선이며 macro 배치가 매일 갱신한다.
+
+### pykrx는 쓰지 말 것
+`pykrx`는 이제 `KRX_ID`/`KRX_PW` 환경변수(KRX 계정)를 요구해서 자격증명 없이는
+전부 실패한다. `batch_report.py`가 이 때문에 주가 수집이 상시 실패하고 있었다.
+대체: `fdr.StockListing('KRX')`가 Code/Name/Close/Marcap을 한 번에 준다.
+
+---
+
 ## 데이터 패턴
+
+### 데이터 파일 레이아웃
+```
+data/
+  listing/krx_listing.csv        # 종목목록 시드 (최후 폴백, 배치가 매일 갱신)
+  macro/{dram,ddr4,lithium}_cache.json   # 스팟 가격 누적 (예전엔 리포지토리 루트)
+  earnings/index.json            # 보유 분기 목록
+  earnings/q_2026_2Q.json        # 분기별 실적 (단일 4MB 파일에서 분리)
+  broker_report/*.json           # 날짜별, 180일 보존
+  new_high/*.json                # 날짜별, 180일 보존
+```
+
+**실적 데이터는 `earnings_store`를 통해서만 읽고 쓴다.** 단일 파일을 매 배치마다
+재작성하면 4MB blob이 커밋마다 쌓여 .git이 폭증한다 — 분기별로 나눠 바뀐 파일만 쓴다.
+
+### 리포지토리 비대화 방지
+- 날짜별 JSON은 `cleanup_data.py`가 보존 기간(기본 180일)을 넘긴 것을 지운다.
+  배치 워크플로우에 이미 연결돼 있다.
+- 매일 바뀌는 값(주가/시총)을 커밋되는 파일에 넣지 말 것. 종목목록 시드에
+  `Close`/`Marcap`을 빼고 `Code/Name/Market`만 둔 이유가 이것이다.
+
 
 ### 워치리스트 저장 (GitHub)
 - 파일: `data/watchlist/watchlist.json` in `GITHUB_REPO`
@@ -134,3 +190,19 @@ st.plotly_chart(fig, config={
 | `TELEGRAM_API_ID` | 텔레그램 뷰어 |
 | `TELEGRAM_API_HASH` | 텔레그램 뷰어 |
 | `DATA_GO_KR_KEY` | 관세청 수출입 통계 API (매크로 탭) |
+
+### GitHub Actions Secrets (배치 전용)
+
+| 키 | 용도 |
+|----|------|
+| `GEMINI_API_KEY_A` | Gemini AI 분석 |
+| `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | 텔레그램 접속 |
+| `TELEGRAM_SESSION` / `TELEGRAM_SESSION_BATCH` | 텔레그램 세션 문자열 |
+| `SURGE_ALERT_CHAT` | 급등주 알림 대상 (초대 링크 / @유저네임 / 채널 ID) |
+| `EARNINGS_CHANNEL` | 실적 공시 수집 채널 |
+| `REPORT_CHANNELS_TEXT` | 레포트 텍스트 채널 (쉼표 구분) |
+| `REPORT_CHANNELS_PDF` | 레포트 PDF 채널 (쉼표 구분, 비공개 채널 ID 포함) |
+
+> ⚠️ **텔레그램 채널/초대 링크를 코드에 하드코딩하지 말 것.**
+> 이 리포지토리는 공개이고, 비공개 그룹 초대 링크는 사실상 공유 비밀이다 —
+> 링크를 아는 사람은 누구나 그룹에 입장할 수 있다.

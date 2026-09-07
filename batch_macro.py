@@ -9,20 +9,33 @@ append하고 커밋되도록 한다 (커밋/푸시는 워크플로우 쪽에서 
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import requests
 
+# 캐시 JSON은 data/macro/ 아래로 모았다 (예전엔 리포지토리 루트에 흩어져 있었음).
 _DIR = os.path.dirname(os.path.abspath(__file__))
-_LITHIUM_CACHE = os.path.join(_DIR, "lithium_cache.json")
-_DRAM_CACHE    = os.path.join(_DIR, "dram_cache.json")
-_DDR4_CACHE    = os.path.join(_DIR, "ddr4_cache.json")
+_MACRO_DIR     = os.path.join(_DIR, "data", "macro")
+_LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
+_DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
+_DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 
 _UA_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
+KST = timezone(timedelta(hours=9))
+
 
 def _today_ms() -> int:
-    return int(datetime.combine(datetime.today().date(), datetime.min.time()).timestamp() * 1000)
+    """
+    오늘 자정(KST)의 epoch ms.
+    💡 예전엔 datetime.today()를 썼는데, GitHub Actions 러너는 UTC라서
+    이 배치가 찍는 날짜가 KST 기준 날짜와 어긋날 수 있었다(cron이 09:00 UTC
+    = 18:00 KST라 지금은 우연히 같은 날이지만, 스케줄을 조금만 옮기면
+    하루씩 밀린 데이터가 쌓인다). 한국 장 기준 데이터이므로 KST로 고정한다.
+    """
+    now_kst = datetime.now(KST)
+    midnight_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(midnight_kst.timestamp() * 1000)
 
 
 def _load(path: str) -> list:
@@ -34,6 +47,7 @@ def _load(path: str) -> list:
 
 
 def _save(path: str, raw: list) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(raw, f)
 

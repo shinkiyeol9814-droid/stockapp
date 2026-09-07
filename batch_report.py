@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 import asyncio
 import time
@@ -10,8 +11,9 @@ import fitz  # PyMuPDF
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from google import genai
-from pykrx import stock as pykrx_stock
 import FinanceDataReader as fdr
+
+from krx_listing import fetch_krx_listing
 
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
@@ -22,16 +24,25 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
-# 텔레그램 채널 설정
-TARGET_CHANNELS_TEXT = ["https://t.me/butler_works"]
-TARGET_CHANNELS_PDF = [
-    "https://t.me/DOC_POOL",
-    "https://t.me/report_figure_by_offset",
-    "https://t.me/companyreport",
-    -1001378197756,
-    "https://t.me/YoungTiger_stock",
-    -1001710268401                  
-]
+# 💡 텔레그램 채널 목록은 시크릿으로 받는다 (쉼표 구분).
+#   REPORT_CHANNELS_TEXT — 버틀러 요약 텍스트 채널
+#   REPORT_CHANNELS_PDF  — 증권사 PDF 채널 (비공개 채널 ID -100... 포함)
+# 비공개 채널 ID/초대 링크는 사실상 접근 정보라 공개 리포지토리에 두면 안 된다.
+def _parse_channels(env_name: str) -> list:
+    """쉼표 구분 문자열을 채널 리스트로. 숫자면 int(채널 ID)로 변환."""
+    raw = os.environ.get(env_name, "")
+    out = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        # -100xxxxxxxxxx 형태의 채널 ID는 int여야 telethon이 받아준다
+        out.append(int(tok) if re.fullmatch(r"-?\d+", tok) else tok)
+    return out
+
+
+TARGET_CHANNELS_TEXT = _parse_channels("REPORT_CHANNELS_TEXT")
+TARGET_CHANNELS_PDF = _parse_channels("REPORT_CHANNELS_PDF")
 
 # 💡 API 일일 사용량 관리 함수
 USAGE_LOG_FILE = "data/api_usage_log.json"
@@ -46,7 +57,7 @@ def get_today_api_usage():
                 data = json.load(f)
                 if data.get("date") == today_str:
                     return data.get("count", 0)
-            except:
+            except Exception:
                 pass
     return 0
 
@@ -227,11 +238,11 @@ def analyze_chunk_with_gemini(chunk_docs):
             print(f"      ⚠️ AI 처리 실패. 즉시 패자부활전으로 넘깁니다. (사유: {error_msg[:50]})")
             return None
 
-# 💡 4-0. pykrx 실패 시 fdr 개별 조회 fallback (캐시 적용으로 중복 호출 방지)
+# 💡 4-0. 벌크 조회에 주가가 없을 때 fdr 개별 조회 fallback (캐시로 중복 호출 방지)
 _price_cache = {}
 
 def get_price_fallback(code):
-    """pykrx 벌크 조회 실패 시 fdr로 개별 종목 현재가 조회"""
+    """벌크 목록에 Close가 없을 때 fdr로 종목별 현재가를 개별 조회"""
     if code in _price_cache:
         return _price_cache[code]
     try:
@@ -284,7 +295,7 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
         title_nospace = str(raw_title).replace(" ", "").strip()
         dup_key = f"{clean_name}_{title_nospace}"
 
-        # --- 현재가 결정: ① pykrx/fdr 실시간 → ② AI 추출값 순서 ---
+        # --- 현재가 결정: ① 벌크 목록/fdr 개별 조회 → ② AI 추출값 순서 ---
         curr_price = None
         curr_marcap = 0
 
@@ -301,7 +312,7 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
             except (TypeError, ValueError):
                 curr_marcap = 0
 
-            # pykrx 실패 시 fdr fallback
+            # 벌크 목록에 주가가 비어 있으면 fdr 개별 조회로 보완
             if curr_price is None:
                 code = str(matched.iloc[0].get('Code', ''))
                 if code:
@@ -309,7 +320,7 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
                     if curr_price:
                         print(f"      📈 fdr fallback: {clean_name}({code}) = {curr_price:,.0f}원")
 
-        # pykrx/fdr 모두 실패 시 AI가 레포트에서 추출한 현재주가 사용
+        # 벌크/개별 조회 모두 실패 시 AI가 레포트에서 추출한 현재주가 사용
         if curr_price is None:
             ai_price_raw = item.get("현재주가")
             if ai_price_raw:
@@ -380,6 +391,12 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
 
 # 💡 5. 메인 루프 (시간 Fix 기준 적용)
 async def main():
+    if not TARGET_CHANNELS_TEXT and not TARGET_CHANNELS_PDF:
+        raise RuntimeError(
+            "REPORT_CHANNELS_TEXT / REPORT_CHANNELS_PDF 환경변수가 둘 다 비어 있습니다. "
+            "GitHub Actions Secrets에 쉼표로 구분한 채널 목록을 등록하세요."
+        )
+
     today_usage = get_today_api_usage()
     print("=== 증권사 레포트 배치 시작 (구간 픽스 & 누적 업데이트 모드) ===")
     print(f"📊 [현재 상태] 오늘 {today_usage}회의 API를 이미 사용했습니다.")
@@ -431,47 +448,37 @@ async def main():
     doc_source_map = {str(d['id']): d['source'] for d in docs_to_process}
 
     print(f"\n🔍 총 {len(docs_to_process)}개의 문서를 분석합니다.")
-    print("📌 KRX 종목 데이터 수집 중 (이름: KIND, 주가: pykrx)...")
+    print("📌 KRX 종목 데이터 수집 중...")
 
-    # [Step 1] KRX KIND → 종목명 + 종목코드
-    kind_url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-    kind_res = requests.get(kind_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-    df_kind = pd.read_html(io.StringIO(kind_res.text), header=0)[0][['회사명', '종목코드']]
-    df_kind.columns = ['Name', 'Code']
-    df_kind['Code'] = df_kind['Code'].astype(str).str.zfill(6)
-    print(f"  ✅ KIND 종목명 수집 완료 ({len(df_kind)}개)")
+    # 💡 예전엔 종목명은 KIND, 주가는 pykrx로 따로 받아 병합했다.
+    # 그런데 pykrx는 이제 KRX_ID/KRX_PW 환경변수(KRX 계정)를 요구해서
+    # 자격증명 없이는 get_market_ohlcv_by_ticker가 항상 실패한다 —
+    # 즉 이 배치는 계속 "주가 수집 실패"로 떨어져 종목마다 fdr 개별 조회
+    # (get_price_fallback)를 하거나 AI가 레포트에서 읽은 값에 의존하고 있었다.
+    #
+    # fdr.StockListing('KRX') 한 번이면 Code/Name/Close/Marcap이 전부 나오므로
+    # 그걸 1차로 쓰고, 실패 시 krx_listing의 폴백 체인으로 종목명만이라도
+    # 확보한다(주가는 기존 get_price_fallback이 종목별로 메운다).
+    df_listing = None
+    try:
+        df_all = fdr.StockListing('KRX')
+        cols = [c for c in ['Code', 'Name', 'Close', 'Marcap'] if c in df_all.columns]
+        if 'Code' in cols and 'Name' in cols and not df_all.empty:
+            df_listing = df_all[cols].copy()
+            df_listing['Code'] = df_listing['Code'].astype(str).str.zfill(6)
+            for c in ('Close', 'Marcap'):
+                if c not in df_listing.columns:
+                    df_listing[c] = None
+            print(f"  ✅ fdr 종목/주가 수집 완료 ({len(df_listing)}개)")
+    except Exception as e:
+        print(f"  ⚠️ fdr.StockListing 실패: {type(e).__name__}: {e}")
 
-    # [Step 2] pykrx → 종가(Close) + 시가총액(Marcap), 최근 5일 재시도
-    df_price = None
-    for i in range(5):
-        target = (datetime.today() - timedelta(days=i)).strftime('%Y%m%d')
-        try:
-            df_k = pykrx_stock.get_market_ohlcv_by_ticker(target, market='KOSPI')
-            df_q = pykrx_stock.get_market_ohlcv_by_ticker(target, market='KOSDAQ')
-            df_ohlcv = pd.concat([df_k, df_q])
-            if df_ohlcv.empty or '종가' not in df_ohlcv.columns:
-                continue
-            df_cap_k = pykrx_stock.get_market_cap_by_ticker(target, market='KOSPI')
-            df_cap_q = pykrx_stock.get_market_cap_by_ticker(target, market='KOSDAQ')
-            df_cap = pd.concat([df_cap_k, df_cap_q])
-            df_price = df_ohlcv[['종가']].join(df_cap[['시가총액']], how='left')
-            df_price = df_price.rename(columns={'종가': 'Close', '시가총액': 'Marcap'})
-            df_price.index.name = 'Code'
-            df_price = df_price.reset_index()
-            print(f"  ✅ pykrx 주가 수집 완료 ({target} 기준, {len(df_price)}개)")
-            break
-        except Exception as e:
-            print(f"  ⚠️ pykrx {target} 실패: {e}")
-
-    # [Step 3] 병합: 종목명(KIND) + 주가(pykrx)
-    if df_price is not None:
-        df_listing = df_kind.merge(df_price[['Code', 'Close', 'Marcap']], on='Code', how='left')
-        print(f"  ✅ 종목 데이터 병합 완료 (총 {len(df_listing)}개)")
-    else:
-        print("  ⚠️ pykrx 주가 수집 실패. 현재가/시총 없이 진행합니다.")
-        df_listing = df_kind
+    if df_listing is None:
+        print("  📌 폴백: 종목명만 확보하고 주가는 종목별 개별 조회로 채웁니다.")
+        df_listing = fetch_krx_listing()[['Code', 'Name']].copy()
         df_listing['Close'] = None
         df_listing['Marcap'] = None
+        print(f"  ✅ 폴백 종목명 수집 완료 ({len(df_listing)}개)")
 
     chunk_size = 7
     MAX_PASSES = 4 

@@ -26,17 +26,27 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors import UserAlreadyParticipantError
 
 from ui_sector import get_sector_performance
+from earnings_store import load_all as load_all_earnings
 
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION_BATCH") or os.environ.get("TELEGRAM_SESSION", "")
 
-TARGET_CHAT_LINK = "https://t.me/+YuE4e3XDKbpjNWY1"
-TARGET_INVITE_HASH = "YuE4e3XDKbpjNWY1"
+# 💡 알림 대상 채팅은 시크릿(SURGE_ALERT_CHAT)으로 받는다.
+# 비공개 그룹 초대 링크(https://t.me/+XXXX)는 사실상 공유 비밀이다 —
+# 링크를 아는 사람은 누구나 그룹에 입장할 수 있으므로, 공개 리포지토리에
+# 하드코딩하면 안 된다. 공개 채널 유저네임(@name)이나 채널 ID(-100...)도
+# 받을 수 있게 해 뒀다.
+TARGET_CHAT = os.environ.get("SURGE_ALERT_CHAT", "").strip()
+
+
+def _invite_hash(chat: str) -> str | None:
+    """초대 링크에서 해시만 뽑는다. 초대 링크가 아니면 None."""
+    m = re.search(r"(?:t\.me/\+|t\.me/joinchat/|^\+)([A-Za-z0-9_-]+)", chat)
+    return m.group(1) if m else None
 
 DATA_DIR = "data/surge_alert"
 ALERTED_FILE = f"{DATA_DIR}/alerted_today.json"
-EARNINGS_FILE = "data/earnings/earnings_data.json"
 
 SURGE_THRESHOLD = 7.0         # 등락률(%) 이 기준 이상이면 알림
 MIN_TRADING_VALUE = 500_000_000  # 거래대금(원) 이 이 밑이면 호가만 튄 허수로 보고 제외 (5억원)
@@ -100,8 +110,8 @@ def get_today_earnings_map():
     today_str = datetime.now(KST).strftime("%Y.%m.%d")
     out = {}
     try:
-        with open(EARNINGS_FILE, "r", encoding="utf-8") as f:
-            rows = json.load(f)
+        # 실적 데이터는 분기별 파일로 나뉘어 있다 (earnings_store 참고).
+        rows = load_all_earnings()
         for row in rows:
             if not str(row.get("발표시간", "")).startswith(today_str):
                 continue
@@ -162,18 +172,27 @@ def chunk_message(header: str, blocks: list, limit: int = TELEGRAM_MSG_LIMIT):
 
 
 async def send_telegram_messages(texts):
+    if not TARGET_CHAT:
+        raise RuntimeError(
+            "SURGE_ALERT_CHAT 환경변수가 없습니다. "
+            "GitHub Actions Secrets에 알림 대상(초대 링크/@유저네임/채널 ID)을 등록하세요."
+        )
+
     client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH, connection_retries=5, timeout=20)
     await client.start()
     try:
         entity = None
-        try:
-            updates = await client(ImportChatInviteRequest(TARGET_INVITE_HASH))
-            entity = updates.chats[0] if updates.chats else None
-        except UserAlreadyParticipantError:
-            entity = await client.get_entity(TARGET_CHAT_LINK)
+        invite = _invite_hash(TARGET_CHAT)
+        if invite:
+            # 비공개 그룹: 아직 미참여면 초대 해시로 입장, 이미 참여 중이면 링크로 조회
+            try:
+                updates = await client(ImportChatInviteRequest(invite))
+                entity = updates.chats[0] if updates.chats else None
+            except UserAlreadyParticipantError:
+                entity = None
 
         if entity is None:
-            entity = await client.get_entity(TARGET_CHAT_LINK)
+            entity = await client.get_entity(TARGET_CHAT)
 
         for text in texts:
             await client.send_message(entity, text, parse_mode="markdown", link_preview=False)

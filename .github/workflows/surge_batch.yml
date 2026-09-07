@@ -21,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install Dependencies
         run: |
@@ -34,6 +34,8 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
           TELEGRAM_SESSION_BATCH: ${{ secrets.TELEGRAM_SESSION_BATCH }}
+          # 알림 대상 채팅 (초대 링크/@유저네임/채널 ID) — 코드에 하드코딩하지 않는다
+          SURGE_ALERT_CHAT: ${{ secrets.SURGE_ALERT_CHAT }}
         run: python batch_surge_alert.py
 
       - name: Commit and Push

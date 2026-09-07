@@ -6,8 +6,9 @@ import html
 from pathlib import Path
 from github import Github
 
+from earnings_store import available_quarters, load_quarter
+
 BASE_DIR = Path(__file__).parent
-DATA_FILE = BASE_DIR / "data" / "earnings" / "earnings_data.json"
 FAVORITES_FILE = "data/earnings/favorites.json"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 BATCH_CONFIG_FILE = "data/earnings/batch_config.json"
@@ -105,12 +106,16 @@ def save_favorites(favorites_set):
         except Exception as e:
             return False, str(e)
 
-@st.cache_data(ttl=180)
-def load_earnings_data():
-    if not DATA_FILE.exists():
-        return None
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+# 💡 예전엔 4MB짜리 단일 파일을 통째로 읽어 3분마다 재파싱했다.
+# 이제 분기별 파일이라 선택된 분기만 읽는다 — 이력이 쌓여도 비용이 일정하다.
+@st.cache_data(ttl=180, show_spinner=False)
+def load_quarter_list():
+    return available_quarters()
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def load_earnings_quarter(quarter: str):
+    return load_quarter(quarter)
 
 # 💡 [Oracle Point 4] 함수를 루프 밖으로 이동시켜 성능 최적화
 def get_growth_color(val):
@@ -173,35 +178,26 @@ def render_earnings_menu():
             st.session_state.pop('batch_enabled', None)
             st.rerun()
             
-    results = load_earnings_data()
-    if results is None:
+    # 💡 분기 목록만 먼저 읽고(가벼움), 실제 레코드는 선택된 분기 것만 읽는다.
+    quarters = [q for q in load_quarter_list() if q and "미상" not in q]
+    if not quarters:
         st.info("📂 수집된 실적 데이터가 없습니다.")
         return
 
-    if not results:
-        st.warning("분석된 실적 데이터가 없습니다.")
-        return
-
-    results = sorted(results, key=lambda x: x['발표시간'], reverse=True)
-    available_quarters = sorted(list(set([
-        row.get('해당분기') for row in results 
-        if row.get('해당분기') and "미상" not in row.get('해당분기')
-    ])), reverse=True)
-    
-    if not available_quarters:
-        st.warning("표시할 분기 데이터가 없습니다.")
-        return
-    
-    if 'ea_quarter' not in st.session_state: st.session_state.ea_quarter = available_quarters[0]
+    if 'ea_quarter' not in st.session_state: st.session_state.ea_quarter = quarters[0]
     if 'ea_keyword' not in st.session_state: st.session_state.ea_keyword = ""
     if 'ea_favs' not in st.session_state: st.session_state.ea_favs = False
     if 'ea_page' not in st.session_state: st.session_state.ea_page = 1
 
+    # 보관기간이 지나 사라진 분기가 세션에 남아 있으면 최신 분기로 되돌린다
+    if st.session_state.ea_quarter not in quarters:
+        st.session_state.ea_quarter = quarters[0]
+
     with st.form("earnings_search_form", border=False):
         f_col1, f_col2, f_col3 = st.columns([2.5, 4, 1.5])
         with f_col1:
-            idx = available_quarters.index(st.session_state.ea_quarter) if st.session_state.ea_quarter in available_quarters else 0
-            ui_quarter = st.selectbox("📌 분기 필터", available_quarters, index=idx)
+            idx = quarters.index(st.session_state.ea_quarter)
+            ui_quarter = st.selectbox("📌 분기 필터", quarters, index=idx)
         with f_col2:
             ui_keyword = st.text_input("🔍 종목 검색", value=st.session_state.ea_keyword, placeholder="종목명/코드")
         with f_col3:
@@ -214,10 +210,15 @@ def render_earnings_menu():
         st.session_state.ea_page = 1
         st.rerun()
 
+    results = load_earnings_quarter(st.session_state.ea_quarter)
+    if not results:
+        st.warning("분석된 실적 데이터가 없습니다.")
+        return
+    results = sorted(results, key=lambda x: x.get('발표시간', ''), reverse=True)
+
     filtered_results = []
     for row in results:
         code = row.get('코드', '')
-        if row.get('해당분기') != st.session_state.ea_quarter: continue
         if st.session_state.ea_keyword:
             kw = st.session_state.ea_keyword.replace(" ", "").lower()
             if kw not in row.get('종목명', '').lower() and kw not in code.lower(): continue
@@ -253,7 +254,7 @@ def render_earnings_menu():
                     elif gap_f <= -10: surf_status = "쇼크"
                     elif gap_f > 0: surf_status = "상회"
                     else: surf_status = "하회"
-                except: pass
+                except Exception: pass
             else:
                 op_match_txt = re.search(r'영업익.*?\(\s*(?:예상치|컨센서스).*?[,·]\s*(흑전|적전|부합)\s*\)', raw_text)
                 if op_match_txt:

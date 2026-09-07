@@ -41,7 +41,7 @@ def load_watchlist() -> dict:
         res = requests.get(url, headers=_gh_hdrs(), timeout=7)
         if res.status_code == 200:
             return json.loads(base64.b64decode(res.json()["content"]).decode())
-    except:
+    except Exception:
         pass
     return {}
 
@@ -101,7 +101,7 @@ def get_live_price(code: str):
         change = float(str(data.get("fluctuationsRatio") or "0").replace(",", ""))
         name   = data.get("stockName") or data.get("corporateName", code)
         return (price if price > 0 else None), change, name
-    except:
+    except Exception:
         return None, None, code
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -127,7 +127,7 @@ def get_watch_financials(code: str):
                         fin_df.at[idx, col] = float(ticker_estimates[yr][col])
 
         return fin_df, int(stocks)
-    except:
+    except Exception:
         return None, 0
 
 # ── 재무 계산 헬퍼 (JS valueGetter용 사전 계산) ────────────────────────────────

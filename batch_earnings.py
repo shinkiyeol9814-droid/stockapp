@@ -6,12 +6,17 @@ from datetime import datetime, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
+from earnings_store import load_all, save_all, EARNINGS_DIR
+
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 SESSION_STR = os.environ.get("TELEGRAM_SESSION_BATCH") or os.environ.get("TELEGRAM_SESSION", "")
-TARGET_CHANNEL = "https://t.me/darthacking" 
 
-DATA_FILE = "data/earnings/earnings_data.json"
+# 💡 수집 대상 채널은 시크릿(EARNINGS_CHANNEL)으로 받는다.
+# 공개 채널이라 초대 링크만큼 민감하진 않지만, 수집 대상을 코드에 박아두면
+# 리포지토리를 보는 사람에게 데이터 파이프라인이 그대로 노출된다.
+TARGET_CHANNEL = os.environ.get("EARNINGS_CHANNEL", "").strip()
+
 SYNC_FILE = "data/earnings/last_sync.txt" # 💡 마지막 수집 시간을 기억할 메모장!
 
 def _report_priority(entry):
@@ -39,7 +44,7 @@ def calc_growth(cur_val, prev_val):
         elif prev > 0 and cur < 0: return "적전"
         elif prev <= 0 and cur <= 0: return "적지"
         return "-"
-    except:
+    except Exception:
         return "-"
 
 def parse_earnings_text(text):
@@ -89,7 +94,7 @@ def parse_earnings_text(text):
                     elif diff <= -10: data['서프_상태'] = "❄️ 어닝쇼크"
                     elif diff < 0: data['서프_상태'] = "💧 컨센하회"
                     else: data['서프_상태'] = "✅ 컨센부합"
-                except:
+                except Exception:
                     data['서프_상태'] = "💡 데이터오류"
             else:
                 data['서프_상태'] = "💡 컨센없음"
@@ -128,15 +133,17 @@ def parse_earnings_text(text):
 
 async def main():
     print("=== 실적 스크리닝 수집 시작 ===")
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    if not TARGET_CHANNEL:
+        raise RuntimeError(
+            "EARNINGS_CHANNEL 환경변수가 없습니다. "
+            "GitHub Actions Secrets에 수집 대상 채널을 등록하세요."
+        )
+    os.makedirs(EARNINGS_DIR, exist_ok=True)
     # 💡 예전엔 종목코드 하나만 키로 써서 종목당 최신 분기 하나만 남았다
     # (2Q가 들어오면 1Q 항목이 통째로 덮어써져 사라짐). 분기까지 합친
     # (코드, 해당분기) 키로 바꿔 분기별 이력이 계속 쌓이도록 한다.
-    earnings_dict = {}
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            old_list = json.load(f)
-            earnings_dict = {(item['코드'], item.get('해당분기')): item for item in old_list}
+    # 저장은 earnings_store가 분기별 파일로 쪼개서 처리한다 (git 팽창 방지).
+    earnings_dict = {(item['코드'], item.get('해당분기')): item for item in load_all()}
 
     client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH, connection_retries=5, timeout=20)
     await client.start()
@@ -206,10 +213,11 @@ async def main():
             print(f"💾 다음 배치를 위해 수집 시점({max_seen_time.strftime('%Y-%m-%d %H:%M:%S')})을 기억했습니다.")
         
         final_list = list(earnings_dict.values())
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(final_list, f, indent=4, ensure_ascii=False)
-            
+        stat = save_all(final_list)
+
         print(f"=== 수집 종료! (최신 {new_count}건 갱신, 총 {len(final_list)}건 누적) ===")
+        print(f"    분기 파일: 갱신 {stat['written'] or '없음'} / 변화없음 {stat['unchanged'] or '없음'}"
+              + (f" / 보관기간초과 삭제 {stat['dropped']}" if stat['dropped'] else ""))
 
 if __name__ == "__main__":
     asyncio.run(main())

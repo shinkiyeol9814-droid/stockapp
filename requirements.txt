@@ -1,6 +1,5 @@
 streamlit==1.55.0
 finance-datareader
-pykrx
 pandas
 yfinance
 selenium

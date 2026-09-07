@@ -2,7 +2,11 @@ name: Keep Streamlit Alive
 
 on:
   schedule:
-    - cron: '0 1 */5 * *'  # 5일마다 한국시간 오전 10시
+    # 💡 '*/5'는 "5일마다"가 아니라 매월 1·6·11·16·21·26일에 돈다 —
+    # 월이 바뀔 때 간격이 5일에서 최대 10일까지 벌어져 keep-alive가 끊긴다.
+    # Streamlit Cloud는 약 7일 무접속이면 잠들기 때문에, 요일 기준으로
+    # 주 2회(월·목) 확실히 깨우도록 바꾼다. (한국시간 오전 10시)
+    - cron: '0 1 * * 1,4'
   workflow_dispatch:
 
 jobs:

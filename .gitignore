@@ -9,10 +9,14 @@ __pycache__/
 .venv/
 venv/
 
-# IDE
+# IDE / 로컬 에이전트 설정
 .vscode/
 .idea/
+.claude/settings.local.json
 
 # OS
 .DS_Store
 Thumbs.db
+
+# 배치 임시 파일
+temp_pdfs/

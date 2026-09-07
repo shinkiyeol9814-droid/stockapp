@@ -14,9 +14,10 @@ import re
 import html
 import urllib.parse
 
-_LITHIUM_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lithium_cache.json")
-_DRAM_CACHE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dram_cache.json")
-_DDR4_CACHE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ddr4_cache.json")
+_MACRO_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "macro")
+_LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
+_DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
+_DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
 MARKET_ITEMS = [

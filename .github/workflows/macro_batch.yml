@@ -16,21 +16,30 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          # requests: 스팟 가격 스크래핑 / 나머지: 종목목록 시드 갱신(krx_listing.py)
+          pip install requests pandas finance-datareader lxml html5lib
 
       - name: Run Script
         run: python batch_macro.py
+
+      # 💡 가치평가/워치리스트가 쓰는 종목목록 시드를 매일 갱신한다.
+      # 앱은 원격 소스가 전부 실패하면 이 파일로 폴백하므로, 이게 최신이어야
+      # "장 마감 직후 검색 불가"가 재발하지 않는다. 상세 배경은 krx_listing.py.
+      # 실패해도 배치 전체를 세우지 않는다(기존 시드가 남아 있으면 충분).
+      - name: Refresh KRX listing seed
+        continue-on-error: true
+        run: python krx_listing.py
 
       - name: Commit and Push
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add dram_cache.json ddr4_cache.json lithium_cache.json
-          git commit -m "Auto-update: DRAM/DDR4/Lithium spot price" || echo "No changes to commit"
+          git add data/macro/ data/listing/
+          git commit -m "Auto-update: DRAM/DDR4/Lithium spot price & KRX listing" || echo "No changes to commit"
           git pull --rebase origin ${{ github.ref_name }}
           git push origin ${{ github.ref_name }}

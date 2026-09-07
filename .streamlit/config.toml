@@ -1,5 +1,6 @@
 [server]
-keepNodeClean = true
+# 💡 keepNodeClean은 더 이상 존재하지 않는 옵션이라 매 실행마다
+# "not a valid config option" 경고를 찍고 있었다 — 제거.
 # 웹소켓 압축을 해제하여 연결 드랍률을 낮춤
 enableWebsocketCompression = false
 
