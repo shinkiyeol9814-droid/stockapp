@@ -18,6 +18,12 @@ _MACRO_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 _LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
 _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
 _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
+_USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
+
+_USDEBT_API = (
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
+    "/v2/accounting/od/debt_to_penny"
+)
 
 # ── 상수 ─────────────────────────────────────────────────────────────────────
 MARKET_ITEMS = [
@@ -31,6 +37,9 @@ MARKET_ITEMS = [
     ("리튬 탄산염",     "_LITHIUM_",  "CNY/t",",.0f", 1),
     ("DDR5 16Gb Spot", "_DRAM_",    "$",    ",.3f", 1),
     ("DDR4 16Gb Spot", "_DDR4_",    "$",    ",.3f", 1),
+    # 💡 맨 뒤에 붙였다 — 미국채 10년 옆이 의미상 더 맞지만, 중간에 끼우면
+    # 3개씩 배치되는 그리드에서 DDR5/DDR4 쌍이 줄바꿈으로 갈라진다.
+    ("미국 연방부채",   "_USDEBT_",  "조 달러", ",.3f", 1),
 ]
 
 # 카드 밑에 관련 뉴스 헤드라인을 붙일 티커 → 검색어. 지금은 WTI만 (요청 범위).
@@ -48,6 +57,36 @@ TRADE_CATS = {
 }
 
 _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
+
+
+def _today_ms_utc_midnight() -> int:
+    """
+    오늘 날짜(KST 기준)를 UTC 자정 epoch ms로. batch_macro._date_to_ms와 같은 규칙.
+
+    💡 예전엔 각 캐시 함수가 datetime.combine(datetime.today().date(), ...)로
+    직접 계산했다. 그러면 (a) 로컬(KST)에서는 KST 자정이 저장돼 화면에
+    "전날 15:00"으로 표시되고, (b) Streamlit Cloud(UTC)에서는 UTC 날짜가
+    쓰여 한국 기준 날짜와 하루 어긋날 수 있었다. 날짜는 KST로 정하고
+    저장은 UTC 자정으로 통일해 두 문제를 함께 없앤다.
+    """
+    d = datetime.now(_KST).date()
+    return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+def _weekday_gap(then: datetime, now: datetime) -> int:
+    """
+    then 다음날부터 now까지의 영업일(주말 제외) 수.
+    시세 최신성 경고가 주말·휴일에 오탐을 내지 않게 하려고 쓴다.
+    (공휴일 달력까지 두지는 않는다 — 휴일은 영업일 1일로 계산돼
+     허용 범위 안에 들어오므로 실질적으로 충분하다.)
+    """
+    d0, d1 = then.date(), now.date()
+    if d1 <= d0:
+        return 0
+    return sum(
+        1
+        for i in range(1, (d1 - d0).days + 1)
+        if (d0 + timedelta(days=i)).weekday() < 5
+    )
 
 
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
@@ -142,6 +181,67 @@ def _get_commodity_news(query: str, n: int = 2):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _get_us_debt_history(period: str = "1y") -> pd.DataFrame | None:
+    """
+    미국 연방부채 총액 (조 달러) — 커밋된 캐시 파일 우선, 없거나 비면 API 직접 조회.
+
+    다른 캐시 지표(리튬/DRAM)는 스크래핑이 오늘 값만 주기 때문에 하루씩 쌓아야
+    이력이 생기지만, 이건 재무부 공식 API가 일별 전체 이력을 주므로 배치가
+    시계열 전체를 덮어쓴다. 그래서 여기서는 "오늘 값 덧붙이기"가 필요 없고,
+    캐시 파일이 아직 없는 배포(첫 배포 등)에서도 API 폴백으로 바로 표시된다.
+    """
+    raw = None
+    try:
+        with open(_USDEBT_CACHE, "r") as f:
+            raw = json.load(f)
+    except Exception:
+        raw = None
+
+    if not raw:
+        # 캐시가 없으면 API로 직접 (배치가 아직 안 돌았거나 파일이 없는 경우)
+        try:
+            r = requests.get(
+                _USDEBT_API,
+                params={
+                    "fields": "record_date,tot_pub_debt_out_amt",
+                    "sort": "-record_date",
+                    "page[size]": 1200,
+                    "format": "json",
+                },
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=15,
+            )
+            # 타임스탬프는 배치(batch_macro._date_to_ms)와 같은 규칙 — UTC 자정.
+            # pd.to_datetime(unit="ms")가 tz 없는 UTC 시각을 주므로, 이렇게
+            # 저장해야 record_date가 화면에 그 날짜로 그대로 나온다.
+            raw = [
+                [
+                    int(
+                        datetime.strptime(d["record_date"], "%Y-%m-%d")
+                        .replace(tzinfo=timezone.utc).timestamp() * 1000
+                    ),
+                    float(d["tot_pub_debt_out_amt"]) / 1e12,
+                ]
+                for d in r.json().get("data", [])
+            ]
+            raw.sort(key=lambda x: x[0])
+        except Exception as e:
+            print(f"[ui_macro] 미국 연방부채 조회 실패: {type(e).__name__}: {e}")
+            return None
+
+    if not raw:
+        return None
+
+    df = pd.DataFrame(raw, columns=["ts", "price"])
+    df["date"] = pd.to_datetime(df["ts"], unit="ms")
+    df = df.set_index("date").drop(columns=["ts"])
+
+    cutoff_days = _PERIOD_DAYS.get(period, 365)
+    df = df[df.index >= pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)]
+    return df if not df.empty else None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
     """리튬 탄산염 가격 (CNY/ton) — 캐시 파일 + TE 현재가 스크래핑"""
     try:
@@ -161,9 +261,7 @@ def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
             m = re.search(r'TEChartsMeta\s*=\s*\[{"value"\s*:\s*([\d.]+)', r.text)
             if m:
                 current_price = float(m.group(1))
-                today_ms = int(datetime.combine(
-                    datetime.today().date(), datetime.min.time()
-                ).timestamp() * 1000)
+                today_ms = _today_ms_utc_midnight()
                 if raw[-1][0] < today_ms:
                     raw.append([today_ms, current_price])
         except Exception:
@@ -207,9 +305,7 @@ def _get_dram_price_history(period: str = "1y") -> pd.DataFrame | None:
             )
             if m:
                 current_price = float(m.group(1))
-                today_ms = int(datetime.combine(
-                    datetime.today().date(), datetime.min.time()
-                ).timestamp() * 1000)
+                today_ms = _today_ms_utc_midnight()
                 if raw[-1][0] < today_ms:
                     raw.append([today_ms, current_price])
         except Exception:
@@ -253,9 +349,7 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
             )
             if m:
                 current_price = float(m.group(1))
-                today_ms = int(datetime.combine(
-                    datetime.today().date(), datetime.min.time()
-                ).timestamp() * 1000)
+                today_ms = _today_ms_utc_midnight()
                 if raw[-1][0] < today_ms:
                     raw.append([today_ms, current_price])
         except Exception:
@@ -615,6 +709,8 @@ def render_macro():
                     return nm, _get_dram_price_history(period)
                 elif tk == "_DDR4_":
                     return nm, _get_ddr4_price_history(period)
+                elif tk == "_USDEBT_":
+                    return nm, _get_us_debt_history(period)
                 else:
                     return nm, _get_price_history(tk, period)
 
@@ -698,7 +794,14 @@ def render_macro():
                             )
                     elif last_update:
                         age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
-                        if age_hours >= 24:
+                        # 💡 예전엔 age_hours >= 24 만 보고 경고를 띄웠다. 그러면 금요일
+                        # 종가를 보는 월요일마다, 그리고 미국 휴일 다음 날마다 무조건
+                        # "⚠️ 2일 전"이 떴다 — 데이터는 정상인데 오탐이 나는 것.
+                        # (실제로 2026-09-07 미국 노동절 다음 날 이 경고가 떴다.)
+                        # 주말/휴일을 자연히 걸러내려면 달력 시간이 아니라 영업일
+                        # 간격으로 판단해야 한다. 영업일 2일까지는 정상으로 본다
+                        # (금→월 1일, 연휴 끼면 2일).
+                        if _weekday_gap(last_update, datetime.now(_KST)) > 2:
                             age_str = f"{age_hours/24:.0f}일 전" if age_hours >= 48 else f"{age_hours:.0f}시간 전"
                             update_html = (
                                 f"<div style='font-size:10px;color:#e65100;font-weight:600;margin-top:1px;'>"

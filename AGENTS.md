@@ -116,6 +116,7 @@ from krx_listing import fetch_krx_listing   # fdr → 캐시리포(날짜 되짚
 data/
   listing/krx_listing.csv        # 종목목록 시드 (최후 폴백, 배치가 매일 갱신)
   macro/{dram,ddr4,lithium}_cache.json   # 스팟 가격 누적 (예전엔 리포지토리 루트)
+  macro/us_debt_cache.json       # 미국 연방부채 (재무부 API, 3년치)
   earnings/index.json            # 보유 분기 목록
   earnings/q_2026_2Q.json        # 분기별 실적 (단일 4MB 파일에서 분리)
   broker_report/*.json           # 날짜별, 180일 보존
@@ -124,6 +125,18 @@ data/
 
 **실적 데이터는 `earnings_store`를 통해서만 읽고 쓴다.** 단일 파일을 매 배치마다
 재작성하면 4MB blob이 커밋마다 쌓여 .git이 폭증한다 — 분기별로 나눠 바뀐 파일만 쓴다.
+
+### 캐시 시계열의 타임스탬프 규칙
+`data/macro/*_cache.json`은 `[[epoch_ms, 값], ...]` 형식이고, **epoch_ms는
+반드시 UTC 자정**이어야 한다. `ui_macro`가 `pd.to_datetime(ts, unit="ms")`로
+읽으면 tz 없는 UTC 시각이 나오므로, KST 자정으로 저장하면 화면에 날짜가
+하루 밀려(전날 15:00) 표시된다. 날짜 자체는 KST 기준으로 정한다
+(러너가 UTC라 `datetime.today()`를 그냥 쓰면 한국 날짜와 어긋남).
+
+```python
+batch_macro._date_to_ms(d)          # 배치 쪽
+ui_macro._today_ms_utc_midnight()   # 앱 쪽 (같은 규칙)
+```
 
 ### 리포지토리 비대화 방지
 - 날짜별 JSON은 `cleanup_data.py`가 보존 기간(기본 180일)을 넘긴 것을 지운다.
