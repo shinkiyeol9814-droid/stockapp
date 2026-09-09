@@ -533,19 +533,23 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str) -> go.
         showlegend=False, hoverinfo="skip",
     ))
 
+    # 💡 드래그(이동)/줌 비활성 — 축을 fixedrange로 잠그는 게 핵심이다.
+    # dragmode=False만으로는 모드바나 휠로 여전히 확대/이동이 가능하다.
+    # hovermode는 그대로 둬서 일자별 수치 툴팁은 계속 보인다
+    # (staticPlot=True로 막으면 툴팁까지 죽으므로 절대 쓰지 않는다).
     fig.update_layout(
         height=90,
         margin=dict(l=0, r=2, t=2, b=18),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        dragmode="pan",
+        dragmode=False,
         shapes=shapes,
         hovermode="x",
         xaxis=dict(showticklabels=True, tickformat=tfmt, dtick=dtick,
                    tickfont=dict(size=7, color="#aaa"), ticklen=0,
-                   showgrid=False, zeroline=False),
+                   showgrid=False, zeroline=False, fixedrange=True),
         yaxis=dict(range=[base_y, top_y], showticklabels=False,
-                   showgrid=False, zeroline=False),
+                   showgrid=False, zeroline=False, fixedrange=True),
     )
     return fig
 
@@ -607,18 +611,20 @@ def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: da
     fig.update_layout(
         barmode="stack", height=420,
         title=dict(text=f"{cat_sel} 월별 수출", font=dict(size=13), x=0),
-        xaxis=dict(tickfont=dict(size=9), tickangle=-45, showgrid=False),
+        xaxis=dict(tickfont=dict(size=9), tickangle=-45, showgrid=False, fixedrange=True),
         yaxis=dict(title="수출금액 (백만$)", tickformat=",.0f",
-                   showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
+                   showgrid=True, gridcolor="rgba(200,200,200,0.25)", fixedrange=True),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
         margin=dict(l=0, r=10, t=50, b=80),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode="pan",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode=False,
     )
+    # 축을 fixedrange로 잠갔으니 모드바의 줌/이동 버튼은 전부 무동작 —
+    # 혼란만 주므로 모드바 자체를 숨긴다. staticPlot은 두지 않는다(툴팁 유지).
     st.plotly_chart(fig, use_container_width=True,
                     config={
-                        "scrollZoom": True,
+                        "scrollZoom": False,
+                        "displayModeBar": False,
                         "displaylogo": False,
-                        "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toImage"],
                     })
 
 
@@ -692,18 +698,20 @@ def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: 
     fig.update_layout(
         barmode="stack", height=420,
         title=dict(text=f"{cat_sel} 분기별 수출", font=dict(size=13), x=0),
-        xaxis=dict(tickfont=dict(size=10), tickangle=-30, showgrid=False),
+        xaxis=dict(tickfont=dict(size=10), tickangle=-30, showgrid=False, fixedrange=True),
         yaxis=dict(title="수출금액 (백만$)", tickformat=",.0f",
-                   showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
+                   showgrid=True, gridcolor="rgba(200,200,200,0.25)", fixedrange=True),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
         margin=dict(l=0, r=10, t=50, b=60),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode="pan",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode=False,
     )
+    # 축을 fixedrange로 잠갔으니 모드바의 줌/이동 버튼은 전부 무동작 —
+    # 혼란만 주므로 모드바 자체를 숨긴다. staticPlot은 두지 않는다(툴팁 유지).
     st.plotly_chart(fig, use_container_width=True,
                     config={
-                        "scrollZoom": True,
+                        "scrollZoom": False,
+                        "displayModeBar": False,
                         "displaylogo": False,
-                        "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toImage"],
                     })
 
 
@@ -874,7 +882,8 @@ def render_macro():
                     st.plotly_chart(
                         _make_sparkline(hist, unit, fmt, period),
                         use_container_width=True,
-                        config={"displayModeBar": False, "scrollZoom": True, "staticPlot": False},
+                        # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
+                        config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
                     )
 
                     news_query = _NEWS_QUERY.get(ticker)

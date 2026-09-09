@@ -183,8 +183,12 @@ AG Grid 편집 → 업사이드 즉시 재계산을 위한 패턴:
 
 ## 차트 설정 (Plotly)
 
+탭마다 정책이 다르다 — 아래 두 가지를 구분해서 쓸 것.
+
+### 가치평가 탭 — pan/zoom 허용
+밸류에이션 밴드 차트는 구간을 확대해 보는 게 목적이라 조작을 열어둔다.
+
 ```python
-# 기본 설정 — 항상 pan 모드, scrollZoom 허용
 fig.update_layout(dragmode="pan")
 st.plotly_chart(fig, config={
     "scrollZoom": True,
@@ -192,6 +196,27 @@ st.plotly_chart(fig, config={
     "modeBarButtonsToRemove": ["select2d", "lasso2d", "zoom2d"],
 })
 ```
+
+### 매크로 탭 — 조작 잠금, 툴팁만 유지
+카드 스파크라인과 수출 동향 차트는 "한눈에 보는" 용도라 드래그로 틀어지면
+오히려 불편하다. **축을 `fixedrange=True`로 잠그는 것이 핵심** — `dragmode=False`
+만으로는 모드바나 마우스 휠로 여전히 이동/확대가 된다.
+
+```python
+fig.update_layout(
+    dragmode=False,
+    xaxis=dict(..., fixedrange=True),
+    yaxis=dict(..., fixedrange=True),
+)
+st.plotly_chart(fig, config={
+    "scrollZoom": False,
+    "displayModeBar": False,   # 축이 잠겨 줌/이동 버튼이 전부 무동작
+})
+```
+
+> ⚠️ **`staticPlot: True`를 쓰지 말 것.** 드래그는 막히지만 마우스오버
+> 툴팁까지 같이 죽어서 일자별 수치를 볼 수 없다. `hovermode`는 그대로 두고
+> `fixedrange`로만 잠근다.
 
 ---
 
