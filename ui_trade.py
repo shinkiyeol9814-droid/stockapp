@@ -111,6 +111,13 @@ def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
             is_partial=is_cur,
         ))
 
+    # 💡 관세청 품목별 실적은 확정 통계라 2개월 가까이 지연된다
+    # (2026-09-09 기준 최신이 2026-07). 아직 안 나온 달도 0으로 채워지는데,
+    # 그대로 그리면 막대 높이가 0이 되어 "수출이 갑자기 끊긴" 것처럼 보인다.
+    # 꼬리의 빈 달만 잘라낸다 — 중간의 0은 실제 이상치일 수 있으니 남긴다.
+    while rows and rows[-1]["total"] == 0 and rows[-1]["imports"] == 0:
+        rows.pop()
+
     return pd.DataFrame(rows)
 
 
@@ -294,6 +301,11 @@ def render_trade():
         trend_df = _get_export_trend(cat_sel, n_mo)
 
     now = datetime.today()
+
+    # 확정 통계 지연(약 2개월)을 화면에서도 알 수 있게 최신 데이터 월을 표기
+    if trend_df is not None and not trend_df.empty:
+        st.caption(f"최신 데이터: **{trend_df.iloc[-1]['label']}** "
+                   "· 관세청 확정 통계는 통상 1~2개월 지연 공표됩니다")
 
     if trend_df is None or trend_df.empty:
         st.error("API에서 데이터를 가져오지 못했습니다. API 키와 네트워크 상태를 확인해주세요.")
