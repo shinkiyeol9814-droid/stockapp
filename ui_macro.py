@@ -1,5 +1,5 @@
 """
-ui_macro.py — 매크로 지표 & 수출입 동향 탭
+ui_macro.py — 매크로 지표 탭 (환율/금리/원자재/메모리/미국부채)
 """
 import streamlit as st
 import requests
@@ -46,17 +46,6 @@ MARKET_ITEMS = [
 _NEWS_QUERY = {
     "CL=F": "WTI 유가",
 }
-
-TRADE_CATS = {
-    "반도체":   ["8542"],
-    "자동차":   ["8703"],
-    "선박":     ["8901", "8902"],
-    "2차전지":  ["8507"],
-    "변압기":   ["8504"],
-    "화장품":   ["3304", "3305", "3306"],
-}
-
-_API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 
 
 def _today_ms_utc_midnight() -> int:
@@ -482,90 +471,6 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
         return None
 
 
-def _api_call(api_key: str, hs_codes: list, year: int, month: int):
-    """
-    관세청_품목별 수출입실적 → (수출액, 수입액) 백만달러.
-
-    💡 예전 주석에 "HS코드 파라미터 필터가 미지원"이라고 적혀 있었지만 사실이
-    아니다. hsSgn 파라미터가 정상 동작한다 — 매달 전체 9,653건을 받아
-    클라이언트에서 걸러내던 것을 코드당 21건으로 줄인다(0.8초 → 0.1초).
-    18개월 × 카테고리를 도는 구조라 체감 차이가 크다.
-
-    ⚠️ 함정: hsSgn을 쓰면 응답에 hsCode가 "-"인 **합계 행**이 하나 더 붙는다.
-    그 행의 값이 나머지 전체의 합과 같아서, 그냥 다 더하면 정확히 2배가 된다.
-    10자리 세부 코드만 합산해 기존 결과와 동일하게 맞춘다.
-    """
-    yymm = f"{year}{month:02d}"
-    exp_total = imp_total = 0.0
-    for code in hs_codes:
-        try:
-            r = requests.get(
-                _API_BASE,
-                params={
-                    "serviceKey": api_key,
-                    "strtYymm": yymm,
-                    "endYymm": yymm,
-                    "hsSgn": code,
-                    "numOfRows": 999,
-                    "pageNo": 1,
-                },
-                timeout=20,
-            )
-            if r.status_code != 200:
-                continue
-            root = ET.fromstring(r.text)
-            for item in root.findall(".//item"):
-                hs = (item.findtext("hsCode", "") or "").strip()
-                if len(hs) != 10:
-                    continue  # 합계 행("-") 등 세부 품목이 아닌 행은 제외
-                exp_total += float((item.findtext("expDlr", "0") or "0").replace(",", ""))
-                imp_total += float((item.findtext("impDlr", "0") or "0").replace(",", ""))
-        except Exception:
-            continue
-    return exp_total / 1_000_000, imp_total / 1_000_000
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
-    """
-    관세청 API 기반 월간 수출 추세.
-    최근 3개월은 searchDt로 순별(10일/20일/말일) 누계를 분해.
-    API 키 없으면 None 반환.
-    """
-    api_key = st.secrets.get("DATA_GO_KR_KEY", "")
-    if not api_key:
-        return None
-
-    hs_codes = TRADE_CATS.get(cat, [])
-    now = datetime.today()
-
-    month_list = []
-    for i in range(n_months - 1, -1, -1):
-        total_m = now.year * 12 + (now.month - 1) - i
-        month_list.append((total_m // 12, total_m % 12 + 1, i))
-
-    def _fetch(ym):
-        year, month, i = ym
-        exp_M, imp_M = _api_call(api_key, hs_codes, year, month)
-        return year, month, i, exp_M, imp_M
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        results = list(ex.map(_fetch, month_list))
-
-    rows = []
-    for year, month, i, exp_M, imp_M in sorted(results, key=lambda x: (x[0], x[1])):
-        is_cur = (year == now.year and month == now.month)
-        rows.append(dict(
-            label=f"{str(year)[2:]}년{month:02d}월",
-            year=year, month=month,
-            # total은 기존 이름 그대로 수출액 (차트/호출부 호환).
-            # 수입·무역수지를 추가로 실어 보낸다.
-            total=exp_M, imports=imp_M, balance=exp_M - imp_M,
-            is_partial=is_cur,
-        ))
-
-    return pd.DataFrame(rows)
-
 
 # ── 스파크라인 헬퍼 ─────────────────────────────────────────────────────────
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
@@ -653,396 +558,202 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
     return fig
 
 
-# ── 차트 헬퍼 ────────────────────────────────────────────────────────────────
-# 수출입 차트에서 고를 수 있는 지표. (컬럼, 막대색) — 색이 None이면 부호별로
-# 칠한다(무역수지는 적자 구간이 있어 한 색으로 두면 흑/적자 구분이 안 된다).
-_TRADE_METRICS = {
-    "수출":     ("total",   "#90CAF9"),
-    "수입":     ("imports", "#B39DDB"),
-    "무역수지": ("balance", None),
-}
-
-
-def _bar_colors(values):
-    """무역수지용 — 흑자 빨강 / 적자 파랑 (한국 시장 색상 규칙)."""
-    return ["#ef5350" if v >= 0 else "#1565C0" for v in values]
-
-
-def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, metric: str, now: datetime):
-    col, base_color = _TRADE_METRICS[metric]
-    is_balance = base_color is None
-
-    fig = go.Figure()
-
-    hdf = trend_df
-    fig.add_trace(go.Bar(
-        x=hdf["label"], y=hdf[col],
-        name=metric,
-        marker_color=_bar_colors(hdf[col]) if is_balance else base_color,
-        hovertemplate="%{x}<br><b>$%{y:,.1f}M</b><extra>" + metric + "</extra>",
-    ))
-
-    # 💡 예전엔 여기서 d10/d20/d30(순별 누계)을 쌓아 올렸는데, _get_export_trend가
-    # 그 값을 항상 0으로 채워서 한 번도 그려지지 않는 죽은 코드였다 — 제거.
-
-    # 무역수지는 흑/적자로 부호가 뒤집혀 전년대비 "비율"이 의미를 잃는다 → 생략
-    td = {} if is_balance else {(r["year"], r["month"]): r[col] for _, r in trend_df.iterrows()}
-    for _, row in trend_df.iterrows():
-        prev = td.get((row["year"] - 1, row["month"]), 0)
-        if prev <= 0 or row[col] <= 0:
-            continue
-        yoy = (row[col] / prev - 1) * 100
-        clr = "#ef5350" if yoy > 0 else "#1565C0"
-        fig.add_annotation(
-            x=row["label"], y=row[col],
-            text=f"{yoy:+.0f}%", showarrow=False,
-            font=dict(size=8, color=clr), yanchor="bottom", yshift=2,
-        )
-
-    cur_rows = trend_df[trend_df["is_partial"]]
-    if not cur_rows.empty:
-        fig.add_annotation(
-            x=cur_rows.iloc[-1]["label"], y=cur_rows.iloc[-1][col],
-            text=f"({now.month}월 {now.day}일까지)", showarrow=False,
-            font=dict(size=8, color="#999"), yanchor="bottom", yshift=14,
-        )
-
-    fig.update_layout(
-        barmode="stack", height=420,
-        title=dict(text=f"{cat_sel} 월별 {metric}", font=dict(size=13), x=0),
-        xaxis=dict(tickfont=dict(size=9), tickangle=-45, showgrid=False, fixedrange=True),
-        yaxis=dict(title=f"{metric} (백만$)", tickformat=",.0f",
-                   showgrid=True, gridcolor="rgba(200,200,200,0.25)", fixedrange=True),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
-        margin=dict(l=0, r=10, t=50, b=80),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode=False,
-    )
-    # 축을 fixedrange로 잠갔으니 모드바의 줌/이동 버튼은 전부 무동작 —
-    # 혼란만 주므로 모드바 자체를 숨긴다. staticPlot은 두지 않는다(툴팁 유지).
-    st.plotly_chart(fig, use_container_width=True,
-                    config={
-                        "scrollZoom": False,
-                        "displayModeBar": False,
-                        "displaylogo": False,
-                    })
-
-
-def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, metric: str, now: datetime):
-    df = trend_df.copy()
-    df["quarter"] = ((df["month"] - 1) // 3 + 1).astype(int)
-    df["q_label"] = df.apply(lambda r: f"{str(r['year'])[2:]}년Q{r['quarter']}", axis=1)
-
-    qdf = (
-        df.groupby(["year", "quarter", "q_label"], as_index=False)
-        .agg(total=("total", "sum"), imports=("imports", "sum"),
-             balance=("balance", "sum"), is_partial=("is_partial", "any"))
-        .sort_values(["year", "quarter"])
-        .reset_index(drop=True)
-    )
-
-    col, base_color = _TRADE_METRICS[metric]
-    is_balance = base_color is None
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=qdf["q_label"], y=qdf[col],
-        name=metric,
-        marker_color=_bar_colors(qdf[col]) if is_balance else base_color,
-        hovertemplate="%{x}<br><b>$%{y:,.1f}M</b><extra>" + metric + "</extra>",
-    ))
-
-    # 💡 순별 누계(d10/d20/d30) 블록 제거 — 값이 항상 0이라 그려지지 않던 죽은 코드.
-    # YoY% 분기 기준
-    qtd = {} if is_balance else {(r["year"], r["quarter"]): r[col] for _, r in qdf.iterrows()}
-    for _, row in qdf.iterrows():
-        prev = qtd.get((row["year"] - 1, row["quarter"]), 0)
-        if prev <= 0 or row[col] <= 0:
-            continue
-        yoy = (row[col] / prev - 1) * 100
-        clr = "#ef5350" if yoy > 0 else "#1565C0"
-        fig.add_annotation(
-            x=row["q_label"], y=row[col],
-            text=f"{yoy:+.0f}%", showarrow=False,
-            font=dict(size=9, color=clr), yanchor="bottom", yshift=2,
-        )
-
-    cur_rows = qdf[qdf["is_partial"]]
-    if not cur_rows.empty:
-        cur_q = cur_rows.iloc[-1]
-        fig.add_annotation(
-            x=cur_q["q_label"], y=cur_q["total"],
-            text=f"({now.month}월 {now.day}일까지)", showarrow=False,
-            font=dict(size=8, color="#999"), yanchor="bottom", yshift=14,
-        )
-
-    fig.update_layout(
-        barmode="stack", height=420,
-        title=dict(text=f"{cat_sel} 분기별 {metric}", font=dict(size=13), x=0),
-        xaxis=dict(tickfont=dict(size=10), tickangle=-30, showgrid=False, fixedrange=True),
-        yaxis=dict(title=f"{metric} (백만$)", tickformat=",.0f",
-                   showgrid=True, gridcolor="rgba(200,200,200,0.25)", fixedrange=True),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
-        margin=dict(l=0, r=10, t=50, b=60),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", dragmode=False,
-    )
-    # 축을 fixedrange로 잠갔으니 모드바의 줌/이동 버튼은 전부 무동작 —
-    # 혼란만 주므로 모드바 자체를 숨긴다. staticPlot은 두지 않는다(툴팁 유지).
-    st.plotly_chart(fig, use_container_width=True,
-                    config={
-                        "scrollZoom": False,
-                        "displayModeBar": False,
-                        "displaylogo": False,
-                    })
-
-
 # ── 렌더링 ────────────────────────────────────────────────────────────────────
 def render_macro():
     st.markdown(
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>🌐 매크로 지표</div>",
         unsafe_allow_html=True,
     )
-    st.caption("시장 지표 5분 자동갱신 · 수출 데이터 1시간 캐시")
+    st.caption("시장 지표 5분 자동갱신")
 
-    # 💡 st.tabs()는 클릭으로 탭을 바꿔도 서버 재실행이 없는 순수 프론트엔드
-    # 토글이라, 두 탭의 내용을 애초에 "둘 다" 미리 계산해서 보내둬야 한다.
-    # 그래서 수출 동향(정부 API 호출 + 차트 렌더링)을 한 번도 안 봐도 매크로
-    # 탭에 들어갈 때마다 그 비용을 그대로 지불하고 있었다. 실제로 선택된
-    # 뷰만 계산하도록 st.radio + session_state 기반 토글로 바꾼다(워치리스트
-    # 섹션 접기와 같은 패턴).
-    MKT_LABEL, TRADE_LABEL = "📊 시장 지표", "🚢 수출 동향"
-    view_choice = st.radio(
-        "매크로 뷰 선택", [MKT_LABEL, TRADE_LABEL],
-        horizontal=True, label_visibility="collapsed", key="macro_view",
-    )
+    # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.
+    # 수출입은 성격이 달라(정부 API · 월 단위 · 품목별) 별도 메뉴
+    # (ui_trade.render_trade)로 분리했고, 이 탭은 시장 지표만 담당한다.
+    period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo", "1년": "1y"}
+    sel_p = st.radio("기간", list(period_map.keys()), index=3,
+                      horizontal=True, key="macro_period")
+    period = period_map[sel_p]
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # TAB 1 — 시장 지표
-    # ══════════════════════════════════════════════════════════════════════════
-    if view_choice == MKT_LABEL:
-        period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo", "1년": "1y"}
-        sel_p = st.radio("기간", list(period_map.keys()), index=3,
-                          horizontal=True, key="macro_period")
-        period = period_map[sel_p]
+    with st.spinner("시장 데이터 로딩 중..."):
+        # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
+        # 티커당 차트용 history() + 실시간가 fast_info/get_info()까지 최대
+        # 2~3번 왕복이라, 콜드 캐시일 때 다 더하면 꽤 오래 걸렸다. 워치리스트와
+        # 같은 패턴으로 전부 스레드풀에서 동시에 가져오도록 바꾼다.
+        hists = {}
+        last_prev_map = {}
+        full_map = {}   # 마일스톤 배지용 전체 이력
 
-        with st.spinner("시장 데이터 로딩 중..."):
-            # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
-            # 티커당 차트용 history() + 실시간가 fast_info/get_info()까지 최대
-            # 2~3번 왕복이라, 콜드 캐시일 때 다 더하면 꽤 오래 걸렸다. 워치리스트와
-            # 같은 패턴으로 전부 스레드풀에서 동시에 가져오도록 바꾼다.
-            hists = {}
-            last_prev_map = {}
-            full_map = {}   # 마일스톤 배지용 전체 이력
+        def _fetch_hist(item):
+            nm, tk = item[0], item[1]
+            if tk == "_LITHIUM_":
+                return nm, _get_lithium_price_history(period)
+            elif tk == "_DRAM_":
+                return nm, _get_dram_price_history(period)
+            elif tk == "_DDR4_":
+                return nm, _get_ddr4_price_history(period)
+            elif tk == "_USDEBT_":
+                return nm, _get_us_debt_history(period)
+            else:
+                return nm, _get_price_history(tk, period)
 
-            def _fetch_hist(item):
-                nm, tk = item[0], item[1]
-                if tk == "_LITHIUM_":
-                    return nm, _get_lithium_price_history(period)
-                elif tk == "_DRAM_":
-                    return nm, _get_dram_price_history(period)
-                elif tk == "_DDR4_":
-                    return nm, _get_ddr4_price_history(period)
-                elif tk == "_USDEBT_":
-                    return nm, _get_us_debt_history(period)
-                else:
-                    return nm, _get_price_history(tk, period)
+        def _fetch_full(item):
+            """마일스톤 판정용 전체 이력. 캐시 기반은 잘라내지 않은 원본."""
+            nm, tk = item[0], item[1]
+            if tk == "_LITHIUM_":
+                return nm, _get_lithium_price_history("max")
+            elif tk == "_DRAM_":
+                return nm, _get_dram_price_history("max")
+            elif tk == "_DDR4_":
+                return nm, _get_ddr4_price_history("max")
+            elif tk == "_USDEBT_":
+                return nm, _get_us_debt_history("max")
+            return nm, _get_full_history(tk)
 
-            def _fetch_full(item):
-                """마일스톤 판정용 전체 이력. 캐시 기반은 잘라내지 않은 원본."""
-                nm, tk = item[0], item[1]
-                if tk == "_LITHIUM_":
-                    return nm, _get_lithium_price_history("max")
-                elif tk == "_DRAM_":
-                    return nm, _get_dram_price_history("max")
-                elif tk == "_DDR4_":
-                    return nm, _get_ddr4_price_history("max")
-                elif tk == "_USDEBT_":
-                    return nm, _get_us_debt_history("max")
-                return nm, _get_full_history(tk)
+        def _fetch_last_prev(item):
+            nm, tk = item[0], item[1]
+            if tk.startswith("_"):
+                return nm, (None, None, None)
+            # 채권 금리는 네이버 실시간 우선 (^TNX는 미국 정규장만 갱신됨).
+            # 네이버가 실패하면 기존 야후 경로로 폴백한다.
+            if tk in _NAVER_BOND_MAP:
+                q = _get_naver_bond_quote(_NAVER_BOND_MAP[tk])
+                if q[0] is not None:
+                    return nm, q
+            return nm, _get_last_and_prev_close(tk)
 
-            def _fetch_last_prev(item):
-                nm, tk = item[0], item[1]
-                if tk.startswith("_"):
-                    return nm, (None, None, None)
-                # 채권 금리는 네이버 실시간 우선 (^TNX는 미국 정규장만 갱신됨).
-                # 네이버가 실패하면 기존 야후 경로로 폴백한다.
-                if tk in _NAVER_BOND_MAP:
-                    q = _get_naver_bond_quote(_NAVER_BOND_MAP[tk])
-                    if q[0] is not None:
-                        return nm, q
-                return nm, _get_last_and_prev_close(tk)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(MARKET_ITEMS) * 2) as ex:
+            hist_futures = [ex.submit(_fetch_hist, item) for item in MARKET_ITEMS]
+            lp_futures = [ex.submit(_fetch_last_prev, item) for item in MARKET_ITEMS]
+            full_futures = [ex.submit(_fetch_full, item) for item in MARKET_ITEMS]
+            for f in hist_futures:
+                nm, h = f.result()
+                hists[nm] = h
+            for f in lp_futures:
+                nm, lp = f.result()
+                last_prev_map[nm] = lp
+            for f in full_futures:
+                nm, fh = f.result()
+                full_map[nm] = fh
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(MARKET_ITEMS) * 2) as ex:
-                hist_futures = [ex.submit(_fetch_hist, item) for item in MARKET_ITEMS]
-                lp_futures = [ex.submit(_fetch_last_prev, item) for item in MARKET_ITEMS]
-                full_futures = [ex.submit(_fetch_full, item) for item in MARKET_ITEMS]
-                for f in hist_futures:
-                    nm, h = f.result()
-                    hists[nm] = h
-                for f in lp_futures:
-                    nm, lp = f.result()
-                    last_prev_map[nm] = lp
-                for f in full_futures:
-                    nm, fh = f.result()
-                    full_map[nm] = fh
-
-        for row_start in range(0, len(MARKET_ITEMS), 3):
-            cols = st.columns(3)
-            for ci, (name, ticker, unit, fmt, mult) in enumerate(MARKET_ITEMS[row_start:row_start + 3]):
-                hist = hists[name]
-                with cols[ci]:
-                    if hist is None or hist.empty:
-                        st.markdown(
-                            f"<div style='padding:4px 0 8px;'>"
-                            f"<div style='font-size:11px;color:#888;'>{name}</div>"
-                            f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                        continue
-                    if mult != 1:
-                        hist = hist.copy()
-                        hist["price"] = hist["price"] * mult
-                    last  = float(hist["price"].iloc[-1])
-                    prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
-                    last_update = None
-                    is_cache_based = ticker.startswith("_")
-                    if not is_cache_based:
-                        # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
-                        # 이미 위에서 병렬로 가져와둔 값을 그대로 조회만 한다 (재요청 없음)
-                        fi_last, fi_prev, fi_time = last_prev_map.get(name, (None, None, None))
-                        if fi_last is not None and fi_prev is not None:
-                            last, prev = fi_last * mult, fi_prev * mult
-                            last_update = fi_time
-                            # 일부 티커(예: ^TNX)는 차트용 일별 시계열이 fast_info보다
-                            # 며칠 뒤처져 올 수 있다. "현재가"와 차트가 다른 날을
-                            # 보여주는 어긋남이 없도록, 더 최신이면 이어붙인다.
-                            # 💡 get_info()가 실패하면 fi_time이 None으로 온다
-                            # (fast_info는 성공한 경우) — 그대로 .date()를 부르면
-                            # AttributeError로 매크로 탭 전체가 죽으므로 먼저 방어한다.
-                            if last_update is not None and last_update.date() > hist.index[-1].date():
-                                new_row = pd.DataFrame(
-                                    {"price": [last]}, index=[pd.Timestamp(last_update.date())]
-                                )
-                                hist = pd.concat([hist, new_row])
-                    else:
-                        # 캐시 파일 기반(리튬/DDR5/DDR4) — 방금 확인한 값이므로 age 경고 없이 시각만 표시
-                        last_update = hist.index[-1].to_pydatetime()
-                    chg_p = (last / prev - 1) * 100 if prev else 0
-                    try:
-                        val_str = f"{last:{fmt}} {unit}"
-                    except Exception:
-                        val_str = f"{last:.2f} {unit}"
-                    clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
-                    arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
-                    update_html = ""
-                    if is_cache_based and last_update:
-                        if prev == last and len(hist) > 1:
-                            prev_date = hist.index[-2].to_pydatetime()
-                            update_html = (
-                                f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                                f"{last_update:%m/%d %H:%M} 확인 ({prev_date:%m/%d} 이후 무변동)</div>"
-                            )
-                        else:
-                            update_html = (
-                                f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                                f"{last_update:%m/%d %H:%M} 기준</div>"
-                            )
-                    elif last_update:
-                        age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
-                        # 💡 예전엔 age_hours >= 24 만 보고 경고를 띄웠다. 그러면 금요일
-                        # 종가를 보는 월요일마다, 그리고 미국 휴일 다음 날마다 무조건
-                        # "⚠️ 2일 전"이 떴다 — 데이터는 정상인데 오탐이 나는 것.
-                        # (실제로 2026-09-07 미국 노동절 다음 날 이 경고가 떴다.)
-                        # 주말/휴일을 자연히 걸러내려면 달력 시간이 아니라 영업일
-                        # 간격으로 판단해야 한다. 영업일 2일까지는 정상으로 본다
-                        # (금→월 1일, 연휴 끼면 2일).
-                        if _weekday_gap(last_update, datetime.now(_KST)) > 2:
-                            age_str = f"{age_hours/24:.0f}일 전" if age_hours >= 48 else f"{age_hours:.0f}시간 전"
-                            update_html = (
-                                f"<div style='font-size:10px;color:#e65100;font-weight:600;margin-top:1px;'>"
-                                f"⚠️ {last_update:%m/%d %H:%M} 기준 ({age_str})</div>"
-                            )
-                        else:
-                            update_html = (
-                                f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                                f"{last_update:%m/%d %H:%M} 기준</div>"
-                            )
+    for row_start in range(0, len(MARKET_ITEMS), 3):
+        cols = st.columns(3)
+        for ci, (name, ticker, unit, fmt, mult) in enumerate(MARKET_ITEMS[row_start:row_start + 3]):
+            hist = hists[name]
+            with cols[ci]:
+                if hist is None or hist.empty:
                     st.markdown(
-                        f"<div style='padding:4px 0 2px;'>"
-                        f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>{name}</div>"
-                        f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{val_str}</div>"
-                        f"<div style='font-size:12px;color:{clr};margin-top:2px;'>"
-                        f"{arrow} {chg_p:+.2f}% 전일</div>"
-                        f"{update_html}"
+                        f"<div style='padding:4px 0 8px;'>"
+                        f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                        f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
-                    note = _milestone_note(full_map.get(name), last)
-                    st.plotly_chart(
-                        _make_sparkline(hist, unit, fmt, period, note),
-                        use_container_width=True,
-                        # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
-                        config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
-                    )
-
-                    news_query = _NEWS_QUERY.get(ticker)
-                    if news_query:
-                        news_items = _get_commodity_news(news_query)
-                        if news_items:
-                            # 구글 뉴스는 외부 입력이므로 HTML 이스케이프 후 삽입 (XSS 방지)
-                            news_html = "".join(
-                                f"<div style='font-size:11px;color:#555;margin-top:2px;overflow:hidden;"
-                                f"text-overflow:ellipsis;white-space:nowrap;'>"
-                                f"📰 <a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
-                                f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>"
-                                for title, link in news_items
+                    continue
+                if mult != 1:
+                    hist = hist.copy()
+                    hist["price"] = hist["price"] * mult
+                last  = float(hist["price"].iloc[-1])
+                prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
+                last_update = None
+                is_cache_based = ticker.startswith("_")
+                if not is_cache_based:
+                    # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
+                    # 이미 위에서 병렬로 가져와둔 값을 그대로 조회만 한다 (재요청 없음)
+                    fi_last, fi_prev, fi_time = last_prev_map.get(name, (None, None, None))
+                    if fi_last is not None and fi_prev is not None:
+                        last, prev = fi_last * mult, fi_prev * mult
+                        last_update = fi_time
+                        # 일부 티커(예: ^TNX)는 차트용 일별 시계열이 fast_info보다
+                        # 며칠 뒤처져 올 수 있다. "현재가"와 차트가 다른 날을
+                        # 보여주는 어긋남이 없도록, 더 최신이면 이어붙인다.
+                        # 💡 get_info()가 실패하면 fi_time이 None으로 온다
+                        # (fast_info는 성공한 경우) — 그대로 .date()를 부르면
+                        # AttributeError로 매크로 탭 전체가 죽으므로 먼저 방어한다.
+                        if last_update is not None and last_update.date() > hist.index[-1].date():
+                            new_row = pd.DataFrame(
+                                {"price": [last]}, index=[pd.Timestamp(last_update.date())]
                             )
-                            st.markdown(news_html, unsafe_allow_html=True)
+                            hist = pd.concat([hist, new_row])
+                else:
+                    # 캐시 파일 기반(리튬/DDR5/DDR4) — 방금 확인한 값이므로 age 경고 없이 시각만 표시
+                    last_update = hist.index[-1].to_pydatetime()
+                chg_p = (last / prev - 1) * 100 if prev else 0
+                try:
+                    val_str = f"{last:{fmt}} {unit}"
+                except Exception:
+                    val_str = f"{last:.2f} {unit}"
+                clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
+                arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
+                update_html = ""
+                if is_cache_based and last_update:
+                    if prev == last and len(hist) > 1:
+                        prev_date = hist.index[-2].to_pydatetime()
+                        update_html = (
+                            f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                            f"{last_update:%m/%d %H:%M} 확인 ({prev_date:%m/%d} 이후 무변동)</div>"
+                        )
+                    else:
+                        update_html = (
+                            f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                            f"{last_update:%m/%d %H:%M} 기준</div>"
+                        )
+                elif last_update:
+                    age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
+                    # 💡 예전엔 age_hours >= 24 만 보고 경고를 띄웠다. 그러면 금요일
+                    # 종가를 보는 월요일마다, 그리고 미국 휴일 다음 날마다 무조건
+                    # "⚠️ 2일 전"이 떴다 — 데이터는 정상인데 오탐이 나는 것.
+                    # (실제로 2026-09-07 미국 노동절 다음 날 이 경고가 떴다.)
+                    # 주말/휴일을 자연히 걸러내려면 달력 시간이 아니라 영업일
+                    # 간격으로 판단해야 한다. 영업일 2일까지는 정상으로 본다
+                    # (금→월 1일, 연휴 끼면 2일).
+                    if _weekday_gap(last_update, datetime.now(_KST)) > 2:
+                        age_str = f"{age_hours/24:.0f}일 전" if age_hours >= 48 else f"{age_hours:.0f}시간 전"
+                        update_html = (
+                            f"<div style='font-size:10px;color:#e65100;font-weight:600;margin-top:1px;'>"
+                            f"⚠️ {last_update:%m/%d %H:%M} 기준 ({age_str})</div>"
+                        )
+                    else:
+                        update_html = (
+                            f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                            f"{last_update:%m/%d %H:%M} 기준</div>"
+                        )
+                st.markdown(
+                    f"<div style='padding:4px 0 2px;'>"
+                    f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{val_str}</div>"
+                    f"<div style='font-size:12px;color:{clr};margin-top:2px;'>"
+                    f"{arrow} {chg_p:+.2f}% 전일</div>"
+                    f"{update_html}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                note = _milestone_note(full_map.get(name), last)
+                st.plotly_chart(
+                    _make_sparkline(hist, unit, fmt, period, note),
+                    use_container_width=True,
+                    # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
+                )
 
-        _, cr = st.columns([9, 1.5])
-        with cr:
-            if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
-                _get_price_history.clear()
-                _get_lithium_price_history.clear()
-                _get_dram_price_history.clear()
-                _get_ddr4_price_history.clear()
-                st.rerun()
+                news_query = _NEWS_QUERY.get(ticker)
+                if news_query:
+                    news_items = _get_commodity_news(news_query)
+                    if news_items:
+                        # 구글 뉴스는 외부 입력이므로 HTML 이스케이프 후 삽입 (XSS 방지)
+                        news_html = "".join(
+                            f"<div style='font-size:11px;color:#555;margin-top:2px;overflow:hidden;"
+                            f"text-overflow:ellipsis;white-space:nowrap;'>"
+                            f"📰 <a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
+                            f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>"
+                            for title, link in news_items
+                        )
+                        st.markdown(news_html, unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # TAB 2 — 수출 동향
-    # ══════════════════════════════════════════════════════════════════════════
-    elif view_choice == TRADE_LABEL:
-        has_key = bool(st.secrets.get("DATA_GO_KR_KEY", ""))
-
-        if not has_key:
-            st.warning(
-                "수출 데이터를 표시하려면 **관세청 공공데이터포털 API 키**가 필요합니다.\n\n"
-                "1. [data.go.kr](https://www.data.go.kr) 에서 **관세청_통관기준 수출입 실적** API 신청\n"
-                "2. 발급된 키를 Streamlit Cloud 시크릿에 추가: `DATA_GO_KR_KEY = \"발급받은키\"`"
-            )
-            st.stop()
-
-        st.markdown("#### 📈 품목별 수출입 추세")
-
-        cc1, cc2, cc3, cc4 = st.columns([2, 1.6, 2.2, 1.8])
-        with cc1:
-            cat_sel = st.selectbox("품목", list(TRADE_CATS.keys()), key="export_cat")
-        with cc2:
-            n_mo = st.selectbox("기간", [12, 18, 24], index=1, key="export_nmo")
-        with cc3:
-            metric = st.radio("지표", list(_TRADE_METRICS.keys()),
-                              horizontal=True, key="export_metric")
-        with cc4:
-            view_mode = st.radio("단위", ["월별", "분기별"], horizontal=True, key="export_view")
-
-        with st.spinner(f"{cat_sel} 추세 데이터 로딩 중..."):
-            trend_df = _get_export_trend(cat_sel, n_mo)
-
-        now = datetime.today()
-
-        if trend_df is None or trend_df.empty:
-            st.error("API에서 데이터를 가져오지 못했습니다. API 키와 네트워크 상태를 확인해주세요.")
-        elif view_mode == "월별":
-            _render_monthly_chart(trend_df, cat_sel, metric, now)
-        else:
-            _render_quarterly_chart(trend_df, cat_sel, metric, now)
+    _, cr = st.columns([9, 1.5])
+    with cr:
+        if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
+            _get_price_history.clear()
+            _get_lithium_price_history.clear()
+            _get_dram_price_history.clear()
+            _get_ddr4_price_history.clear()
+            st.rerun()

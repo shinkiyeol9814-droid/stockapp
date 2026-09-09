@@ -59,12 +59,12 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `app.py` | 메인 진입점, 탭 라우팅, 전역 CSS, autorefresh |
 | `valuation.py` | 가치평가 탭 UI + 공유 데이터 함수(`get_hybrid_financials` 등) |
 | `ui_watchlist.py` | 워치리스트 탭 (AG Grid 섹터별 테이블) |
-| `ui_macro.py` | 매크로 지표 & 수출 동향 탭 |
+| `ui_macro.py` | 매크로 지표 탭 (환율/금리/원자재/메모리/미국부채) |
 | `ui_earnings.py` | 실적 탭 |
 | `ui_report.py` | 레포트 탭 |
-| `ui_telegram.py` | 텔레그램 뷰어 탭 |
 | `new_high.py` | 신고가 탭 |
-| `ui_sector.py` | 섹터별 등락률 탭 |
+| `ui_sector.py` | 섹터별 등락률 탭 (Top5 + 이슈 뉴스) |
+| `ui_trade.py` | 수출입 동향 탭 (관세청 품목별 실적) |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
@@ -76,7 +76,6 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 ```
 streamlit, plotly, pandas, yfinance
 FinanceDataReader (fdr)          # 한국 주식/FX 데이터
-pykrx                            # KRX 상장 정보
 streamlit-aggrid==0.3.4.post3    # 워치리스트 테이블
 streamlit-option-menu            # 상단 탭 메뉴
 ```
@@ -158,7 +157,7 @@ ui_macro._today_ms_utc_midnight()   # 앱 쪽 (같은 규칙)
 | `load_watchlist` | 60s | GitHub API 속도 제한 |
 | `get_watch_financials` | 3600s | 재무데이터 변동 적음 |
 | `_get_price_history` (macro) | 300s | 시장 지표 |
-| `_get_trade_data` (macro) | 3600s | 수출 데이터 |
+| `_get_export_trend` (trade) | 3600s | 관세청 수출입 데이터 |
 
 ### 워치리스트 Session State 네이밍
 
@@ -197,10 +196,10 @@ st.plotly_chart(fig, config={
 })
 ```
 
-### 매크로 탭 — 조작 잠금, 툴팁만 유지
-카드 스파크라인과 수출 동향 차트는 "한눈에 보는" 용도라 드래그로 틀어지면
-오히려 불편하다. **축을 `fixedrange=True`로 잠그는 것이 핵심** — `dragmode=False`
-만으로는 모드바나 마우스 휠로 여전히 이동/확대가 된다.
+### 매크로 · 수출입 탭 — 조작 잠금, 툴팁만 유지
+카드 스파크라인(`ui_macro`)과 수출입 차트(`ui_trade`)는 "한눈에 보는" 용도라
+드래그로 틀어지면 오히려 불편하다. **축을 `fixedrange=True`로 잠그는 것이
+핵심** — `dragmode=False`만으로는 모드바나 마우스 휠로 여전히 이동/확대가 된다.
 
 ```python
 fig.update_layout(
@@ -225,9 +224,10 @@ st.plotly_chart(fig, config={
 | 키 | 용도 |
 |----|------|
 | `GH_PAT` / `GITHUB_TOKEN` | GitHub 워치리스트 저장 |
-| `TELEGRAM_API_ID` | 텔레그램 뷰어 |
-| `TELEGRAM_API_HASH` | 텔레그램 뷰어 |
-| `DATA_GO_KR_KEY` | 관세청 수출입 통계 API (매크로 탭) |
+| `DATA_GO_KR_KEY` | 관세청 수출입 통계 API (수출입 탭) |
+
+> 텔레그램 시크릿은 앱에서 더 이상 쓰지 않는다 — 뷰어 탭을 없앴고,
+> 수집은 배치(`batch_*`)에서만 한다. 아래 Actions Secrets 참고.
 
 ### GitHub Actions Secrets (배치 전용)
 
