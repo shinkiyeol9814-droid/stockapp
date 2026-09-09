@@ -11,6 +11,7 @@ import re
 import html
 import urllib.parse
 import xml.etree.ElementTree as ET
+import concurrent.futures
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -63,14 +64,8 @@ def get_sector_stocks(no: str):
         return None
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_sector_news(sector_name: str, n: int = 2):
-    """
-    업종 관련 뉴스 헤드라인 (제목, 링크) n개.
-    ui_macro._get_commodity_news와 같은 방식 — 금융 뉴스는 등락 사유가 제목에
-    그대로 들어있어(예: "반도체株 급등, HBM 수요 기대") AI 요약 없이도 충분하고
-    API 키가 필요 없다. 30분 캐시.
-    """
+def _fetch_news(sector_name: str, n: int):
+    """업종 관련 뉴스 헤드라인 (제목, 링크) n개. 실패하면 빈 리스트."""
     try:
         query = urllib.parse.quote(f"{sector_name} 업종 주가")
         url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
@@ -86,47 +81,62 @@ def get_sector_news(sector_name: str, n: int = 2):
         return []
 
 
-def _render_issue_block(df_side, heading, accent):
-    """상승/하락 상위 업종의 뉴스를 묶어서 보여준다."""
-    st.markdown(f"##### {heading}")
-    for _, row in df_side.iterrows():
-        items = get_sector_news(row["업종명"])
-        clr = "#ef5350" if row["등락률_num"] > 0 else "#1565C0"
-        st.markdown(
-            f"<div style='font-size:13.5px;font-weight:700;color:#333;margin:10px 0 2px;'>"
-            f"{html.escape(str(row['업종명']))} "
-            f"<span style='color:{clr};'>{html.escape(str(row['등락률']))}</span></div>",
-            unsafe_allow_html=True,
-        )
-        if not items:
-            st.markdown(
-                "<div style='font-size:12px;color:#aaa;margin-left:8px;'>관련 뉴스 없음</div>",
-                unsafe_allow_html=True,
-            )
-            continue
-        for title, link in items:
-            # 뉴스 제목은 외부 입력 — HTML 삽입 전 이스케이프 (XSS 방지)
-            st.markdown(
-                f"<div style='font-size:12px;margin-left:8px;line-height:1.5;'>"
-                f"📰 <a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
-                f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>",
-                unsafe_allow_html=True,
-            )
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_sector_news_bulk(names: tuple, n: int = 1) -> dict:
+    """
+    여러 업종의 헤드라인을 한 번에 -> {업종명: [(제목, 링크), ...]}.
+
+    💡 업종마다 따로 부르면 Top5 x 2 = 10회를 순차로 기다린다(각 ~0.3s).
+    구글 뉴스 RSS는 키가 필요 없고 가벼워서 병렬로 묶으면 체감이 사라진다.
+    캐시도 "이번 Top10 묶음" 단위로 하나만 잡힌다. 30분 캐시.
+
+    금융 뉴스는 등락 사유가 제목에 그대로 들어있어(예: "전기장비주, AI
+    데이터센터 전력 수요에 급등") AI 요약 없이 헤드라인만으로 충분하다.
+    """
+    out = {nm: [] for nm in names}
+    if not names:
+        return out
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        futs = {ex.submit(_fetch_news, nm, n): nm for nm in names}
+        for f in concurrent.futures.as_completed(futs):
+            out[futs[f]] = f.result()
+    return out
 
 
-def _spotlight_card(row):
+def _spotlight_card(row, news):
+    """
+    업종 카드 = 업종명 + 등락률 + **사유 한 줄**.
+
+    💡 예전엔 등락률만 있고 사유는 화면 아래 "이슈 정리" 섹션에 따로 있었다.
+    숫자를 보고 이유를 찾으려면 눈이 두 번 움직여야 해서, 헤드라인을 카드
+    안으로 넣고 별도 섹션은 없앴다.
+
+    ⚠️ 마크다운은 4칸 이상 들여쓴 줄을 코드블록으로 인식해 HTML을 그대로
+    텍스트로 찍는다 — 들여쓰기 없는 한 줄짜리 문자열로 조립해야 한다.
+    """
     up = row["등락률_num"] > 0
     clr = "#ef5350" if up else ("#1565C0" if row["등락률_num"] < 0 else "#888")
     arrow = "▲" if up else ("▼" if row["등락률_num"] < 0 else "─")
-    # 💡 마크다운은 4칸 이상 들여쓰기된 줄을 코드블록으로 인식해 HTML을 그대로
-    # 텍스트로 찍어버린다 — 여러 줄에 걸친 들여쓰기 f-string 대신 들여쓰기
-    # 없는 한 줄짜리 문자열로 만들어야 카드 전체가 실제 HTML로 렌더링된다.
+
+    if news:
+        title, link = news[0]
+        # 뉴스 제목·링크는 외부 입력 — HTML 삽입 전 이스케이프 (XSS 방지)
+        reason = (
+            f'<div style="font-size:11.5px;line-height:1.35;margin-top:3px;">'
+            f'<a href="{html.escape(link)}" target="_blank" rel="noopener noreferrer" '
+            f'style="color:#7a8794;text-decoration:none;">📰 {html.escape(title)}</a></div>'
+        )
+    else:
+        reason = ('<div style="font-size:11.5px;color:#bbb;margin-top:3px;">'
+                  '관련 뉴스 없음</div>')
+
     return (
-        f'<div style="display:flex;justify-content:space-between;align-items:center;'
-        f'padding:8px 12px;border-bottom:1px solid #f0f0f0;">'
-        f'<span style="font-size:13.5px;font-weight:600;color:#333;">{row["업종명"]}</span>'
-        f'<span style="font-size:13.5px;font-weight:700;color:{clr};">{arrow} {row["등락률"]}</span>'
-        f'</div>'
+        f'<div style="padding:9px 12px;border-bottom:1px solid #f0f0f0;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="font-size:13.5px;font-weight:600;color:#333;">{html.escape(str(row["업종명"]))}</span>'
+        f'<span style="font-size:13.5px;font-weight:700;color:{clr};white-space:nowrap;">'
+        f'{arrow} {html.escape(str(row["등락률"]))}</span>'
+        f'</div>{reason}</div>'
     )
 
 
@@ -155,12 +165,18 @@ def render_sector_menu():
     top5 = df.head(5)
     bottom5 = df.tail(5).iloc[::-1]
 
+    # Top10의 헤드라인을 한 번에 병렬로 받아 카드에 같이 싣는다
+    names = tuple(list(top5["업종명"]) + list(bottom5["업종명"]))
+    with st.spinner("업종 이슈 확인 중..."):
+        news_map = get_sector_news_bulk(names)
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("#### 🔥 상승 TOP 5")
         st.markdown(
             "<div style='border:1px solid #eee;border-radius:8px;overflow:hidden;'>"
-            + "".join(_spotlight_card(r) for _, r in top5.iterrows())
+            + "".join(_spotlight_card(r, news_map.get(r["업종명"], []))
+                      for _, r in top5.iterrows())
             + "</div>",
             unsafe_allow_html=True,
         )
@@ -168,24 +184,11 @@ def render_sector_menu():
         st.markdown("#### ❄️ 하락 TOP 5")
         st.markdown(
             "<div style='border:1px solid #eee;border-radius:8px;overflow:hidden;'>"
-            + "".join(_spotlight_card(r) for _, r in bottom5.iterrows())
+            + "".join(_spotlight_card(r, news_map.get(r["업종명"], []))
+                      for _, r in bottom5.iterrows())
             + "</div>",
             unsafe_allow_html=True,
         )
-
-    st.divider()
-
-    # 💡 예전엔 여기에 전체 업종 테이블(80여 행)이 있었다. 요청에 따라 제거하고,
-    # 대신 "왜 올랐는지/왜 빠졌는지"를 읽을 수 있는 이슈·뉴스 정리로 대체한다.
-    # 숫자만 나열하는 표보다 상위 업종의 배경을 짚는 게 판단에 쓸모 있다.
-    st.markdown("#### 📰 이슈 정리")
-    st.caption("상승·하락 상위 업종의 관련 헤드라인 · 30분 캐시")
-
-    n1, n2 = st.columns(2)
-    with n1:
-        _render_issue_block(df.head(3), "🔥 상승 배경", "#ef5350")
-    with n2:
-        _render_issue_block(df.tail(3).iloc[::-1], "❄️ 하락 배경", "#1565C0")
 
     def _color_change(val):
         try:

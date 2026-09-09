@@ -84,10 +84,10 @@ if query_stock_code:
 menu = option_menu(
     menu_title=None,
     # 💡 2줄로 감싸지는 메뉴라(4개씩) 순서가 곧 화면 배치: 리스트의 앞 4개가
-    # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/워치리스트/레포트/섹터별,
-    # 아랫줄 = 신고가/실적/매크로/수출입.
-    options=["가치평가", "워치리스트", "레포트", "섹터별", "신고가", "실적", "매크로", "수출입"],
-    icons=["graph-up-arrow", "list-check", "newspaper", "pie-chart", "rocket", "bar-chart-line", "globe", "box-seam"],
+    # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/워치리스트/레포트/수출입,
+    # 아랫줄 = 섹터별/신고가/실적/매크로.
+    options=["가치평가", "워치리스트", "레포트", "수출입", "섹터별", "신고가", "실적", "매크로"],
+    icons=["graph-up-arrow", "list-check", "newspaper", "box-seam", "pie-chart", "rocket", "bar-chart-line", "globe"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={

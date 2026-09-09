@@ -88,19 +88,17 @@ def render_new_high_menu():
     if '시가총액' not in all_df.columns:
         all_df['시가총액'] = 0
 
-    st.markdown("### 🔍 필터 설정")
-    col1, col2 = st.columns(2)
-    with col1:
-        periods = ["전체", "1년(52주) 신고가", "6개월 신고가", "3개월 신고가"]
-        selected_period = st.selectbox("📌 신고가 기간", periods, index=0)
+    # 💡 "필터 설정" 헤더와 신고가 기간(돌파기간) 선택은 제거했다.
+    # 분석일자를 고르는 순간 그 시점의 신고가 종목만 담긴 파일이라 기간을 또
+    # 나눌 실익이 적었고, 헤더 하나를 위해 화면이 한 단 더 깊어졌다.
+    # 남기는 필터는 시가총액 하나 — 중소형/대형을 가르는 게 실제로 쓰였다.
+    # (돌파기간 값 자체는 아래 표에 컬럼으로 계속 보인다.)
+    _, col2 = st.columns([2, 2])
     with col2:
         marcap_filters = ["500억 ~ 5,000억 미만 (중소형)", "5,000억 이상 (대형)", "전체"]
         selected_marcap = st.selectbox("💰 시가총액", marcap_filters, index=0)
 
-    if selected_period != "전체":
-        filtered_df = all_df[all_df['돌파기간'] == selected_period].copy()
-    else:
-        filtered_df = all_df.copy()
+    filtered_df = all_df.copy()
 
     if selected_marcap == "500억 ~ 5,000억 미만 (중소형)":
         filtered_df = filtered_df[(filtered_df['시가총액'] >= 50000000000) & (filtered_df['시가총액'] < 500000000000)]
