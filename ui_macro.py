@@ -90,7 +90,9 @@ def _weekday_gap(then: datetime, now: datetime) -> int:
 
 
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
-_PERIOD_DAYS = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+# "max"는 화면 기간 선택에는 없다 — 마일스톤(N개월 최고/최저) 판정을 위해
+# 잘라내지 않은 전체 이력을 받을 때 쓰는 내부용 키.
+_PERIOD_DAYS = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "max": 100000}
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -153,6 +155,76 @@ def _get_last_and_prev_close(ticker: str):
         return last, prev, last_update
     except Exception:
         return None, None, None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_full_history(ticker: str) -> pd.DataFrame | None:
+    """
+    마일스톤(사상/N개월 최고·최저) 판정용 전체 이력.
+    화면용 _get_price_history와 분리한 이유: 그쪽은 "요청 기간의 절반도 안 오면
+    불완전 응답"이라는 재시도 규칙이 있어서 period='max'에는 그대로 못 쓴다.
+    하루 캐시 — 과거 이력은 장중에 바뀌지 않는다.
+    """
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(ticker).history(period="max")
+        if hist.empty:
+            return None
+        df = hist[["Close"]].rename(columns={"Close": "price"}).dropna()
+        if df.index.tz is not None:
+            df.index = df.index.tz_convert(None)
+        return df if not df.empty else None
+    except Exception as e:
+        print(f"[ui_macro] {ticker} 전체 이력 조회 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def _milestone_note(full: pd.DataFrame | None, last: float):
+    """
+    현재값이 극단인지 판정해 (배지문구, 색) 반환. 특이사항이 없으면 None.
+
+    판정 방식: "현재값을 넘어선 값이 마지막으로 나온 시점"부터 지금까지의 기간.
+    그게 곧 "몇 개월 만의 최고"다. 한 번도 없었으면 보유 이력 전체의 최고.
+
+    💡 "사상 최고"는 이력이 충분히 길 때만 쓴다. 리튬/DRAM 캐시는 1년 남짓,
+    연방부채는 3년치뿐이라 그걸 "사상"이라고 쓰면 과장이 된다 —
+    그 경우엔 실제 보유 기간을 그대로 표기한다.
+    """
+    if full is None or len(full) < 20:
+        return None
+    s = full["price"].dropna()
+    if s.empty:
+        return None
+
+    span_days = (s.index[-1] - s.index[0]).days
+    if span_days < 90:
+        return None
+
+    def _fmt_span(days: int) -> str:
+        if days >= 365:
+            years = days / 365.25
+            return f"{years:.0f}년" if years >= 2 else "1년"
+        return f"{max(1, round(days / 30.44))}개월"
+
+    # 최고 판정
+    higher = s[s > last]
+    if higher.empty:
+        label = "사상 최고" if span_days >= 365 * 10 else f"{_fmt_span(span_days)} 최고"
+        return label, "#ef5350"
+    gap_days = (s.index[-1] - higher.index[-1]).days
+    if gap_days >= 90:
+        return f"{_fmt_span(gap_days)} 만에 최고", "#ef5350"
+
+    # 최저 판정
+    lower = s[s < last]
+    if lower.empty:
+        label = "사상 최저" if span_days >= 365 * 10 else f"{_fmt_span(span_days)} 최저"
+        return label, "#1565C0"
+    gap_days = (s.index[-1] - lower.index[-1]).days
+    if gap_days >= 90:
+        return f"{_fmt_span(gap_days)} 만에 최저", "#1565C0"
+
+    return None
 
 
 _NAVER_BOND_API = "https://api.stock.naver.com/marketindex/bond/{code}"
@@ -314,7 +386,7 @@ def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
         df["date"] = pd.to_datetime(df["ts"], unit="ms")
         df = df.set_index("date").drop(columns=["ts"])
 
-        cutoff_days = {"1y": 365, "6mo": 180, "3mo": 90, "1mo": 30}.get(period, 365)
+        cutoff_days = _PERIOD_DAYS.get(period, 365)
         cutoff = pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)
         df = df[df.index >= cutoff]
         return df if not df.empty else None
@@ -358,7 +430,7 @@ def _get_dram_price_history(period: str = "1y") -> pd.DataFrame | None:
         df["date"] = pd.to_datetime(df["ts"], unit="ms")
         df = df.set_index("date").drop(columns=["ts"])
 
-        cutoff_days = {"1y": 365, "6mo": 180, "3mo": 90, "1mo": 30}.get(period, 365)
+        cutoff_days = _PERIOD_DAYS.get(period, 365)
         cutoff = pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)
         df = df[df.index >= cutoff]
         return df if not df.empty else None
@@ -402,7 +474,7 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
         df["date"] = pd.to_datetime(df["ts"], unit="ms")
         df = df.set_index("date").drop(columns=["ts"])
 
-        cutoff_days = {"1y": 365, "6mo": 180, "3mo": 90, "1mo": 30}.get(period, 365)
+        cutoff_days = _PERIOD_DAYS.get(period, 365)
         cutoff = pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)
         df = df[df.index >= cutoff]
         return df if not df.empty else None
@@ -410,37 +482,47 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
         return None
 
 
-def _api_call(api_key: str, hs_codes: list, year: int, month: int) -> float:
+def _api_call(api_key: str, hs_codes: list, year: int, month: int):
     """
-    관세청_품목별 수출입실적(GW).
-    HS코드 파라미터 필터가 미지원이므로 전체(~9700건) 수신 후 prefix 클라이언트 필터링.
-    expDlr 필드 단위: USD → 백만달러 환산 반환.
+    관세청_품목별 수출입실적 → (수출액, 수입액) 백만달러.
+
+    💡 예전 주석에 "HS코드 파라미터 필터가 미지원"이라고 적혀 있었지만 사실이
+    아니다. hsSgn 파라미터가 정상 동작한다 — 매달 전체 9,653건을 받아
+    클라이언트에서 걸러내던 것을 코드당 21건으로 줄인다(0.8초 → 0.1초).
+    18개월 × 카테고리를 도는 구조라 체감 차이가 크다.
+
+    ⚠️ 함정: hsSgn을 쓰면 응답에 hsCode가 "-"인 **합계 행**이 하나 더 붙는다.
+    그 행의 값이 나머지 전체의 합과 같아서, 그냥 다 더하면 정확히 2배가 된다.
+    10자리 세부 코드만 합산해 기존 결과와 동일하게 맞춘다.
     """
     yymm = f"{year}{month:02d}"
-    try:
-        r = requests.get(
-            _API_BASE,
-            params={
-                "serviceKey": api_key,
-                "strtYymm": yymm,
-                "endYymm": yymm,
-                "numOfRows": 99999,
-                "pageNo": 1,
-            },
-            timeout=30,
-        )
-        if r.status_code != 200:
-            return 0.0
-        root = ET.fromstring(r.text)
-        total = 0.0
-        for item in root.findall(".//item"):
-            hs = item.findtext("hsCode", "")
-            if any(hs.startswith(prefix) for prefix in hs_codes):
-                v = item.findtext("expDlr", "0").replace(",", "")
-                total += float(v or 0)
-        return total / 1_000_000
-    except Exception:
-        return 0.0
+    exp_total = imp_total = 0.0
+    for code in hs_codes:
+        try:
+            r = requests.get(
+                _API_BASE,
+                params={
+                    "serviceKey": api_key,
+                    "strtYymm": yymm,
+                    "endYymm": yymm,
+                    "hsSgn": code,
+                    "numOfRows": 999,
+                    "pageNo": 1,
+                },
+                timeout=20,
+            )
+            if r.status_code != 200:
+                continue
+            root = ET.fromstring(r.text)
+            for item in root.findall(".//item"):
+                hs = (item.findtext("hsCode", "") or "").strip()
+                if len(hs) != 10:
+                    continue  # 합계 행("-") 등 세부 품목이 아닌 행은 제외
+                exp_total += float((item.findtext("expDlr", "0") or "0").replace(",", ""))
+                imp_total += float((item.findtext("impDlr", "0") or "0").replace(",", ""))
+        except Exception:
+            continue
+    return exp_total / 1_000_000, imp_total / 1_000_000
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -464,26 +546,30 @@ def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
 
     def _fetch(ym):
         year, month, i = ym
-        return year, month, i, _api_call(api_key, hs_codes, year, month)
+        exp_M, imp_M = _api_call(api_key, hs_codes, year, month)
+        return year, month, i, exp_M, imp_M
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
         results = list(ex.map(_fetch, month_list))
 
     rows = []
-    for year, month, i, total_M in sorted(results, key=lambda x: (x[0], x[1])):
+    for year, month, i, exp_M, imp_M in sorted(results, key=lambda x: (x[0], x[1])):
         is_cur = (year == now.year and month == now.month)
         rows.append(dict(
             label=f"{str(year)[2:]}년{month:02d}월",
             year=year, month=month,
-            d10=0.0, d20=0.0, d30=0.0,
-            total=total_M, is_partial=is_cur,
+            # total은 기존 이름 그대로 수출액 (차트/호출부 호환).
+            # 수입·무역수지를 추가로 실어 보낸다.
+            total=exp_M, imports=imp_M, balance=exp_M - imp_M,
+            is_partial=is_cur,
         ))
 
     return pd.DataFrame(rows)
 
 
 # ── 스파크라인 헬퍼 ─────────────────────────────────────────────────────────
-def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str) -> go.Figure:
+def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
+                    note: tuple | None = None) -> go.Figure:
     prices = hist["price"]
     last  = float(prices.iloc[-1])
     first = float(prices.iloc[0])
@@ -551,51 +637,64 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str) -> go.
         yaxis=dict(range=[base_y, top_y], showticklabels=False,
                    showgrid=False, zeroline=False, fixedrange=True),
     )
+
+    # 💡 특이사항 배지 — 그래프 우측 상단에 paper 좌표로 띄운다.
+    # 데이터 좌표를 쓰면 값 범위에 따라 위치가 흔들리고 선과 겹친다.
+    if note:
+        text, ncolor = note
+        fig.add_annotation(
+            xref="paper", yref="paper", x=1, y=1,
+            xanchor="right", yanchor="top",
+            text=f"<b>{text}</b>", showarrow=False,
+            font=dict(size=8.5, color="#fff"),
+            bgcolor=ncolor, borderpad=2, opacity=0.92,
+        )
+
     return fig
 
 
 # ── 차트 헬퍼 ────────────────────────────────────────────────────────────────
-def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: datetime):
-    hist_mask  = (trend_df["d10"] == 0) & (~trend_df["is_partial"])
-    brkdn_mask = trend_df["d10"] > 0
+# 수출입 차트에서 고를 수 있는 지표. (컬럼, 막대색) — 색이 None이면 부호별로
+# 칠한다(무역수지는 적자 구간이 있어 한 색으로 두면 흑/적자 구분이 안 된다).
+_TRADE_METRICS = {
+    "수출":     ("total",   "#90CAF9"),
+    "수입":     ("imports", "#B39DDB"),
+    "무역수지": ("balance", None),
+}
+
+
+def _bar_colors(values):
+    """무역수지용 — 흑자 빨강 / 적자 파랑 (한국 시장 색상 규칙)."""
+    return ["#ef5350" if v >= 0 else "#1565C0" for v in values]
+
+
+def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, metric: str, now: datetime):
+    col, base_color = _TRADE_METRICS[metric]
+    is_balance = base_color is None
 
     fig = go.Figure()
 
-    if hist_mask.any():
-        hdf = trend_df[hist_mask]
-        fig.add_trace(go.Bar(
-            x=hdf["label"], y=hdf["total"],
-            name="수출 확정치", marker_color="#90CAF9",
-            hovertemplate="%{x}<br><b>$%{y:,.1f}M</b><extra>확정</extra>",
-        ))
+    hdf = trend_df
+    fig.add_trace(go.Bar(
+        x=hdf["label"], y=hdf[col],
+        name=metric,
+        marker_color=_bar_colors(hdf[col]) if is_balance else base_color,
+        hovertemplate="%{x}<br><b>$%{y:,.1f}M</b><extra>" + metric + "</extra>",
+    ))
 
-    if brkdn_mask.any():
-        bdf = trend_df[brkdn_mask]
-        fig.add_trace(go.Bar(
-            x=bdf["label"], y=bdf["d10"],
-            name="1-10일", marker_color="#66BB6A",
-            hovertemplate="%{x} 1-10일<br><b>$%{y:,.1f}M</b><extra></extra>",
-        ))
-        fig.add_trace(go.Bar(
-            x=bdf["label"], y=bdf["d20"].where(bdf["d20"] > 0, other=None),
-            name="11-20일", marker_color="#FFA726",
-            hovertemplate="%{x} 11-20일<br><b>$%{y:,.1f}M</b><extra></extra>",
-        ))
-        fig.add_trace(go.Bar(
-            x=bdf["label"], y=bdf["d30"].where(bdf["d30"] > 0, other=None),
-            name="21-말일", marker_color="#26A69A",
-            hovertemplate="%{x} 21-말일<br><b>$%{y:,.1f}M</b><extra></extra>",
-        ))
+    # 💡 예전엔 여기서 d10/d20/d30(순별 누계)을 쌓아 올렸는데, _get_export_trend가
+    # 그 값을 항상 0으로 채워서 한 번도 그려지지 않는 죽은 코드였다 — 제거.
 
-    td = {(r["year"], r["month"]): r["total"] for _, r in trend_df.iterrows()}
+    # 무역수지는 흑/적자로 부호가 뒤집혀 전년대비 "비율"이 의미를 잃는다 → 생략
+    td = {} if is_balance else {(r["year"], r["month"]): r[col] for _, r in trend_df.iterrows()}
     for _, row in trend_df.iterrows():
         prev = td.get((row["year"] - 1, row["month"]), 0)
-        if prev <= 0 or row["total"] <= 0:
+        if prev <= 0 or row[col] <= 0:
             continue
-        yoy = (row["total"] / prev - 1) * 100
+        yoy = (row[col] / prev - 1) * 100
         clr = "#ef5350" if yoy > 0 else "#1565C0"
         fig.add_annotation(
-            x=row["label"], y=row["total"],
+            x=row["label"], y=row[col],
             text=f"{yoy:+.0f}%", showarrow=False,
             font=dict(size=8, color=clr), yanchor="bottom", yshift=2,
         )
@@ -603,16 +702,16 @@ def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: da
     cur_rows = trend_df[trend_df["is_partial"]]
     if not cur_rows.empty:
         fig.add_annotation(
-            x=cur_rows.iloc[-1]["label"], y=cur_rows.iloc[-1]["total"],
+            x=cur_rows.iloc[-1]["label"], y=cur_rows.iloc[-1][col],
             text=f"({now.month}월 {now.day}일까지)", showarrow=False,
             font=dict(size=8, color="#999"), yanchor="bottom", yshift=14,
         )
 
     fig.update_layout(
         barmode="stack", height=420,
-        title=dict(text=f"{cat_sel} 월별 수출", font=dict(size=13), x=0),
+        title=dict(text=f"{cat_sel} 월별 {metric}", font=dict(size=13), x=0),
         xaxis=dict(tickfont=dict(size=9), tickangle=-45, showgrid=False, fixedrange=True),
-        yaxis=dict(title="수출금액 (백만$)", tickformat=",.0f",
+        yaxis=dict(title=f"{metric} (백만$)", tickformat=",.0f",
                    showgrid=True, gridcolor="rgba(200,200,200,0.25)", fixedrange=True),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
         margin=dict(l=0, r=10, t=50, b=80),
@@ -628,60 +727,41 @@ def _render_monthly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: da
                     })
 
 
-def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: datetime):
+def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, metric: str, now: datetime):
     df = trend_df.copy()
     df["quarter"] = ((df["month"] - 1) // 3 + 1).astype(int)
     df["q_label"] = df.apply(lambda r: f"{str(r['year'])[2:]}년Q{r['quarter']}", axis=1)
 
     qdf = (
         df.groupby(["year", "quarter", "q_label"], as_index=False)
-        .agg(total=("total", "sum"), is_partial=("is_partial", "any"),
-             d10=("d10", "sum"), d20=("d20", "sum"), d30=("d30", "sum"))
+        .agg(total=("total", "sum"), imports=("imports", "sum"),
+             balance=("balance", "sum"), is_partial=("is_partial", "any"))
         .sort_values(["year", "quarter"])
         .reset_index(drop=True)
     )
 
-    hist_mask  = (qdf["d10"] == 0) & (~qdf["is_partial"])
-    brkdn_mask = qdf["d10"] > 0
+    col, base_color = _TRADE_METRICS[metric]
+    is_balance = base_color is None
 
     fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=qdf["q_label"], y=qdf[col],
+        name=metric,
+        marker_color=_bar_colors(qdf[col]) if is_balance else base_color,
+        hovertemplate="%{x}<br><b>$%{y:,.1f}M</b><extra>" + metric + "</extra>",
+    ))
 
-    if hist_mask.any():
-        hdf = qdf[hist_mask]
-        fig.add_trace(go.Bar(
-            x=hdf["q_label"], y=hdf["total"],
-            name="수출 확정치", marker_color="#90CAF9",
-            hovertemplate="%{x}<br><b>$%{y:,.1f}M</b><extra>확정</extra>",
-        ))
-
-    if brkdn_mask.any():
-        bdf = qdf[brkdn_mask]
-        fig.add_trace(go.Bar(
-            x=bdf["q_label"], y=bdf["d10"],
-            name="1-10일 누계", marker_color="#66BB6A",
-            hovertemplate="%{x} 1-10일<br><b>$%{y:,.1f}M</b><extra></extra>",
-        ))
-        fig.add_trace(go.Bar(
-            x=bdf["q_label"], y=bdf["d20"].where(bdf["d20"] > 0, other=None),
-            name="11-20일 누계", marker_color="#FFA726",
-            hovertemplate="%{x} 11-20일<br><b>$%{y:,.1f}M</b><extra></extra>",
-        ))
-        fig.add_trace(go.Bar(
-            x=bdf["q_label"], y=bdf["d30"].where(bdf["d30"] > 0, other=None),
-            name="21-말일 누계", marker_color="#26A69A",
-            hovertemplate="%{x} 21-말일<br><b>$%{y:,.1f}M</b><extra></extra>",
-        ))
-
+    # 💡 순별 누계(d10/d20/d30) 블록 제거 — 값이 항상 0이라 그려지지 않던 죽은 코드.
     # YoY% 분기 기준
-    qtd = {(r["year"], r["quarter"]): r["total"] for _, r in qdf.iterrows()}
+    qtd = {} if is_balance else {(r["year"], r["quarter"]): r[col] for _, r in qdf.iterrows()}
     for _, row in qdf.iterrows():
         prev = qtd.get((row["year"] - 1, row["quarter"]), 0)
-        if prev <= 0 or row["total"] <= 0:
+        if prev <= 0 or row[col] <= 0:
             continue
-        yoy = (row["total"] / prev - 1) * 100
+        yoy = (row[col] / prev - 1) * 100
         clr = "#ef5350" if yoy > 0 else "#1565C0"
         fig.add_annotation(
-            x=row["q_label"], y=row["total"],
+            x=row["q_label"], y=row[col],
             text=f"{yoy:+.0f}%", showarrow=False,
             font=dict(size=9, color=clr), yanchor="bottom", yshift=2,
         )
@@ -697,9 +777,9 @@ def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, _: bool, now: 
 
     fig.update_layout(
         barmode="stack", height=420,
-        title=dict(text=f"{cat_sel} 분기별 수출", font=dict(size=13), x=0),
+        title=dict(text=f"{cat_sel} 분기별 {metric}", font=dict(size=13), x=0),
         xaxis=dict(tickfont=dict(size=10), tickangle=-30, showgrid=False, fixedrange=True),
-        yaxis=dict(title="수출금액 (백만$)", tickformat=",.0f",
+        yaxis=dict(title=f"{metric} (백만$)", tickformat=",.0f",
                    showgrid=True, gridcolor="rgba(200,200,200,0.25)", fixedrange=True),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10)),
         margin=dict(l=0, r=10, t=50, b=60),
@@ -751,6 +831,7 @@ def render_macro():
             # 같은 패턴으로 전부 스레드풀에서 동시에 가져오도록 바꾼다.
             hists = {}
             last_prev_map = {}
+            full_map = {}   # 마일스톤 배지용 전체 이력
 
             def _fetch_hist(item):
                 nm, tk = item[0], item[1]
@@ -764,6 +845,19 @@ def render_macro():
                     return nm, _get_us_debt_history(period)
                 else:
                     return nm, _get_price_history(tk, period)
+
+            def _fetch_full(item):
+                """마일스톤 판정용 전체 이력. 캐시 기반은 잘라내지 않은 원본."""
+                nm, tk = item[0], item[1]
+                if tk == "_LITHIUM_":
+                    return nm, _get_lithium_price_history("max")
+                elif tk == "_DRAM_":
+                    return nm, _get_dram_price_history("max")
+                elif tk == "_DDR4_":
+                    return nm, _get_ddr4_price_history("max")
+                elif tk == "_USDEBT_":
+                    return nm, _get_us_debt_history("max")
+                return nm, _get_full_history(tk)
 
             def _fetch_last_prev(item):
                 nm, tk = item[0], item[1]
@@ -780,12 +874,16 @@ def render_macro():
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(MARKET_ITEMS) * 2) as ex:
                 hist_futures = [ex.submit(_fetch_hist, item) for item in MARKET_ITEMS]
                 lp_futures = [ex.submit(_fetch_last_prev, item) for item in MARKET_ITEMS]
+                full_futures = [ex.submit(_fetch_full, item) for item in MARKET_ITEMS]
                 for f in hist_futures:
                     nm, h = f.result()
                     hists[nm] = h
                 for f in lp_futures:
                     nm, lp = f.result()
                     last_prev_map[nm] = lp
+                for f in full_futures:
+                    nm, fh = f.result()
+                    full_map[nm] = fh
 
         for row_start in range(0, len(MARKET_ITEMS), 3):
             cols = st.columns(3)
@@ -879,8 +977,9 @@ def render_macro():
                         f"</div>",
                         unsafe_allow_html=True,
                     )
+                    note = _milestone_note(full_map.get(name), last)
                     st.plotly_chart(
-                        _make_sparkline(hist, unit, fmt, period),
+                        _make_sparkline(hist, unit, fmt, period, note),
                         use_container_width=True,
                         # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
                         config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
@@ -923,14 +1022,17 @@ def render_macro():
             )
             st.stop()
 
-        st.markdown("#### 📈 품목별 수출 추세")
+        st.markdown("#### 📈 품목별 수출입 추세")
 
-        cc1, cc2, cc3 = st.columns([2, 2, 2])
+        cc1, cc2, cc3, cc4 = st.columns([2, 1.6, 2.2, 1.8])
         with cc1:
             cat_sel = st.selectbox("품목", list(TRADE_CATS.keys()), key="export_cat")
         with cc2:
             n_mo = st.selectbox("기간", [12, 18, 24], index=1, key="export_nmo")
         with cc3:
+            metric = st.radio("지표", list(_TRADE_METRICS.keys()),
+                              horizontal=True, key="export_metric")
+        with cc4:
             view_mode = st.radio("단위", ["월별", "분기별"], horizontal=True, key="export_view")
 
         with st.spinner(f"{cat_sel} 추세 데이터 로딩 중..."):
@@ -941,6 +1043,6 @@ def render_macro():
         if trend_df is None or trend_df.empty:
             st.error("API에서 데이터를 가져오지 못했습니다. API 키와 네트워크 상태를 확인해주세요.")
         elif view_mode == "월별":
-            _render_monthly_chart(trend_df, cat_sel, False, now)
+            _render_monthly_chart(trend_df, cat_sel, metric, now)
         else:
-            _render_quarterly_chart(trend_df, cat_sel, False, now)
+            _render_quarterly_chart(trend_df, cat_sel, metric, now)

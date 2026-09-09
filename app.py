@@ -57,7 +57,6 @@ from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
 from ui_report import render_report_summary
 from ui_earnings import render_earnings_menu
-from ui_telegram import render_telegram_viewer
 from ui_watchlist import render_watchlist
 from ui_macro import render_macro
 from ui_sector import render_sector_menu
@@ -84,10 +83,10 @@ if query_stock_code:
 menu = option_menu(
     menu_title=None,
     # 💡 2줄로 감싸지는 메뉴라(4개씩) 순서가 곧 화면 배치: 리스트의 앞 4개가
-    # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/워치리스트/레포트/텔레그램,
-    # 아랫줄 = 섹터별/신고가/실적/매크로.
-    options=["가치평가", "워치리스트", "레포트", "텔레그램", "섹터별", "신고가", "실적", "매크로"],
-    icons=["graph-up-arrow", "list-check", "newspaper", "chat-dots", "pie-chart", "rocket", "bar-chart-line", "globe"],
+    # 윗줄, 뒤 3개가 아랫줄이 된다. 윗줄 = 가치평가/워치리스트/레포트/섹터별,
+    # 아랫줄 = 신고가/실적/매크로.
+    options=["가치평가", "워치리스트", "레포트", "섹터별", "신고가", "실적", "매크로"],
+    icons=["graph-up-arrow", "list-check", "newspaper", "pie-chart", "rocket", "bar-chart-line", "globe"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -291,8 +290,6 @@ elif menu == "워치리스트":
 elif menu == "레포트":
     render_report_summary()
 
-elif menu == "텔레그램":
-    render_telegram_viewer()
 
 elif menu == "섹터별":
     render_sector_menu()
