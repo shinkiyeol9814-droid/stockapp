@@ -65,6 +65,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `new_high.py` | 신고가 탭 |
 | `ui_sector.py` | 섹터별 등락률 탭 (Top5 + 이슈 뉴스) |
 | `ui_trade.py` | 수출입 동향 탭 (관세청 품목별 실적) |
+| `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 47개)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |

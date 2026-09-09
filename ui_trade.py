@@ -11,20 +11,16 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
+import html
 import concurrent.futures
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
 
 
-TRADE_CATS = {
-    "반도체":   ["8542"],
-    "자동차":   ["8703"],
-    "선박":     ["8901", "8902"],
-    "2차전지":  ["8507"],
-    "변압기":   ["8504"],
-    "화장품":   ["3304", "3305", "3306"],
-}
+# 세부품목 카탈로그(HS코드 ↔ 관련 상장종목)는 trade_items.py 에 분리했다 —
+# 47개 품목이라 여기 두면 화면 로직이 안 보인다.
+from trade_items import TRADE_ITEMS, themes, items_of, lookup, item_count
 
 _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 
@@ -73,7 +69,7 @@ def _api_call(api_key: str, hs_codes: list, year: int, month: int):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
+def _get_export_trend(hs_codes: tuple, n_months: int = 18) -> pd.DataFrame | None:
     """
     관세청 API 기반 월간 수출 추세.
     최근 3개월은 searchDt로 순별(10일/20일/말일) 누계를 분해.
@@ -83,7 +79,7 @@ def _get_export_trend(cat: str, n_months: int = 18) -> pd.DataFrame | None:
     if not api_key:
         return None
 
-    hs_codes = TRADE_CATS.get(cat, [])
+    hs_codes = list(hs_codes)
     now = datetime.today()
 
     month_list = []
@@ -267,16 +263,45 @@ def _render_quarterly_chart(trend_df: pd.DataFrame, cat_sel: str, metric: str, n
 
 
 # ── 렌더링 ────────────────────────────────────────────────────────────────────
+def _trend_note(series, metric: str):
+    """
+    "역대 최대 / N개월 만에 최대" 판정. 텔레그램 리서치 채널들이 붙이는
+    코멘트와 같은 개념이고, 매크로 탭의 마일스톤 배지와 같은 방식이다:
+    현재값을 넘어선 값이 마지막으로 나온 시점부터의 경과 기간을 센다.
+
+    ⚠️ 보유 구간이 곧 판정 범위다. 18개월만 받아왔다면 "역대"라고 쓸 수 없으니
+    조회 기간을 그대로 문구에 담는다("18개월 내 최대").
+    """
+    vals = [v for v in series if v is not None]
+    if len(vals) < 4:
+        return None
+    last = vals[-1]
+    if last <= 0:
+        return None
+    span = len(vals)
+    higher = [i for i, v in enumerate(vals[:-1]) if v > last]
+    if not higher:
+        return f"{span}개월 내 최대 {metric}", "#ef5350"
+    gap = span - 1 - higher[-1]
+    if gap >= 3:
+        return f"{gap}개월 만에 최대 {metric}", "#ef5350"
+    lower = [i for i, v in enumerate(vals[:-1]) if v < last]
+    if not lower:
+        return f"{span}개월 내 최소 {metric}", "#1565C0"
+    gap = span - 1 - lower[-1]
+    if gap >= 3:
+        return f"{gap}개월 만에 최소 {metric}", "#1565C0"
+    return None
+
+
 def render_trade():
     st.markdown(
         "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>🚢 수출입 동향</div>",
         unsafe_allow_html=True,
     )
-    st.caption("관세청 품목별 수출입실적 · 1시간 캐시")
+    st.caption(f"관세청 품목별 수출입실적 · 세부품목 {item_count()}개 · 1시간 캐시")
 
-    has_key = bool(st.secrets.get("DATA_GO_KR_KEY", ""))
-
-    if not has_key:
+    if not st.secrets.get("DATA_GO_KR_KEY", ""):
         st.warning(
             "수출 데이터를 표시하려면 **관세청 공공데이터포털 API 키**가 필요합니다.\n\n"
             "1. [data.go.kr](https://www.data.go.kr) 에서 **관세청_통관기준 수출입 실적** API 신청\n"
@@ -284,32 +309,64 @@ def render_trade():
         )
         st.stop()
 
-    st.markdown("#### 📈 품목별 수출입 추세")
+    # 💡 테마 → 세부품목 2단 선택. 예전엔 HS 4자리 대분류 6개뿐이라
+    # "반도체가 늘었다"까지만 알 수 있었다 — 디램/낸드/MLCC처럼 갈라서
+    # 봐야 어느 종목에 걸리는지가 보인다.
+    c1, c2 = st.columns([1.4, 3])
+    with c1:
+        theme = st.selectbox("테마", themes(), key="trade_theme")
+    with c2:
+        item = st.selectbox("세부품목", items_of(theme), key=f"trade_item_{theme}")
 
-    cc1, cc2, cc3, cc4 = st.columns([2, 1.6, 2.2, 1.8])
-    with cc1:
-        cat_sel = st.selectbox("품목", list(TRADE_CATS.keys()), key="export_cat")
-    with cc2:
-        n_mo = st.selectbox("기간", [12, 18, 24], index=1, key="export_nmo")
-    with cc3:
+    hs_codes, stocks = lookup(theme, item)
+
+    c3, c4, c5 = st.columns([1.4, 2.4, 1.8])
+    with c3:
+        n_mo = st.selectbox("기간(개월)", [12, 18, 24, 36], index=1, key="export_nmo")
+    with c4:
         metric = st.radio("지표", list(_TRADE_METRICS.keys()),
                           horizontal=True, key="export_metric")
-    with cc4:
+    with c5:
         view_mode = st.radio("단위", ["월별", "분기별"], horizontal=True, key="export_view")
 
-    with st.spinner(f"{cat_sel} 추세 데이터 로딩 중..."):
-        trend_df = _get_export_trend(cat_sel, n_mo)
+    # 관련 상장종목 — 이 품목이 어느 종목에 걸리는지가 이 탭의 핵심이다
+    if stocks:
+        st.markdown(
+            f"<div style='background:#eef3fb;border-left:3px solid #1565C0;color:#1a2733;"
+            f"padding:7px 11px;margin:6px 0 2px;font-size:13px;border-radius:0 5px 5px 0;'>"
+            f"<b style='color:#1565C0;'>관련종목</b> &nbsp; {html.escape(stocks)}"
+            f"<span style='color:#6b7a8c;margin-left:8px;font-size:11.5px;'>"
+            f"HS {', '.join(hs_codes)}</span></div>",
+            unsafe_allow_html=True,
+        )
 
-    now = datetime.today()
-
-    # 확정 통계 지연(약 2개월)을 화면에서도 알 수 있게 최신 데이터 월을 표기
-    if trend_df is not None and not trend_df.empty:
-        st.caption(f"최신 데이터: **{trend_df.iloc[-1]['label']}** "
-                   "· 관세청 확정 통계는 통상 1~2개월 지연 공표됩니다")
+    with st.spinner(f"{item} 추세 데이터 로딩 중..."):
+        trend_df = _get_export_trend(tuple(hs_codes), n_mo)
 
     if trend_df is None or trend_df.empty:
         st.error("API에서 데이터를 가져오지 못했습니다. API 키와 네트워크 상태를 확인해주세요.")
-    elif view_mode == "월별":
-        _render_monthly_chart(trend_df, cat_sel, metric, now)
+        return
+
+    now = datetime.today()
+    col, _ = _TRADE_METRICS[metric]
+    note = _trend_note(list(trend_df[col]), metric)
+
+    # 확정 통계 지연(약 2개월)을 화면에서도 알 수 있게 최신 데이터 월을 표기
+    latest = trend_df.iloc[-1]
+    badge = ""
+    if note:
+        txt, clr = note
+        badge = (f"<span style='background:{clr};color:#fff;font-size:11px;font-weight:700;"
+                 f"padding:2px 7px;border-radius:3px;margin-left:8px;'>{txt}</span>")
+    st.markdown(
+        f"<div style='font-size:12px;color:#888;margin:2px 0 6px;'>"
+        f"최신 데이터 <b style='color:#555;'>{latest['label']}</b> "
+        f"· {metric} <b style='color:#555;'>${latest[col]:,.1f}M</b>"
+        f" · 관세청 확정 통계는 통상 1~2개월 지연 공표{badge}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if view_mode == "월별":
+        _render_monthly_chart(trend_df, item, metric, now)
     else:
-        _render_quarterly_chart(trend_df, cat_sel, metric, now)
+        _render_quarterly_chart(trend_df, item, metric, now)
