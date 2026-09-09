@@ -155,6 +155,49 @@ def _get_last_and_prev_close(ticker: str):
         return None, None, None
 
 
+_NAVER_BOND_API = "https://api.stock.naver.com/marketindex/bond/{code}"
+
+# 야후 티커 → 네이버(레피니티브) 채권 코드.
+# 💡 왜 필요한가 — ^TNX는 CBOE가 산출하는 "지수"라서 미국 정규장에만 틱이
+# 갱신된다. 그래서 한국 낮 시간에는 값이 전날 미국 종가에 얼어붙어 있고,
+# 24시간 돌아가는 현물 국채 시장을 보는 네이버와 한 세션씩 어긋났다
+# (예: 네이버 4.7920 / -0.25% vs 앱 4.81 / +0.46% — 방향까지 반대).
+# 등락률 기준(전일종가)도 서로 달라 혼란이 컸다. 현재값/등락률은 네이버
+# 실시간(delayTime=0, 레피니티브)으로 받고, 과거 일별 시계열(스파크라인)은
+# 야후 일봉을 그대로 쓴다 — 일별 종가는 두 소스가 사실상 동일하다.
+_NAVER_BOND_MAP = {"^TNX": "US10YT=RR"}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_naver_bond_quote(reuters_code: str):
+    """
+    네이버 채권 금리 실시간 시세 → (현재값, 전일종가, 갱신시각).
+    실패하면 (None, None, None) — 호출부가 야후로 폴백한다.
+    """
+    try:
+        res = requests.get(
+            _NAVER_BOND_API.format(code=reuters_code),
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Referer": "https://m.stock.naver.com/",
+                "Accept": "application/json, text/plain, */*",
+            },
+            timeout=7,
+        )
+        j = res.json()
+        # 💡 필드명이 closePrice지만 장중에는 "현재값"이다(종가가 아니다).
+        # 전일종가는 따로 안 주므로 현재값 - 변동폭으로 되돌려 계산한다.
+        last = float(j["closePrice"])
+        prev = last - float(j["fluctuations"])
+        if last <= 0 or prev <= 0:
+            return None, None, None
+        ts = datetime.fromisoformat(j["localTradedAt"]).astimezone(_KST)
+        return last, prev, ts
+    except Exception as e:
+        print(f"[ui_macro] 네이버 채권({reuters_code}) 조회 실패: {type(e).__name__}: {e}")
+        return None, None, None
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _get_commodity_news(query: str, n: int = 2):
     """
@@ -718,6 +761,12 @@ def render_macro():
                 nm, tk = item[0], item[1]
                 if tk.startswith("_"):
                     return nm, (None, None, None)
+                # 채권 금리는 네이버 실시간 우선 (^TNX는 미국 정규장만 갱신됨).
+                # 네이버가 실패하면 기존 야후 경로로 폴백한다.
+                if tk in _NAVER_BOND_MAP:
+                    q = _get_naver_bond_quote(_NAVER_BOND_MAP[tk])
+                    if q[0] is not None:
+                        return nm, q
                 return nm, _get_last_and_prev_close(tk)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(MARKET_ITEMS) * 2) as ex:
