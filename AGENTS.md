@@ -65,7 +65,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `new_high.py` | 신고가 탭 |
 | `ui_sector.py` | 섹터별 등락률 탭 (Top5 + 이슈 뉴스) |
 | `ui_trade.py` | 수출입 동향 탭 (관세청 품목별 실적) |
-| `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 47개)** |
+| `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
@@ -198,7 +198,7 @@ st.plotly_chart(fig, config={
 ```
 
 ### 매크로 · 수출입 탭 — 조작 잠금, 툴팁만 유지
-카드 스파크라인(`ui_macro`)과 수출입 차트(`ui_trade`)는 "한눈에 보는" 용도라
+카드 스파크라인(`ui_macro`)과 수출입 꺾은선(`ui_trade`)은 "한눈에 보는" 용도라
 드래그로 틀어지면 오히려 불편하다. **축을 `fixedrange=True`로 잠그는 것이
 핵심** — `dragmode=False`만으로는 모드바나 마우스 휠로 여전히 이동/확대가 된다.
 
