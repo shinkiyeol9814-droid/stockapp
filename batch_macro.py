@@ -191,10 +191,30 @@ def _replace_if_changed(path: str, series: list | None) -> bool:
 
 
 if __name__ == "__main__":
-    updated = {
-        "lithium": _append_if_new(_LITHIUM_CACHE, fetch_lithium_price()),
-        "dram":    _append_if_new(_DRAM_CACHE, fetch_dram_price()),
-        "ddr4":    _append_if_new(_DDR4_CACHE, fetch_ddr4_price()),
-        "us_debt": _replace_if_changed(_USDEBT_CACHE, fetch_us_debt_series()),
-    }
-    print(f"{datetime.today().date()} 갱신 결과: {updated}")
+    import sys
+
+    # 💡 `--only us_debt` — 미 연방부채만 갱신하는 모드.
+    #
+    # 왜 필요한가: 재무부는 record_date D의 부채를 D+1 영업일 오후 4시(ET)쯤
+    # 공개한다. 그런데 이 배치의 정규 실행은 09:00 UTC(= 05:00 ET)라 그날
+    # 공개분을 언제나 놓치고, 결과적으로 화면이 실제보다 하루이틀 더 뒤처졌다
+    # (2026-09-09에 돌았는데도 09-04까지만 쌓인 이유가 이것이다).
+    # 그래서 미국이 공개한 뒤인 저녁(23:00 UTC)에 한 번 더 돌린다.
+    #
+    # 그 저녁 실행에서 스팟 가격까지 같이 건드리면 안 된다. _today_ms()가
+    # KST 날짜를 쓰는데 23:00 UTC는 이미 한국 시각으로 다음 날이라,
+    # 오늘 긁은 DRAM/리튬 값이 내일자로 기록되어 하루씩 밀린다.
+    only = None
+    if "--only" in sys.argv:
+        i = sys.argv.index("--only")
+        only = sys.argv[i + 1] if i + 1 < len(sys.argv) else None
+
+    updated = {}
+    if only in (None, "us_debt"):
+        updated["us_debt"] = _replace_if_changed(_USDEBT_CACHE, fetch_us_debt_series())
+    if only is None:
+        updated["lithium"] = _append_if_new(_LITHIUM_CACHE, fetch_lithium_price())
+        updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
+        updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
+
+    print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

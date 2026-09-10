@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta
 import pandas as pd
 import FinanceDataReader as fdr
+from krx_listing import fetch_krx_marcap
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from google import genai
@@ -23,17 +24,19 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY_A", "")
 client_ai = genai.Client(api_key=GEMINI_KEY)
 
 def _get_krx_listing():
-    """KRX 전체 종목 리스트 — fdr.StockListing('KRX') 실패 시 KOSPI+KOSDAQ 폴백"""
-    try:
-        df = fdr.StockListing('KRX')
-        if not df.empty and 'Marcap' in df.columns:
-            return df
-    except Exception as e:
-        print(f"⚠️ fdr.StockListing('KRX') 실패: {e}")
-    print("📌 KOSPI + KOSDAQ 분리 수집으로 폴백합니다...")
-    df_kospi  = fdr.StockListing('KOSPI')
-    df_kosdaq = fdr.StockListing('KOSDAQ')
-    return pd.concat([df_kospi, df_kosdaq], ignore_index=True)
+    """
+    KRX 전체 종목 + 시세.
+
+    💡 예전엔 fdr.StockListing('KRX') → KOSPI/KOSDAQ 분리수집 폴백이었다.
+    그런데 셋 다 같은 서드파티 marcap 캐시를 읽기 때문에 그 캐시가 404를
+    내면 폴백까지 한꺼번에 죽는다. 실제로 2026-09-08부터 3일 연속 배치가
+    HTTPError 404로 통째로 실패했다(가치평가 탭이 장 마감 후 검색이 안 되던
+    것과 같은 원인).
+
+    krx_listing.fetch_krx_marcap()은 캐시 리포지토리를 날짜를 되짚어가며
+    직접 읽으므로 이 구간을 넘긴다.
+    """
+    return fetch_krx_marcap()
 
 def get_high_stocks():
     print("데이터 수집 및 필터링 시작...")

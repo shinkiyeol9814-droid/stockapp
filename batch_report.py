@@ -13,7 +13,7 @@ from telethon.sessions import StringSession
 from google import genai
 import FinanceDataReader as fdr
 
-from krx_listing import fetch_krx_listing
+from krx_listing import fetch_krx_listing, fetch_krx_marcap
 
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
@@ -459,9 +459,15 @@ async def main():
     # fdr.StockListing('KRX') 한 번이면 Code/Name/Close/Marcap이 전부 나오므로
     # 그걸 1차로 쓰고, 실패 시 krx_listing의 폴백 체인으로 종목명만이라도
     # 확보한다(주가는 기존 get_price_fallback이 종목별로 메운다).
+    #
+    # 💡 fdr.StockListing을 직접 부르면 서드파티 marcap 캐시가 404일 때
+    # (2026-09월 실제로 며칠 그랬다) 주가를 통째로 잃고 종목별 개별 조회라는
+    # 느린 경로로 떨어진다. fetch_krx_marcap()은 그 캐시를 날짜를 되짚어
+    # 직접 읽으므로 대부분의 404 구간을 그냥 넘긴다. 둘 다 실패하면
+    # RuntimeError가 나고 아래 except가 기존 폴백으로 받는다.
     df_listing = None
     try:
-        df_all = fdr.StockListing('KRX')
+        df_all = fetch_krx_marcap()
         cols = [c for c in ['Code', 'Name', 'Close', 'Marcap'] if c in df_all.columns]
         if 'Code' in cols and 'Name' in cols and not df_all.empty:
             df_listing = df_all[cols].copy()

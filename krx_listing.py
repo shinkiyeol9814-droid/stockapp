@@ -58,6 +58,8 @@ _HEADERS = {
 
 # 조회 성공 시 남길 컬럼 (있는 것만)
 _SLIM_COLS = ["Code", "Name", "Market"]
+# 신고가 배치가 계산에 반드시 필요로 하는 시세 컬럼.
+_PRICE_COLS = ["Marcap", "Close", "Volume", "ChagesRatio"]
 
 
 def _normalize(df: pd.DataFrame) -> pd.DataFrame | None:
@@ -202,6 +204,31 @@ def fetch_krx_listing() -> pd.DataFrame:
         return df
 
     raise RuntimeError("KRX 종목 목록 조회 실패 (fdr/캐시리포/KIND/디스크 캐시 전부 실패)")
+
+
+def fetch_krx_marcap() -> pd.DataFrame:
+    """
+    시세·시가총액 컬럼까지 포함한 KRX 목록.
+
+    fetch_krx_listing()은 '종목코드/이름만 있으면 되는' 화면 검색용이라
+    KIND·디스크 캐시(코드/이름만 있는 슬림 캐시)까지 폴백한다. 반면 신고가
+    배치는 Marcap/Close/Volume/ChagesRatio가 없으면 계산 자체가 불가능하다.
+    그래서 그 컬럼을 주는 소스(① fdr, ② 캐시 리포지토리)까지만 쓰고,
+    없으면 조용히 빈손으로 넘어가지 않고 예외를 던진다.
+    """
+    for label, fn in (("fdr", _from_fdr), ("캐시 리포지토리", _from_cache_repo)):
+        df = fn()
+        if df is None:
+            continue
+        missing = [c for c in _PRICE_COLS if c not in df.columns]
+        if missing:
+            print(f"[krx_listing] {label}: 시세 컬럼 누락 {missing} — 다음 소스로")
+            continue
+        return df
+    raise RuntimeError(
+        "KRX 시세 목록을 어느 소스에서도 받지 못했습니다 "
+        "(fdr / 캐시 리포지토리 모두 실패)."
+    )
 
 
 if __name__ == "__main__":
