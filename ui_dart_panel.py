@@ -37,7 +37,9 @@ def _inventory_q(code: str):
 
 @st.cache_data(ttl=43200, show_spinner=False)
 def _backlog(code: str):
-    return dart_fin.get_backlog_series(code, limit=8)
+    # 재고 차트가 12분기라 x축 범위를 맞춘다. 8 → 12로 늘려도 실측 0.2~0.4초
+    # 차이라(원문 다운로드가 병렬) 굳이 아낄 이유가 없었다.
+    return dart_fin.get_backlog_series(code, limit=12)
 
 
 def _jo(v):
@@ -58,6 +60,15 @@ def _delta_html(cur, prev, label):
     return (f"<span style='color:{color};font-weight:700;font-size:12px;'>"
             f"{sign}{pct:,.1f}%</span>"
             f"<span style='color:#999;font-size:11px;'> ({label})</span>")
+
+
+def _q_label(period: str) -> str:
+    """'2026.06' -> '26.2Q'. 재고 차트와 x축 표기를 같은 모양으로 맞춘다."""
+    try:
+        y, m = period.split(".")
+        return f"{y[2:]}.{(int(m) + 2) // 3}Q"
+    except Exception:
+        return period
 
 
 def _area_trace(xs, scaled, raw, label, hover_x="%{x}"):
@@ -176,7 +187,7 @@ def _render_backlog(data, inv_last):
                         "YoY" if yoy else "전분기"),
             f"{html.escape(last['보고서'])} · {last['건수']}개 항목 집계")
 
-    xs = [r["기간"] for r in rows]
+    xs = [_q_label(r["기간"]) for r in rows]
     ys = [r["수주잔고"] for r in rows]
     fig = go.Figure(_area_trace(xs, [v / 1e12 for v in ys], ys, "수주잔고"))
     fig.update_yaxes(ticksuffix="조", tickformat=",.0f")
@@ -202,23 +213,29 @@ def render_dart_panel(stock_code: str):
     if not stock_code:
         return
     st.markdown("---")
-    st.markdown("<div style='font-size:1.1rem;font-weight:700;margin-bottom:6px;'>"
-                "📦 재고자산 · 수주잔고 추이 <span style='font-size:11px;"
-                "color:#999;font-weight:400;'>DART 공시 기준</span></div>",
-                unsafe_allow_html=True)
+    # 💡 기간 선택을 왼쪽 칼럼 안에 두면 그 칼럼만 아래로 밀려서 두 차트가
+    # 세로로 어긋난다. 칼럼 밖(헤더 줄)에 둬야 좌우 높이가 맞는다.
+    hc1, hc2 = st.columns([3, 1])
+    with hc1:
+        st.markdown("<div style='font-size:1.1rem;font-weight:700;padding-top:4px;'>"
+                    "📦 재고자산 · 수주잔고 추이 <span style='font-size:11px;"
+                    "color:#999;font-weight:400;'>DART 공시 기준</span></div>",
+                    unsafe_allow_html=True)
 
     if not dart_fin._api_key():
         st.info("DART_API_KEY가 설정되어 있지 않습니다. "
                 "Secrets에 키를 넣으면 재고자산·수주잔고 추이가 표시됩니다.")
         return
 
-    c1, c2 = st.columns(2)
-    inv_last = None
-    with c1:
+    with hc2:
         period = st.radio("재고 기간", ["분기", "연간"], index=0, horizontal=True,
                           key=f"inv_period_{stock_code}",
                           label_visibility="collapsed")
-        quarterly = (period == "분기")
+    quarterly = (period == "분기")
+
+    c1, c2 = st.columns(2)
+    inv_last = None
+    with c1:
         try:
             with st.spinner("재고자산 조회 중..."):
                 data = _inventory_q(stock_code) if quarterly else _inventory(stock_code)
