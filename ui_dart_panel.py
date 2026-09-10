@@ -26,6 +26,11 @@ _DART_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
 
 
 @st.cache_data(ttl=43200, show_spinner=False)
+def _utilization(code: str):
+    return dart_fin.get_utilization(code)
+
+
+@st.cache_data(ttl=43200, show_spinner=False)
 def _inventory(code: str):
     return dart_fin.get_inventory_series(code)
 
@@ -179,7 +184,10 @@ def _render_backlog(data, inv_last):
 
     last = rows[-1]
     prev = rows[-2] if len(rows) > 1 else None
-    yoy = next((r for r in rows if r["기간"][5:] == last["기간"][5:]
+    # 💡 reversed가 중요하다. 정방향으로 next()를 쓰면 같은 분기 중 '가장 오래된'
+    # 것을 집는다 — 8분기일 땐 우연히 1년 전이었지만 12분기로 늘리자 3년 전과
+    # 비교해 현대로템이 +4.8%가 아닌 +58.8%로 표시됐다.
+    yoy = next((r for r in reversed(rows) if r["기간"][5:] == last["기간"][5:]
                 and r["기간"] < last["기간"]), None)
     _header("수주잔고", _jo(last["수주잔고"]),
             _delta_html(last["수주잔고"],
@@ -202,10 +210,81 @@ def _render_backlog(data, inv_last):
     if data.get("dropped"):
         st.caption(f"ℹ️ 공시 양식이 달라 값이 온전치 않은 {data['dropped']}개 "
                    f"기간은 그래프에서 제외했습니다.")
+    _render_breakdown(last.get("내역"), last["수주잔고"])
     st.markdown(
         f"<a href='{_DART_URL.format(last['rcept_no'])}' target='_blank' "
         f"style='font-size:11px;color:#1565C0;text-decoration:none;'>"
         f"🔗 DART 원문에서 확인</a>", unsafe_allow_html=True)
+
+
+def _render_breakdown(items, total):
+    """
+    수주잔고를 부문/품목별로 쪼개 보여준다.
+
+    회사가 쪼개는 단위 자체가 제각각이다 — 한화시스템은 방산/ICT/기타 3개인데
+    현대로템은 개별 계약 45건이다. 그래서 '부문'이라고 단정하지 않고 금액순
+    상위만 보여주고 나머지는 묶는다.
+    """
+    if not items or len(items) < 2:
+        return
+    top = sorted(items, key=lambda x: -x["금액"])[:6]
+    rest = sum(x["금액"] for x in sorted(items, key=lambda x: -x["금액"])[6:])
+    if rest > 0:
+        top.append({"이름": f"기타 {len(items) - 6}건", "금액": rest})
+    base = max(x["금액"] for x in top) or 1
+
+    with st.expander(f"부문·품목별 내역 ({len(items)}건)", expanded=False):
+        for x in top:
+            share = (x["금액"] / total * 100) if total else 0
+            pct_w = max(1.5, x["금액"] / base * 100)
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:6px;margin:2px 0;'>"
+                f"<div style='flex:0 0 38%;font-size:11.5px;color:#444;"
+                f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'"
+                f" title='{html.escape(x['이름'])}'>{html.escape(x['이름'])}</div>"
+                f"<div style='flex:1;background:#f0f0f0;border-radius:2px;height:11px;'>"
+                f"<div style='width:{pct_w:.1f}%;background:{_UP};height:11px;"
+                f"border-radius:2px;'></div></div>"
+                f"<div style='flex:0 0 84px;text-align:right;font-size:11px;"
+                f"color:#666;'>{_jo(x['금액'])} ({share:.0f}%)</div></div>",
+                unsafe_allow_html=True,
+            )
+
+
+def _render_utilization(data):
+    rows = (data or {}).get("rows") or []
+    total = (data or {}).get("total")
+    if not rows and total is None:
+        st.caption("이 종목은 가동률을 공시하지 않습니다. "
+                   "(제조업이 아니거나 공시 양식이 다른 경우입니다)")
+        return
+
+    head = total if total is not None else (
+        sum(r["가동률"] for r in rows) / len(rows) if rows else None)
+    label = "전사 평균" if total is not None else "부문 단순평균"
+    _header("가동률", f"{head:.1f}%" if head is not None else "-", "",
+            f"{html.escape(str(data.get('보고서', '-')))} · {label}")
+
+    # 💡 100%를 넘는 값이 흔하다(초과가동). 막대는 100 기준으로 그리되 넘치는
+    # 만큼은 색을 바꿔 눈에 띄게 한다 — 잘라버리면 호황 신호가 사라진다.
+    for r in rows[:8]:
+        v = r["가동률"]
+        w = min(v, 100.0)
+        over = v > 100.0
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
+            f"<div style='flex:0 0 42%;font-size:11.5px;color:#444;"
+            f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'"
+            f" title='{html.escape(r['부문'])}'>{html.escape(r['부문'])}</div>"
+            f"<div style='flex:1;background:#f0f0f0;border-radius:2px;height:12px;'>"
+            f"<div style='width:{w:.1f}%;background:{_UP if over else '#5b8def'};"
+            f"height:12px;border-radius:2px;'></div></div>"
+            f"<div style='flex:0 0 52px;text-align:right;font-size:11.5px;"
+            f"font-weight:700;color:{_UP if over else '#333'};'>{v:.1f}%</div></div>",
+            unsafe_allow_html=True,
+        )
+    if any(r["가동률"] > 100 for r in rows[:8]):
+        st.caption("빨간색은 100% 초과 가동 — 설비가 이미 꽉 찼다는 뜻입니다.")
 
 
 def render_dart_panel(stock_code: str):
@@ -250,3 +329,13 @@ def render_dart_panel(stock_code: str):
         except Exception as e:
             st.caption(f"수주잔고 조회 실패: {type(e).__name__}")
             print(f"[ui_dart_panel] 수주잔고 실패 {stock_code}: {e}")
+
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+    uc1, _uc2 = st.columns(2)
+    with uc1:
+        try:
+            with st.spinner("가동률 조회 중..."):
+                _render_utilization(_utilization(stock_code))
+        except Exception as e:
+            st.caption(f"가동률 조회 실패: {type(e).__name__}")
+            print(f"[ui_dart_panel] 가동률 실패 {stock_code}: {e}")

@@ -90,6 +90,25 @@ def get_ticker_listing():
         print(f"[valuation] 종목 목록 조회 실패: {type(e).__name__}: {e}")
         return pd.DataFrame(columns=['Code', 'Name'])
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _searchable_names():
+    """
+    자동완성용 종목명 목록. 시가총액 큰 순으로 둔다.
+
+    selectbox는 타이핑 전에는 앞쪽 몇 개만 보여주므로, 알파벳/가나다순이면
+    처음 보이는 게 '가나안' 같은 종목이 된다. 시총순이면 삼성전자·SK하이닉스가
+    먼저 보여서 목록이 '추천'처럼 읽힌다.
+    """
+    df = get_ticker_listing()
+    if df is None or df.empty or 'Name' not in df.columns:
+        return []
+    if 'Marcap' in df.columns:
+        df = df.copy()
+        df['_m'] = pd.to_numeric(df['Marcap'], errors='coerce').fillna(0)
+        df = df.sort_values('_m', ascending=False)
+    return df['Name'].astype(str).drop_duplicates().tolist()
+
+
 def get_stocks_count(ticker_row, ticker):
     try:
         if 'Stocks' in ticker_row.columns:
@@ -388,7 +407,8 @@ def extract_number(val):
     return float(m.group()) if m else 0.0
 
 def apply_search():
-    new_name = st.session_state.get("ui_corp_name", "").strip()
+    # selectbox(index=None)는 선택 전 None을 준다 — .strip()에서 터진다.
+    new_name = (st.session_state.get("ui_corp_name") or "").strip()
     if new_name:
         st.session_state.active_corp_name = new_name
     new_val_type = st.session_state.get("ui_val_type", "POR(영업익)")
@@ -495,7 +515,17 @@ def render_valuation_menu():
     with st.form("search_form", border=False):
         col1, col2, col3, col4 = st.columns([2, 1.5, 1.2, 1])
         with col1:
-            st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
+            # 💡 자유 입력이던 것을 검색되는 선택 목록으로 바꿨다. 오타("삼성전")나
+            # 상장되지 않은 이름을 넣으면 조회가 그냥 실패했는데, 목록에서 고르면
+            # 그 경로가 아예 없어진다. Streamlit selectbox는 타이핑하면 자동으로
+            # 후보를 좁혀준다.
+            names = _searchable_names()
+            if names:
+                st.selectbox("종목명", names, key="ui_corp_name", index=None,
+                             placeholder="종목명을 입력하면 자동완성됩니다")
+            else:
+                # 목록 조회가 실패한 날에도 검색은 되어야 한다.
+                st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
         with col2:
             st.selectbox("평가방식", val_options, key="ui_val_type")
         with col3:

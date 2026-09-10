@@ -462,6 +462,7 @@ def parse_backlog(txt: str):
 
         total = None
         acc, n = 0.0, 0
+        items = []
         for row in grid[start:]:
             if col >= len(row):
                 continue
@@ -474,6 +475,12 @@ def parse_backlog(txt: str):
                 break
             acc += v
             n += 1
+            # 부문/품목별 내역도 같이 들고 나온다. 어차피 합을 내려고 한 줄씩
+            # 읽고 있어서 추가 비용이 없고, 화면에서 "어디서 늘었나"를 보려면
+            # 이게 있어야 한다.
+            label = (row[0] or "").strip()
+            if label:
+                items.append({"이름": label, "금액": v * mult})
         if total is None and n:
             total = acc
         if total is None:
@@ -486,7 +493,8 @@ def parse_backlog(txt: str):
 
         # 여러 표가 잡히면 앞에 나온 것을 쓴다. 「II. 사업의 내용 - 수주상황」이
         # 재무제표 주석보다 먼저 나오고 전사 기준이라 그쪽이 맞다.
-        best = {"total_won": total * mult, "unit": unit_txt, "rows": n}
+        best = {"total_won": total * mult, "unit": unit_txt, "rows": n,
+                "items": items}
         break
     return best
 
@@ -563,7 +571,7 @@ def get_backlog_series(stock_code: str, limit: int = 8) -> dict:
                 return None
             return {"기간": rep["period"], "수주잔고": got["total_won"],
                     "단위": got["unit"], "건수": got["rows"], "보고서": rep["name"],
-                    "rcept_no": rep["rcept_no"]}
+                    "rcept_no": rep["rcept_no"], "내역": got.get("items") or []}
         except Exception as e:
             print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {e}")
             return None
@@ -589,3 +597,141 @@ def get_backlog_series(stock_code: str, limit: int = 8) -> dict:
             dropped = len(rows) - len(keep)
             rows = keep
     return {"corp_name": nm, "rows": rows, "dropped": dropped}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 가동률 — 「II. 사업의 내용 · 생산 및 설비」의 가동률 표
+# ─────────────────────────────────────────────────────────────────────────────
+_UTIL_KW = re.compile(r"가동률")
+
+
+def _pct(x: str):
+    """'109.8%' -> 109.8. 퍼센트가 아니면 None."""
+    x = x.replace(",", "").replace(" ", "").strip()
+    if not x.endswith("%"):
+        return None
+    try:
+        return float(x[:-1])
+    except ValueError:
+        return None
+
+
+def parse_utilization(txt: str):
+    """
+    공시원문에서 부문별 가동률을 뽑는다.
+
+    양식이 두 갈래인데 규칙은 같다 — '가동률'이 적힌 마지막 헤더 줄을 찾고,
+    그 줄에서 가동률이 놓인 열만 읽으면 된다.
+
+      현대로템   사업부문 | 가동가능시간 | 실제가동시간 | 평균가동률   (헤더 1줄)
+      삼성전자   부문 | 품목 | 제58기반기(3칸 병합)
+                 부문 | 품목 | 생산능력 대수 | 실제 생산 대수 | 가동률  (헤더 2줄)
+
+    앞쪽 라벨 칸이 1개(사업부문)일 수도 2개(부문+품목)일 수도 있어서,
+    숫자가 처음 나오기 전까지를 라벨로 본다.
+    """
+    rows, total = [], None
+    for tm in _TABLE.finditer(txt):
+        block = tm.group(0)
+        if not _UTIL_KW.search(_txt(block)[:3000]):
+            continue
+        grid = _grid(block)
+        if len(grid) < 2:
+            continue
+
+        # '가동률'이 적힌 마지막 줄 = 실제 열 이름이 확정된 헤더 줄
+        hdr = col = None
+        for i, row in enumerate(grid):
+            hits = [c for c, v in enumerate(row) if _UTIL_KW.search(v.replace(" ", ""))]
+            if hits:
+                hdr, col = i, hits[-1]
+        if hdr is None:
+            continue
+
+        # 💡 표를 하나만 보고 끝내면 안 된다. 삼성전자는 가동률 표가 둘인데
+        # (DX는 '천대', DS·SDC는 '시간' 기준) 첫 표만 읽으면 반도체 부문이
+        # 통째로 빠진다. 찾은 표를 모두 합치고 부문 이름으로 중복만 막는다.
+        for row in grid[hdr + 1:]:
+            if col >= len(row):
+                continue
+            v = _pct(row[col])
+            if v is None:
+                continue
+            # 숫자가 처음 나오기 전까지가 라벨. 병합 때문에 같은 값이 연달아
+            # 오는 경우가 있어 중복은 접는다.
+            # 💡 '숫자로 파싱되면 멈춤'으로는 부족하다. HD현대중공업은 라벨
+            # 칸 뒤에 '18,437천M/H' 같은 단위 붙은 칸이 와서 숫자 파싱에
+            # 걸리지 않고 라벨에 끌려 들어왔다. 숫자가 섞인 칸이면 자른다.
+            parts = []
+            for c in range(min(col, len(row))):
+                cell = (row[c] or "").strip()
+                if not cell or re.search(r"\d", cell):
+                    break
+                if not parts or parts[-1] != cell:
+                    parts.append(cell)
+            label = " · ".join(parts[:3]) or "-"
+            if _TOTAL_KW.match(label.replace(" ", "")):
+                if total is None:
+                    total = v
+                continue
+            if not any(x["부문"] == label for x in rows):
+                rows.append({"부문": label, "가동률": v})
+
+    if rows or total is not None:
+        return {"rows": rows, "total": total}
+    return _utilization_from_text(txt)
+
+
+# 서술형으로 쓰는 회사들을 위한 폴백.
+# 한화오션이 대표적이다 — 표가 아니라 문장으로 적는다:
+#   "한화오션(주)의 가동률은 … ③ 평균가동률 = 100.0%"
+#   "한화해양공정(산동)유한공사의 가동률은 … ③ 평균가동률 = 97.3%"
+# 조선처럼 설비 가동률로 재기 곤란한 업종이 이 형식을 쓴다.
+_UTIL_SENT = re.compile(r"평균\s*가동률\s*[=:]?\s*([\d.]+)\s*%")
+# 💡 '가동률은'까지 요구하는 게 중요하다. 그냥 '가동률'로 잡으면 바로 뒤에
+# 붙는 상투구 "…공장 생산설비의 가동률로 측정하기는 곤란하여"에 걸려
+# 부문 이름이 '생산설비'로 나온다(한화오션에서 실제로 그랬다).
+_UTIL_OWNER = re.compile(r"([^\s|.,·]{2,30}?)\s*의\s*가동률은")
+
+
+def _utilization_from_text(txt: str):
+    plain = re.sub(r"\s+", " ", _TAG.sub(" ", txt))
+    out = []
+    for m in _UTIL_SENT.finditer(plain):
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            continue
+        if not 0 < v <= 200:
+            continue
+        owners = _UTIL_OWNER.findall(plain[max(0, m.start() - 600):m.start()])
+        label = owners[-1].strip() if owners else "전사"
+        # 앞 문장이 공백 없이 붙는 경우가 있다("… 실 투입된 MH한화오션에코텍(주)의").
+        label = re.sub(r"^[A-Za-z/]{1,4}(?=[가-힣])", "", label)
+        if not any(x["부문"] == label for x in out):
+            out.append({"부문": label, "가동률": v})
+    return {"rows": out, "total": None} if out else None
+
+
+def get_utilization(stock_code: str) -> dict:
+    """가장 최근 정기보고서의 부문별 가동률."""
+    cc, nm = corp_code_of(stock_code)
+    if not cc:
+        raise DartError(f"종목코드 {stock_code}의 DART corp_code를 찾지 못했습니다.")
+
+    end = datetime.now().strftime("%Y%m%d")
+    bgn = (datetime.now() - timedelta(days=400)).strftime("%Y%m%d")
+    reps = _report_list(cc, bgn, end)
+    for rep in reps[:2]:  # 최신이 파싱 안 되면 직전 것까지만 본다
+        try:
+            t = _document_text(rep["rcept_no"])
+            if not t:
+                continue
+            got = parse_utilization(t)
+            if got:
+                return {"corp_name": nm, "기간": rep["period"],
+                        "보고서": rep["name"], "rcept_no": rep["rcept_no"],
+                        **got}
+        except Exception as e:
+            print(f"[dart_fin] 가동률 파싱 실패 {rep['rcept_no']}: {type(e).__name__}: {e}")
+    return {"corp_name": nm, "rows": [], "total": None}
