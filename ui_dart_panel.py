@@ -1,0 +1,199 @@
+"""
+ui_dart_panel.py — 가치평가 화면 하단의 「재고자산 · 수주잔고 추이」 패널.
+
+dart_fin이 숫자를 만들고, 여기서는 그리기만 한다.
+
+수주잔고는 회사마다 공시 양식이 달라 못 뽑거나 일부만 뽑히는 경우가 있다
+(예: 한국항공우주는 주요 계약이 중첩 테이블로 들어가 있어 부분값만 잡힌다).
+그래서 값을 그냥 보여주지 않고,
+
+  · 어느 보고서에서 몇 건을 집계했는지 함께 적고
+  · DART 원문 링크를 걸어 바로 대조할 수 있게 하고
+  · 연매출 대비 지나치게 작으면 "부분 집계 의심" 경고를 띄운다
+
+숫자를 못 믿을 상황을 조용히 숨기지 않는 게 이 패널의 설계 의도다.
+"""
+import html
+
+import plotly.graph_objects as go
+import streamlit as st
+
+import dart_fin
+
+# 한국 시장 관행: 증가/양수는 빨강, 감소/음수는 파랑.
+_UP, _DOWN = "#ef5350", "#1565C0"
+_DART_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
+
+
+@st.cache_data(ttl=43200, show_spinner=False)
+def _inventory(code: str):
+    return dart_fin.get_inventory_series(code)
+
+
+@st.cache_data(ttl=43200, show_spinner=False)
+def _backlog(code: str):
+    return dart_fin.get_backlog_series(code, limit=8)
+
+
+def _jo(v):
+    """원 단위 금액을 조/억으로. 수주잔고는 조 단위가 보통이라 둘을 나눈다."""
+    if v is None:
+        return "-"
+    if abs(v) >= 1e12:
+        return f"{v / 1e12:,.2f}조"
+    return f"{v / 1e8:,.0f}억"
+
+
+def _delta_html(cur, prev, label):
+    if cur is None or prev in (None, 0):
+        return ""
+    pct = (cur - prev) / abs(prev) * 100
+    color = _UP if pct >= 0 else _DOWN
+    sign = "+" if pct >= 0 else ""
+    return (f"<span style='color:{color};font-weight:700;font-size:12px;'>"
+            f"{sign}{pct:,.1f}%</span>"
+            f"<span style='color:#999;font-size:11px;'> ({label})</span>")
+
+
+def _lock(fig, height):
+    """매크로 차트와 동일하게 드래그는 막고 마우스오버는 살린다."""
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    fig.update_layout(
+        height=height, dragmode=False, hovermode="x unified",
+        margin=dict(l=0, r=10, t=10, b=20),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False, xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.06)"),
+    )
+    return fig
+
+
+def _header(title, value, delta_html, note=""):
+    st.markdown(
+        f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>{title}</div>"
+        f"<div style='font-size:20px;font-weight:800;line-height:1.15;'>{value} "
+        f"{delta_html}</div>"
+        f"<div style='font-size:11px;color:#aaa;margin-bottom:4px;'>{note}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_inventory(data):
+    rows = data.get("rows") or []
+    if not rows:
+        st.caption("재고자산 데이터를 찾지 못했습니다.")
+        return None
+
+    last = rows[-1]
+    prev = rows[-2] if len(rows) > 1 else None
+    _header("재고자산", _jo(last["재고자산"]),
+            _delta_html(last["재고자산"], prev["재고자산"] if prev else None, "YoY"),
+            f"{last['연도']}년 · {'연결' if last['기준'] == 'CFS' else '별도'}기준")
+
+    xs = [str(r["연도"]) for r in rows]
+    fig = go.Figure()
+    # 💡 원 단위 그대로 그리면 Plotly가 축을 "200B, 400B"로 붙인다. 억 단위로
+    # 변환해서 그리고 축에 '억'을 달아야 한국 사용자가 바로 읽는다.
+    fig.add_trace(go.Bar(
+        x=xs, y=[r["재고자산"] / 1e8 for r in rows], name="재고자산",
+        marker_color="rgba(239,83,80,0.55)",
+        hovertemplate="%{x}년<br>재고자산 %{customdata}<extra></extra>",
+        customdata=[_jo(r["재고자산"]) for r in rows],
+    ))
+    fig.update_yaxes(ticksuffix="억", tickformat=",.0f")
+    # 💡 금액만 보면 '재고가 늘었다'가 성장 때문인지 안 팔려서인지 구분이 안 된다.
+    # 매출 대비 비율을 겹쳐 그려야 그 판단이 된다.
+    ratio = [r["비율"] for r in rows]
+    if any(v is not None for v in ratio):
+        fig.add_trace(go.Scatter(
+            x=xs, y=ratio, name="매출대비", yaxis="y2", mode="lines+markers",
+            line=dict(color="#555", width=1.6), marker=dict(size=5),
+            hovertemplate="매출대비 %{y:.1f}%<extra></extra>",
+        ))
+        fig.update_layout(yaxis2=dict(overlaying="y", side="right",
+                                      showgrid=False, ticksuffix="%",
+                                      fixedrange=True))
+    st.plotly_chart(_lock(fig, 190), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False})
+    return last
+
+
+def _render_backlog(data, inv_last):
+    rows = data.get("rows") or []
+    if not rows:
+        st.caption("이 종목은 수주잔고를 공시하지 않습니다. "
+                   "(수주산업이 아닌 경우 정상입니다)")
+        return
+
+    last = rows[-1]
+    prev = rows[-2] if len(rows) > 1 else None
+    yoy = next((r for r in rows if r["기간"][5:] == last["기간"][5:]
+                and r["기간"] < last["기간"]), None)
+    _header("수주잔고", _jo(last["수주잔고"]),
+            _delta_html(last["수주잔고"],
+                        (yoy or prev)["수주잔고"] if (yoy or prev) else None,
+                        "YoY" if yoy else "전분기"),
+            f"{html.escape(last['보고서'])} · {last['건수']}개 항목 집계")
+
+    xs = [r["기간"] for r in rows]
+    ys = [r["수주잔고"] for r in rows]
+    rising = len(ys) > 1 and ys[-1] >= ys[0]
+    color = _UP if rising else _DOWN
+    fill = "rgba(239,83,80,0.10)" if rising else "rgba(21,101,192,0.10)"
+    fig = go.Figure(go.Scatter(
+        x=xs, y=[v / 1e12 for v in ys], mode="lines+markers",
+        line=dict(color=color, width=2), marker=dict(size=5),
+        fill="tozeroy", fillcolor=fill,
+        customdata=[_jo(v) for v in ys],
+        hovertemplate="%{x}<br>수주잔고 %{customdata}<extra></extra>",
+    ))
+    fig.update_yaxes(ticksuffix="조", tickformat=",.0f")
+    st.plotly_chart(_lock(fig, 190), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False})
+
+    # 부분 집계 경고 — 연매출의 절반도 안 되는 수주잔고는 표를 덜 읽었다는 신호다.
+    rev = (inv_last or {}).get("매출액")
+    if rev and last["수주잔고"] < rev * 0.5:
+        st.caption("⚠️ 연매출 대비 수주잔고가 작습니다. 공시 양식에 따라 일부 "
+                   "품목만 집계됐을 수 있으니 원문을 확인해주세요.")
+    if data.get("dropped"):
+        st.caption(f"ℹ️ 공시 양식이 달라 값이 온전치 않은 {data['dropped']}개 "
+                   f"기간은 그래프에서 제외했습니다.")
+    st.markdown(
+        f"<a href='{_DART_URL.format(last['rcept_no'])}' target='_blank' "
+        f"style='font-size:11px;color:#1565C0;text-decoration:none;'>"
+        f"🔗 DART 원문에서 확인</a>", unsafe_allow_html=True)
+
+
+def render_dart_panel(stock_code: str):
+    """가치평가 화면 하단에 붙는 진입점. 실패해도 위쪽 차트를 망치지 않는다."""
+    if not stock_code:
+        return
+    st.markdown("---")
+    st.markdown("<div style='font-size:1.1rem;font-weight:700;margin-bottom:6px;'>"
+                "📦 재고자산 · 수주잔고 추이 <span style='font-size:11px;"
+                "color:#999;font-weight:400;'>DART 공시 기준</span></div>",
+                unsafe_allow_html=True)
+
+    if not dart_fin._api_key():
+        st.info("DART_API_KEY가 설정되어 있지 않습니다. "
+                "Secrets에 키를 넣으면 재고자산·수주잔고 추이가 표시됩니다.")
+        return
+
+    c1, c2 = st.columns(2)
+    inv_last = None
+    with c1:
+        try:
+            with st.spinner("재고자산 조회 중..."):
+                inv_last = _render_inventory(_inventory(stock_code))
+        except Exception as e:
+            st.caption(f"재고자산 조회 실패: {type(e).__name__}")
+            print(f"[ui_dart_panel] 재고자산 실패 {stock_code}: {e}")
+    with c2:
+        try:
+            with st.spinner("수주잔고 조회 중..."):
+                _render_backlog(_backlog(stock_code), inv_last)
+        except Exception as e:
+            st.caption(f"수주잔고 조회 실패: {type(e).__name__}")
+            print(f"[ui_dart_panel] 수주잔고 실패 {stock_code}: {e}")

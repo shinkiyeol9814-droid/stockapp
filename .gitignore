@@ -24,3 +24,7 @@ temp_pdfs/
 # 섹터 탭 런타임 스냅샷 (장 시작 전 직전 장 상태를 보여주기 위한 캐시)
 # 매 조회마다 바뀌고, 커밋되면 오래된 값이 "직전 장"으로 표시될 수 있다.
 data/sector/last_snapshot.json
+
+# DART corp_code 매핑 캐시 (7일마다 자동 재생성 · 175KB)
+# 커밋해도 되지만 주기적으로 통째로 바뀌어 diff만 키운다.
+data/dart/corp_map.json

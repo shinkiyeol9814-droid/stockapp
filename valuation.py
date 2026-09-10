@@ -15,6 +15,7 @@ import concurrent.futures
 import plotly.graph_objects as go
 
 from krx_listing import fetch_krx_listing
+from ui_dart_panel import render_dart_panel
 
 # --- 설정 및 상수 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
@@ -796,6 +797,9 @@ def render_valuation_menu():
                     fig2_title  = f"[EV/EBITDA 배수 추이]" if "EBITDA" in val_type else f"[평균 {band_name} 밴드]"
                     fig2.update_layout(height=fig2_height, margin=dict(l=0, r=20, t=50, b=80), title=dict(text=fig2_title, x=0.0, y=0.99, font=dict(size=14)), showlegend=("EBITDA" in val_type), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", dragmode="pan", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(fig2, use_container_width=True, config={"scrollZoom": True, "displayModeBar": "hover", "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "zoom2d"]})
+
+                    # 재고자산/수주잔고는 네이버 재무제표에 없어서 DART에서 따로 받는다.
+                    render_dart_panel(ticker)
 
                 else: st.error("❌ 주가 데이터를 불러오는 데 실패했습니다. 종목명을 확인하거나 잠시 후 다시 시도해주세요.")
     else: st.info("👆 상단에 종목명을 입력하고 갱신 버튼을 눌러주세요!")
