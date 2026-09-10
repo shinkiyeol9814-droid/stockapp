@@ -218,6 +218,120 @@ def get_inventory_series(stock_code: str, years: int = 5) -> dict:
     return {"corp_name": nm, "rows": out}
 
 
+# 분기 코드 → (분기번호, 라벨). 사업보고서(11011)는 4분기 자리를 맡는다.
+_QUARTERS = (("11013", 1), ("11012", 2), ("11014", 3), ("11011", 4))
+
+
+def _find_inventory(rows):
+    for r in rows:
+        if r.get("sj_div") != "BS":
+            continue
+        if (r.get("account_id") or "").strip() in _INV_IDS:
+            return _amt(r, "thstrm_amount")
+    for r in rows:
+        if r.get("sj_div") == "BS" and (r.get("account_nm") or "").strip() in _INV_NAMES:
+            return _amt(r, "thstrm_amount")
+    return None
+
+
+def _find_cum_revenue(rows, reprt):
+    """
+    보고서 시점까지의 '누적' 매출.
+
+    💡 분기보고서의 thstrm_amount는 당분기 3개월치이고 thstrm_add_amount가
+    누적인데, 회사에 따라 누적을 안 채우기도 한다. 그래서 누적을 먼저 모아
+    나중에 차분해 당분기를 만든다 — 어느 쪽이 비어도 계산이 성립한다.
+    사업보고서(11011)는 thstrm_amount 자체가 연간 누적이다.
+    """
+    cur = add = None
+    for r in rows:
+        if r.get("sj_div") not in ("IS", "CIS"):
+            continue
+        id_ = (r.get("account_id") or "").strip()
+        nm_ = (r.get("account_nm") or "").strip()
+        if id_ in _REV_IDS or nm_ in _REV_NAMES:
+            cur = _amt(r, "thstrm_amount")
+            add = _amt(r, "thstrm_add_amount")
+            if id_ in _REV_IDS:
+                break  # 표준계정코드 매칭이 우선
+    if reprt == "11011":
+        return cur
+    return add if add is not None else cur
+
+
+def get_inventory_quarterly(stock_code: str, quarters: int = 12) -> dict:
+    """
+    분기말 재고자산 추이.
+
+    반환 rows: [{"기간":"25.2Q", "재고자산":..., "매출액":(당분기),
+                 "TTM매출":..., "비율":(재고/TTM매출 %), "기준":...}]
+
+    ⚠️ 비율은 연간판(get_inventory_series)과 눈금을 맞추려고 최근 4개 분기
+    매출 합(TTM)으로 나눈다. 당분기 매출로 나누면 값이 4배로 튀어 연간
+    그래프와 나란히 놓을 수 없다.
+    """
+    cc, nm = corp_code_of(stock_code)
+    if not cc:
+        raise DartError(f"종목코드 {stock_code}의 DART corp_code를 찾지 못했습니다.")
+
+    this_year = datetime.now().year
+    # TTM에 직전 4개 분기가 더 필요해서 1년을 넉넉히 더 받는다.
+    n_years = (quarters + 3) // 4 + 1
+    combos = [(y, rc, qn)
+              for y in range(this_year, this_year - n_years, -1)
+              for rc, qn in _QUARTERS]
+
+    def one(t):
+        y, rc, qn = t
+        for fs in ("CFS", "OFS"):
+            rows = _acnt(cc, y, rc, fs)
+            if rows:
+                return y, rc, qn, rows, fs
+        return y, rc, qn, None, None
+
+    got = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        for y, rc, qn, rows, fs in ex.map(one, combos):
+            if rows:
+                got[(y, qn)] = (rc, rows, fs)
+
+    # 누적 매출 → 당분기 매출로 차분
+    seq = sorted(got)
+    out = []
+    for y, qn in seq:
+        rc, rows, fs = got[(y, qn)]
+        inv = _find_inventory(rows)
+        if inv is None:
+            continue
+        cum = _find_cum_revenue(rows, rc)
+        rev = None
+        if cum is not None:
+            if qn == 1:
+                rev = cum
+            else:
+                prev = got.get((y, qn - 1))
+                if prev:
+                    pcum = _find_cum_revenue(prev[1], prev[0])
+                    if pcum is not None:
+                        rev = cum - pcum
+        out.append({"기간": f"{str(y)[2:]}.{qn}Q", "_y": y, "_q": qn,
+                    "재고자산": inv, "매출액": rev, "기준": fs})
+
+    # TTM(최근 4개 분기 합) — 앞쪽 3개 분기는 계산할 수 없어 비율이 빈다.
+    for i, row in enumerate(out):
+        window = out[max(0, i - 3):i + 1]
+        vals = [w["매출액"] for w in window]
+        if len(window) == 4 and all(v is not None for v in vals):
+            ttm = sum(vals)
+            row["TTM매출"] = ttm
+            row["비율"] = (row["재고자산"] / ttm * 100) if ttm else None
+        else:
+            row["TTM매출"] = None
+            row["비율"] = None
+
+    return {"corp_name": nm, "rows": out[-quarters:]}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 수주잔고 — 공시원문 표 파싱
 # ─────────────────────────────────────────────────────────────────────────────

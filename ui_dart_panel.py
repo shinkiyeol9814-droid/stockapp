@@ -31,6 +31,11 @@ def _inventory(code: str):
 
 
 @st.cache_data(ttl=43200, show_spinner=False)
+def _inventory_q(code: str):
+    return dart_fin.get_inventory_quarterly(code, quarters=12)
+
+
+@st.cache_data(ttl=43200, show_spinner=False)
 def _backlog(code: str):
     return dart_fin.get_backlog_series(code, limit=8)
 
@@ -79,26 +84,40 @@ def _header(title, value, delta_html, note=""):
     )
 
 
-def _render_inventory(data):
+def _render_inventory(data, quarterly: bool):
     rows = data.get("rows") or []
     if not rows:
         st.caption("재고자산 데이터를 찾지 못했습니다.")
         return None
 
     last = rows[-1]
-    prev = rows[-2] if len(rows) > 1 else None
-    _header("재고자산", _jo(last["재고자산"]),
-            _delta_html(last["재고자산"], prev["재고자산"] if prev else None, "YoY"),
-            f"{last['연도']}년 · {'연결' if last['기준'] == 'CFS' else '별도'}기준")
+    # 💡 분기 모드에서 직전 분기와 비교하면 계절성이 그대로 튀어나온다.
+    # 4개 분기 전(같은 분기)과 비교해야 YoY가 된다.
+    step = 4 if quarterly else 1
+    base = rows[-1 - step] if len(rows) > step else (rows[-2] if len(rows) > 1 else None)
+    label = "YoY" if (base is not None and len(rows) > step) else "직전"
 
-    xs = [str(r["연도"]) for r in rows]
+    if quarterly:
+        when = f"{last['기간']}"
+        # 수주잔고 경고가 연매출 기준이라 분기에서는 TTM을 넘겨준다.
+        annual_rev = last.get("TTM매출")
+    else:
+        when = f"{last['연도']}년"
+        annual_rev = last.get("매출액")
+
+    _header("재고자산", _jo(last["재고자산"]),
+            _delta_html(last["재고자산"], base["재고자산"] if base else None, label),
+            f"{when} · {'연결' if last['기준'] == 'CFS' else '별도'}기준")
+
+    xs = [r["기간"] if quarterly else str(r["연도"]) for r in rows]
     fig = go.Figure()
     # 💡 원 단위 그대로 그리면 Plotly가 축을 "200B, 400B"로 붙인다. 억 단위로
     # 변환해서 그리고 축에 '억'을 달아야 한국 사용자가 바로 읽는다.
     fig.add_trace(go.Bar(
         x=xs, y=[r["재고자산"] / 1e8 for r in rows], name="재고자산",
         marker_color="rgba(239,83,80,0.55)",
-        hovertemplate="%{x}년<br>재고자산 %{customdata}<extra></extra>",
+        hovertemplate=("%{x}" if quarterly else "%{x}년")
+                      + "<br>재고자산 %{customdata}<extra></extra>",
         customdata=[_jo(r["재고자산"]) for r in rows],
     ))
     fig.update_yaxes(ticksuffix="억", tickformat=",.0f")
@@ -106,17 +125,22 @@ def _render_inventory(data):
     # 매출 대비 비율을 겹쳐 그려야 그 판단이 된다.
     ratio = [r["비율"] for r in rows]
     if any(v is not None for v in ratio):
+        rname = "재고/TTM매출" if quarterly else "매출대비"
         fig.add_trace(go.Scatter(
-            x=xs, y=ratio, name="매출대비", yaxis="y2", mode="lines+markers",
+            x=xs, y=ratio, name=rname, yaxis="y2", mode="lines+markers",
             line=dict(color="#555", width=1.6), marker=dict(size=5),
-            hovertemplate="매출대비 %{y:.1f}%<extra></extra>",
+            connectgaps=True,
+            hovertemplate=rname + " %{y:.1f}%<extra></extra>",
         ))
         fig.update_layout(yaxis2=dict(overlaying="y", side="right",
                                       showgrid=False, ticksuffix="%",
                                       fixedrange=True))
     st.plotly_chart(_lock(fig, 190), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False})
-    return last
+    if quarterly:
+        st.caption("검은 선은 재고 ÷ 최근 4개 분기 매출(TTM). "
+                   "당분기 매출로 나누면 값이 4배로 튀어 연간과 비교가 안 됩니다.")
+    return {"매출액": annual_rev}
 
 
 def _render_backlog(data, inv_last):
@@ -184,9 +208,14 @@ def render_dart_panel(stock_code: str):
     c1, c2 = st.columns(2)
     inv_last = None
     with c1:
+        period = st.radio("재고 기간", ["분기", "연간"], index=0, horizontal=True,
+                          key=f"inv_period_{stock_code}",
+                          label_visibility="collapsed")
+        quarterly = (period == "분기")
         try:
             with st.spinner("재고자산 조회 중..."):
-                inv_last = _render_inventory(_inventory(stock_code))
+                data = _inventory_q(stock_code) if quarterly else _inventory(stock_code)
+                inv_last = _render_inventory(data, quarterly)
         except Exception as e:
             st.caption(f"재고자산 조회 실패: {type(e).__name__}")
             print(f"[ui_dart_panel] 재고자산 실패 {stock_code}: {e}")
