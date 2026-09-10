@@ -60,6 +60,25 @@ def _delta_html(cur, prev, label):
             f"<span style='color:#999;font-size:11px;'> ({label})</span>")
 
 
+def _area_trace(xs, scaled, raw, label, hover_x="%{x}"):
+    """
+    재고자산·수주잔고가 같은 모양으로 보이도록 만든 공용 면적 꺾은선.
+
+    두 차트가 나란히 놓이는데 하나는 막대, 하나는 선이면 비교가 안 된다.
+    한 곳에서만 만들어야 나중에 한쪽만 바뀌는 일이 없다.
+    """
+    rising = len(scaled) > 1 and scaled[-1] >= scaled[0]
+    color = _UP if rising else _DOWN
+    fill = "rgba(239,83,80,0.10)" if rising else "rgba(21,101,192,0.10)"
+    return go.Scatter(
+        x=xs, y=scaled, mode="lines+markers", name=label,
+        line=dict(color=color, width=2), marker=dict(size=5),
+        fill="tozeroy", fillcolor=fill,
+        customdata=[_jo(v) for v in raw],
+        hovertemplate=f"{hover_x}<br>{label} %{{customdata}}<extra></extra>",
+    )
+
+
 def _lock(fig, height):
     """매크로 차트와 동일하게 드래그는 막고 마우스오버는 살린다."""
     fig.update_xaxes(fixedrange=True)
@@ -113,22 +132,19 @@ def _render_inventory(data, quarterly: bool):
     fig = go.Figure()
     # 💡 원 단위 그대로 그리면 Plotly가 축을 "200B, 400B"로 붙인다. 억 단위로
     # 변환해서 그리고 축에 '억'을 달아야 한국 사용자가 바로 읽는다.
-    fig.add_trace(go.Bar(
-        x=xs, y=[r["재고자산"] / 1e8 for r in rows], name="재고자산",
-        marker_color="rgba(239,83,80,0.55)",
-        hovertemplate=("%{x}" if quarterly else "%{x}년")
-                      + "<br>재고자산 %{customdata}<extra></extra>",
-        customdata=[_jo(r["재고자산"]) for r in rows],
-    ))
+    raw = [r["재고자산"] for r in rows]
+    fig.add_trace(_area_trace(xs, [v / 1e8 for v in raw], raw, "재고자산",
+                              "%{x}" if quarterly else "%{x}년"))
     fig.update_yaxes(ticksuffix="억", tickformat=",.0f")
     # 💡 금액만 보면 '재고가 늘었다'가 성장 때문인지 안 팔려서인지 구분이 안 된다.
     # 매출 대비 비율을 겹쳐 그려야 그 판단이 된다.
     ratio = [r["비율"] for r in rows]
     if any(v is not None for v in ratio):
         rname = "재고/TTM매출" if quarterly else "매출대비"
+        # 재고자산이 이제 선이라, 비율선은 점선 회색으로 눌러 구분한다.
         fig.add_trace(go.Scatter(
-            x=xs, y=ratio, name=rname, yaxis="y2", mode="lines+markers",
-            line=dict(color="#555", width=1.6), marker=dict(size=5),
+            x=xs, y=ratio, name=rname, yaxis="y2", mode="lines",
+            line=dict(color="#8a8a8a", width=1.3, dash="dot"),
             connectgaps=True,
             hovertemplate=rname + " %{y:.1f}%<extra></extra>",
         ))
@@ -138,7 +154,7 @@ def _render_inventory(data, quarterly: bool):
     st.plotly_chart(_lock(fig, 190), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False})
     if quarterly:
-        st.caption("검은 선은 재고 ÷ 최근 4개 분기 매출(TTM). "
+        st.caption("회색 점선은 재고 ÷ 최근 4개 분기 매출(TTM). "
                    "당분기 매출로 나누면 값이 4배로 튀어 연간과 비교가 안 됩니다.")
     return {"매출액": annual_rev}
 
@@ -162,16 +178,7 @@ def _render_backlog(data, inv_last):
 
     xs = [r["기간"] for r in rows]
     ys = [r["수주잔고"] for r in rows]
-    rising = len(ys) > 1 and ys[-1] >= ys[0]
-    color = _UP if rising else _DOWN
-    fill = "rgba(239,83,80,0.10)" if rising else "rgba(21,101,192,0.10)"
-    fig = go.Figure(go.Scatter(
-        x=xs, y=[v / 1e12 for v in ys], mode="lines+markers",
-        line=dict(color=color, width=2), marker=dict(size=5),
-        fill="tozeroy", fillcolor=fill,
-        customdata=[_jo(v) for v in ys],
-        hovertemplate="%{x}<br>수주잔고 %{customdata}<extra></extra>",
-    ))
+    fig = go.Figure(_area_trace(xs, [v / 1e12 for v in ys], ys, "수주잔고"))
     fig.update_yaxes(ticksuffix="조", tickformat=",.0f")
     st.plotly_chart(_lock(fig, 190), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False})
