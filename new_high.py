@@ -73,8 +73,20 @@ def render_new_high_menu():
             return f"{date_part[:4]}년 {date_part[4:6]}월 {date_part[6:8]}일 {date_part[9:11]}:{date_part[11:13]} 분석본"
         except Exception: return f
         
-    selected_file = st.selectbox("📅 분석 일자 선택", report_files, format_func=format_filename)
-    
+    # 💡 분석일자와 시가총액을 같은 너비 2열로 나란히 둔다.
+    # 예전엔 분석일자가 전체 폭을 쓰고 시가총액만 오른쪽 절반에 있어서
+    # 두 컨트롤의 너비가 달라 어긋나 보였다.
+    fc1, fc2 = st.columns(2)
+    # 필터는 "필터 설정" 헤더 없이 이 두 개만 둔다. 신고가 기간(돌파기간)
+    # 선택은 없앴다 — 분석일자를 고르면 그 시점 신고가 종목만 담긴 파일이라
+    # 기간을 또 나눌 실익이 적었다. 돌파기간 값은 아래 표에 컬럼으로 남는다.
+    with fc1:
+        selected_file = st.selectbox("📅 분석 일자 선택", report_files,
+                                     format_func=format_filename)
+    with fc2:
+        marcap_filters = ["500억 ~ 5,000억 미만 (중소형)", "5,000억 이상 (대형)", "전체"]
+        selected_marcap = st.selectbox("💰 시가총액", marcap_filters, index=0)
+
     # ✅ 수정 후
     with open(f"data/new_high/{selected_file}", "r", encoding="utf-8") as f:
         report_data = json.load(f)
@@ -87,16 +99,6 @@ def render_new_high_menu():
     
     if '시가총액' not in all_df.columns:
         all_df['시가총액'] = 0
-
-    # 💡 "필터 설정" 헤더와 신고가 기간(돌파기간) 선택은 제거했다.
-    # 분석일자를 고르는 순간 그 시점의 신고가 종목만 담긴 파일이라 기간을 또
-    # 나눌 실익이 적었고, 헤더 하나를 위해 화면이 한 단 더 깊어졌다.
-    # 남기는 필터는 시가총액 하나 — 중소형/대형을 가르는 게 실제로 쓰였다.
-    # (돌파기간 값 자체는 아래 표에 컬럼으로 계속 보인다.)
-    _, col2 = st.columns([2, 2])
-    with col2:
-        marcap_filters = ["500억 ~ 5,000억 미만 (중소형)", "5,000억 이상 (대형)", "전체"]
-        selected_marcap = st.selectbox("💰 시가총액", marcap_filters, index=0)
 
     filtered_df = all_df.copy()
 

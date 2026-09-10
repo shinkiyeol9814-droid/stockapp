@@ -82,6 +82,11 @@ def _append_if_new(path: str, price: float | None) -> bool:
     today_ms = _today_ms()
     if raw and raw[-1][0] >= today_ms:
         return False  # 오늘자 이미 있음 (재실행 시 중복 방지)
+    # 💡 값이 직전과 같으면 새 점을 만들지 않는다. 이 스팟 가격들은 소스가
+    # 움직였을 때만 갱신되는데, 매일 같은 값을 찍으면 화면의 "전일대비"가
+    # 계속 0.00%로 나와 마지막 실제 변동이 묻힌다. 커밋도 불필요하게 쌓인다.
+    if raw and price == raw[-1][1]:
+        return False
     raw.append([today_ms, price])
     _save(path, raw)
     return True

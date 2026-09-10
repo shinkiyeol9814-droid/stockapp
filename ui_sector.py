@@ -12,6 +12,9 @@ import html
 import urllib.parse
 import xml.etree.ElementTree as ET
 import concurrent.futures
+import os
+import json
+from datetime import datetime, timezone, timedelta
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -62,6 +65,72 @@ def get_sector_stocks(no: str):
         return df
     except Exception:
         return None
+
+
+_SNAP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "data", "sector", "last_snapshot.json")
+_KST = timezone(timedelta(hours=9))
+
+
+def _save_snapshot(df: pd.DataFrame) -> None:
+    """장중 유효 스냅샷을 디스크에 남긴다. 실패해도 조회를 망치지 않는다."""
+    try:
+        os.makedirs(os.path.dirname(_SNAP_PATH), exist_ok=True)
+        payload = {
+            "saved_at": datetime.now(_KST).strftime("%Y-%m-%d %H:%M"),
+            "rows": df.to_dict(orient="records"),
+        }
+        with open(_SNAP_PATH, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[ui_sector] 스냅샷 저장 실패(무시): {type(e).__name__}: {e}")
+
+
+def _load_snapshot():
+    """(DataFrame, 저장시각) 또는 (None, None)."""
+    try:
+        with open(_SNAP_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        rows = payload.get("rows") or []
+        if not rows:
+            return None, None
+        return pd.DataFrame(rows), payload.get("saved_at")
+    except Exception:
+        return None, None
+
+
+def get_sector_snapshot():
+    """
+    화면용 업종 데이터 -> (DataFrame, 기준시각, 지연여부).
+
+    💡 네이버 업종별 시세는 장이 열리기 전에는 모든 업종이 0.00%로 나온다
+    (오늘 아직 안 움직였으니 당연하다). 그 화면은 아무 정보가 없어서,
+    직전에 받아둔 유효 스냅샷(= 어제 장의 마지막 상태)을 대신 보여준다.
+
+    ⚠️ 스냅샷은 디스크에 두는데 Streamlit Cloud 파일시스템은 재배포 때
+    날아간다. 그 경우엔 스냅샷이 없으므로 0.00% 화면을 그대로 보여주되
+    "장 시작 전"이라고 분명히 알린다 — 조용히 빈 화면을 주지 않는다.
+
+    get_sector_performance()는 배치(batch_surge_alert)도 쓰므로 반환형을
+    바꾸지 않고, 화면용 래퍼를 따로 둔다.
+    """
+    df = get_sector_performance()
+    now_txt = datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
+
+    if df is None or df.empty:
+        snap, saved = _load_snapshot()
+        return (snap, saved, True) if snap is not None else (None, None, True)
+
+    moved = int((df["등락률_num"] != 0).sum())
+    if moved > 0:
+        _save_snapshot(df)
+        return df, now_txt, False
+
+    # 전 업종이 보합 = 장 시작 전(또는 휴장). 직전 스냅샷으로 대체한다.
+    snap, saved = _load_snapshot()
+    if snap is not None:
+        return snap, saved, True
+    return df, now_txt, True
 
 
 def _fetch_news(sector_name: str, n: int):
@@ -151,7 +220,7 @@ def render_sector_menu():
             st.rerun()
 
     with st.spinner("업종 데이터 로딩 중..."):
-        df = get_sector_performance()
+        df, as_of, stale = get_sector_snapshot()
 
     if df is None or df.empty:
         st.error("❌ 업종 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.")
@@ -160,7 +229,21 @@ def render_sector_menu():
     up_n = int((df["등락률_num"] > 0).sum())
     down_n = int((df["등락률_num"] < 0).sum())
     flat_n = len(df) - up_n - down_n
-    st.caption(f"📊 상승 {up_n}개 · 보합 {flat_n}개 · 하락 {down_n}개 (전체 {len(df)}개 업종)")
+
+    # 기준 시각을 항상 보여준다 — 장 시작 전엔 직전 장 마감 상태를 보고 있는
+    # 것이므로, 언제 값인지 모르면 오해하기 쉽다.
+    if stale:
+        badge = ("<span style='background:#6b7a8c;color:#fff;font-size:10.5px;"
+                 "font-weight:700;padding:1px 6px;border-radius:3px;margin-left:6px;'>"
+                 "장 시작 전 · 직전 장 기준</span>")
+    else:
+        badge = ""
+    st.markdown(
+        f"<div style='font-size:12.5px;color:#666;margin:2px 0 6px;'>"
+        f"📊 상승 <b>{up_n}</b>개 · 보합 {flat_n}개 · 하락 <b>{down_n}</b>개 "
+        f"(전체 {len(df)}개 업종) · 기준 <b>{html.escape(str(as_of or '-'))}</b>{badge}</div>",
+        unsafe_allow_html=True,
+    )
 
     top5 = df.head(5)
     bottom5 = df.tail(5).iloc[::-1]

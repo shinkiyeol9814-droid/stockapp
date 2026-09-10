@@ -245,15 +245,9 @@ def _make_card_sparkline(df, note=None):
         yaxis=dict(showticklabels=False, showgrid=False, zeroline=False,
                    rangemode="tozero", fixedrange=True),
     )
-    if note:
-        text, ncolor = note
-        fig.add_annotation(
-            xref="paper", yref="paper", x=1, y=1,
-            xanchor="right", yanchor="top",
-            text=f"<b>{text}</b>", showarrow=False,
-            font=dict(size=8, color="#fff"),
-            bgcolor=ncolor, borderpad=2, opacity=0.92,
-        )
+    # 💡 특이사항 배지는 차트 안에 넣지 않는다 — 최근이 고점이면 선이 바로
+    # 우상단으로 올라와 배지와 겹친다. 카드 헤더(HTML)에서 그린다.
+    # (note 인자는 호출부 호환을 위해 남겨두되 여기서는 쓰지 않는다.)
     return fig
 
 
@@ -372,33 +366,18 @@ def render_trade():
         )
         st.stop()
 
-    # ── 테마 선택: 라디오 대신 버튼 ───────────────────────────────────────────
-    # 💡 라디오 11개가 한 줄에 늘어서면 어디가 선택됐는지 잘 안 보였다.
-    # 버튼으로 두고 선택된 것만 primary(빨강)로 칠해 상단 메뉴와 톤을 맞춘다.
-    all_themes = themes()
-    if "trade_theme" not in st.session_state:
-        st.session_state.trade_theme = all_themes[0]
+    # ── 테마 · 국가 선택 ──────────────────────────────────────────────────────
+    # 💡 버튼 11개로 깔아봤더니 화면 위쪽을 두 줄이나 차지했다 — 셀렉터로 되돌린다.
+    c1, c2 = st.columns(2)
+    with c1:
+        theme = st.selectbox("테마", themes(), key="trade_theme")
 
-    per_row = 6
-    for row_start in range(0, len(all_themes), per_row):
-        row = all_themes[row_start:row_start + per_row]
-        cols = st.columns(per_row)
-        for i, th in enumerate(row):
-            picked = (st.session_state.trade_theme == th)
-            if cols[i].button(th, key=f"th_{th}", use_container_width=True,
-                              type="primary" if picked else "secondary"):
-                st.session_state.trade_theme = th
-                st.rerun()
-
-    theme = st.session_state.trade_theme
-
-    # ── 국가 선택 ─────────────────────────────────────────────────────────────
     opts = get_country_options(theme)
     labels = ["전체"] + [lb for _, lb in opts]
     code_by_label = {lb: cc for cc, lb in opts}
-    c1, _ = st.columns([2, 4])
-    with c1:
-        picked_country = st.selectbox("수출 대상국", labels, key=f"trade_country_{theme}")
+    with c2:
+        picked_country = st.selectbox("수출 대상국", labels,
+                                      key=f"trade_country_{theme}")
     country = code_by_label.get(picked_country)
     where = "전체" if not country else picked_country.split(" (")[0]
 
@@ -446,8 +425,17 @@ def render_trade():
                 mom_txt += f"  ·  중위대비 +{sp * 100:.0f}%"
 
             with cols[ci]:
+                badge_html = ""
+                if note:
+                    _txt, _clr = note
+                    badge_html = (
+                        f"<span style='background:{_clr};color:#fff;font-size:9.5px;"
+                        f"font-weight:700;padding:1px 5px;border-radius:3px;"
+                        f"margin-left:6px;vertical-align:middle;'>{_txt}</span>"
+                    )
                 st.markdown(
-                    f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>{html.escape(name)}</div>"
+                    f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>"
+                    f"{html.escape(name)}{badge_html}</div>"
                     f"<div style='font-size:17px;font-weight:700;line-height:1.2;'>"
                     f"${last['total']:,.1f}M</div>"
                     f"<div style='font-size:11.5px;color:{clr};font-weight:600;'>{mom_txt}</div>"

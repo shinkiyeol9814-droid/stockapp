@@ -366,7 +366,12 @@ def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
             if m:
                 current_price = float(m.group(1))
                 today_ms = _today_ms_utc_midnight()
-                if raw[-1][0] < today_ms:
+                # 💡 소스가 아직 오늘자를 발행하지 않으면 어제와 똑같은 값이
+                # 스크래핑된다. 그걸 오늘 점으로 덧붙이면 직전값과 같아져
+                # "전일대비 0.00%"가 되고, 실제로 마지막에 움직인 폭
+                # (예: DDR4 93.0 → 91.0)이 화면에서 사라진다.
+                # 값이 달라졌을 때만 새 점으로 인정한다.
+                if raw[-1][0] < today_ms and current_price != raw[-1][1]:
                     raw.append([today_ms, current_price])
         except Exception:
             pass
@@ -410,7 +415,12 @@ def _get_dram_price_history(period: str = "1y") -> pd.DataFrame | None:
             if m:
                 current_price = float(m.group(1))
                 today_ms = _today_ms_utc_midnight()
-                if raw[-1][0] < today_ms:
+                # 💡 소스가 아직 오늘자를 발행하지 않으면 어제와 똑같은 값이
+                # 스크래핑된다. 그걸 오늘 점으로 덧붙이면 직전값과 같아져
+                # "전일대비 0.00%"가 되고, 실제로 마지막에 움직인 폭
+                # (예: DDR4 93.0 → 91.0)이 화면에서 사라진다.
+                # 값이 달라졌을 때만 새 점으로 인정한다.
+                if raw[-1][0] < today_ms and current_price != raw[-1][1]:
                     raw.append([today_ms, current_price])
         except Exception:
             pass
@@ -454,7 +464,12 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
             if m:
                 current_price = float(m.group(1))
                 today_ms = _today_ms_utc_midnight()
-                if raw[-1][0] < today_ms:
+                # 💡 소스가 아직 오늘자를 발행하지 않으면 어제와 똑같은 값이
+                # 스크래핑된다. 그걸 오늘 점으로 덧붙이면 직전값과 같아져
+                # "전일대비 0.00%"가 되고, 실제로 마지막에 움직인 폭
+                # (예: DDR4 93.0 → 91.0)이 화면에서 사라진다.
+                # 값이 달라졌을 때만 새 점으로 인정한다.
+                if raw[-1][0] < today_ms and current_price != raw[-1][1]:
                     raw.append([today_ms, current_price])
         except Exception:
             pass
@@ -545,15 +560,9 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
 
     # 💡 특이사항 배지 — 그래프 우측 상단에 paper 좌표로 띄운다.
     # 데이터 좌표를 쓰면 값 범위에 따라 위치가 흔들리고 선과 겹친다.
-    if note:
-        text, ncolor = note
-        fig.add_annotation(
-            xref="paper", yref="paper", x=1, y=1,
-            xanchor="right", yanchor="top",
-            text=f"<b>{text}</b>", showarrow=False,
-            font=dict(size=8.5, color="#fff"),
-            bgcolor=ncolor, borderpad=2, opacity=0.92,
-        )
+    # 💡 특이사항 배지는 차트 안에 넣지 않는다 — 최근이 고점이면 선이 바로
+    # 우상단으로 올라와 배지와 겹친다. 카드 헤더(HTML)에서 그린다.
+    # (note 인자는 호출부 호환을 위해 남겨두되 여기서는 쓰지 않는다.)
 
     return fig
 
@@ -717,9 +726,21 @@ def render_macro():
                             f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
                             f"{last_update:%m/%d %H:%M} 기준</div>"
                         )
+                # 💡 특이사항 배지를 차트 안(paper 우상단)에 뒀더니, 최근이 고점이면
+                # 선이 바로 그 자리로 올라와 겹쳤다 — 카드 헤더로 빼서 지표명 옆에 붙인다.
+                note = _milestone_note(full_map.get(name), last)
+                badge_html = ""
+                if note:
+                    _txt, _clr = note
+                    badge_html = (
+                        f"<span style='background:{_clr};color:#fff;font-size:9.5px;"
+                        f"font-weight:700;padding:1px 5px;border-radius:3px;"
+                        f"margin-left:6px;vertical-align:middle;'>{_txt}</span>"
+                    )
                 st.markdown(
                     f"<div style='padding:4px 0 2px;'>"
-                    f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>{name}</div>"
+                    f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>"
+                    f"{name}{badge_html}</div>"
                     f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{val_str}</div>"
                     f"<div style='font-size:12px;color:{clr};margin-top:2px;'>"
                     f"{arrow} {chg_p:+.2f}% 전일</div>"
@@ -727,7 +748,6 @@ def render_macro():
                     f"</div>",
                     unsafe_allow_html=True,
                 )
-                note = _milestone_note(full_map.get(name), last)
                 st.plotly_chart(
                     _make_sparkline(hist, unit, fmt, period, note),
                     use_container_width=True,
