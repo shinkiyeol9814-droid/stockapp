@@ -34,17 +34,74 @@ _KIND_URL = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searc
 # 구성 종목이 너무 적은 업종은 한 종목 급등에 업종 전체가 끌려가 순위가 무의미해진다.
 _MIN_MEMBERS = 3
 
+# 업종 분류 디스크 캐시(리포지토리에 커밋된 시드).
+# 💡 왜 필요한가 — KIND(kind.krx.co.kr)는 로컬에서는 잘 응답하지만 클라우드
+# 데이터센터 IP에서는 자주 막힌다. krx_listing.py가 KIND를 4순위 중 3번째로
+# 밀어두고 디스크 캐시를 최후 방어선으로 둔 것도 같은 이유다. 그런데 여기선
+# KIND 한 곳에만 의존해서, 그게 실패하면 _merged_quotes가 통째로 None이 되고
+# 섹터 탭이 "업종 데이터를 가져오지 못했습니다"로 죽었다. 시세(fetch_krx_marcap)는
+# GitHub raw 캐시 리포 폴백이 있어 살아남는데 업종만 폴백이 없던 비대칭.
+# 업종 분류는 상장/폐지 때만 바뀌어 며칠 지나도 무해하므로 캐시가 잘 맞는다.
+_INDUSTRY_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "data", "listing", "krx_industry.csv")
+
+
+def _industry_from_kind() -> dict | None:
+    """KIND 다운로드(EUC-KR) 파싱. 실패하면 None."""
+    try:
+        res = requests.get(_KIND_URL, headers=HEADERS, timeout=15)
+        res.encoding = "euc-kr"   # charset 헤더가 없어 명시하지 않으면 한글이 깨진다
+        df = pd.read_html(io.StringIO(res.text), header=0)[0]
+        df = df.rename(columns={"회사명": "Name", "종목코드": "Code", "업종": "업종명"})
+        if "Code" not in df.columns or "업종명" not in df.columns:
+            print(f"[ui_sector] KIND 컬럼 파싱 실패 (cols={list(df.columns)[:5]})")
+            return None
+        df["Code"] = df["Code"].astype(str).str.strip().str.zfill(6)
+        df["업종명"] = df["업종명"].astype(str).str.strip()
+        df = df[(df["Code"].str.len() == 6) & (~df["업종명"].isin(["", "nan"]))]
+        if len(df) < 1000:
+            print(f"[ui_sector] KIND 응답이 너무 짧음({len(df)}행) — 잘린 응답으로 보고 버림")
+            return None
+        return dict(zip(df["Code"], df["업종명"]))
+    except Exception as e:
+        print(f"[ui_sector] KIND 조회 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def _industry_from_disk() -> dict | None:
+    try:
+        df = pd.read_csv(_INDUSTRY_CACHE, dtype={"Code": str})
+        df["Code"] = df["Code"].astype(str).str.zfill(6)
+        print(f"[ui_sector] 업종 디스크 캐시 사용 ({len(df)}종목)")
+        return dict(zip(df["Code"], df["업종명"].astype(str)))
+    except Exception as e:
+        print(f"[ui_sector] 업종 디스크 캐시 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def _save_industry_to_disk(mapping: dict) -> None:
+    """KIND가 성공했을 때만 시드를 갱신. 실패해도 조회를 망치지 않는다."""
+    try:
+        os.makedirs(os.path.dirname(_INDUSTRY_CACHE), exist_ok=True)
+        # 코드순 정렬 고정 — 정렬하지 않으면 내용이 같아도 매번 전체 diff가 나
+        # 자동커밋이 불어난다 (krx_listing._save_to_disk와 같은 이유).
+        (pd.DataFrame(sorted(mapping.items()), columns=["Code", "업종명"])
+           .to_csv(_INDUSTRY_CACHE, index=False, encoding="utf-8"))
+    except Exception as e:
+        print(f"[ui_sector] 업종 캐시 저장 실패(무시): {type(e).__name__}: {e}")
+
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def _industry_map():
-    """종목코드 → 업종명. KIND 다운로드(EUC-KR)를 파싱한다."""
-    res = requests.get(_KIND_URL, headers=HEADERS, timeout=15)
-    res.encoding = "euc-kr"   # charset 헤더가 없어 명시하지 않으면 한글이 깨진다
-    df = pd.read_html(io.StringIO(res.text), header=0)[0]
-    df = df.rename(columns={"회사명": "Name", "종목코드": "Code", "업종": "업종명"})
-    df["Code"] = df["Code"].astype(str).str.strip().str.zfill(6)
-    df = df.dropna(subset=["업종명"])
-    return dict(zip(df["Code"], df["업종명"].astype(str).str.strip()))
+    """종목코드 → 업종명. KIND 우선, 실패하면 커밋된 디스크 캐시로 폴백."""
+    live = _industry_from_kind()
+    if live:
+        _save_industry_to_disk(live)
+        return live
+    cached = _industry_from_disk()
+    if cached:
+        return cached
+    raise RuntimeError("업종 분류 조회 실패 (KIND / 디스크 캐시 모두 실패)")
 
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -278,7 +335,14 @@ def render_sector_menu():
     _, col_r = st.columns([8, 1.5])
     with col_r:
         if st.button("🔄 새로고침", use_container_width=True, key="sector_refresh"):
+            # 💡 get_sector_performance만 비우면 실패 상태에서 새로고침이 먹지
+            # 않는다 — 조회가 실패하면 _merged_quotes가 None을 180초간 캐시해
+            # 두기 때문에, 상위만 비워도 같은 None을 그대로 다시 받는다.
+            # 체인 전체를 비워야 실제로 재조회가 일어난다.
+            _industry_map.clear()
+            _merged_quotes.clear()
             get_sector_performance.clear()
+            get_sector_stocks.clear()
             st.rerun()
 
     with st.spinner("업종 데이터 로딩 중..."):
