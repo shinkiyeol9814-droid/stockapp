@@ -157,6 +157,16 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
 
 일시적 실패는 기존 파일을 지우지 않고, 내용이 같으면 3일간 다시 쓰지 않는다(리포 비대화 방지).
 
+배치 실행 규칙 (워치리스트 실행이 60분 넘게 멈춰 결과를 통째로 잃은 뒤 정한 것):
+- 종목마다 별도 프로세스, 240초를 넘기면 프로세스째 종료한다. `dart_fin`의 시간 예산은
+  기다리기만 멈추고 스레드는 계속 돌기 때문에, 한 종목이 뒤 종목 전체를 느리게 만들 수 있다.
+- 워치리스트 실행은 40분 예산 후 남은 종목을 다음 실행에 넘기고(20시간 내 갱신분은 건너뜀),
+  3종목 연속 실패 시 중단한다. 커밋 단계는 `if: always()`.
+- 앱 요청 실행은 run_id별 concurrency 그룹(서로 취소 안 됨), 워치리스트 실행끼리는 한 그룹.
+- 푸시는 rebase 대신 최신 main 위에 이번 실행이 쓴 파일만 덮어쓴다(같은 종목 add/add 충돌 방지).
+- 끝에 `::notice title=DART batch::` 요약(건수·소요·느린 종목)을 남긴다 — 로그는 관리자만 볼 수
+  있지만 annotation은 공개 API로 읽힌다.
+
 ### 워치리스트 저장 (GitHub)
 - 파일: `data/watchlist/watchlist.json` in `GITHUB_REPO`
 - 인증: `st.secrets["GH_PAT"]` 또는 `st.secrets["GITHUB_TOKEN"]`

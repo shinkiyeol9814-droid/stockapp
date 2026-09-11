@@ -17,8 +17,11 @@ on:
         required: false
         default: ''
 
-# 동시 실행 그룹은 두지 않는다 — 그룹은 대기 중인 실행을 하나만 남기고 취소해서
-# 연달아 요청한 종목이 누락된다. 종목마다 파일이 달라 push 경합은 재시도로 충분하다.
+# 앱 요청 실행은 각자 그룹(run_id)이라 서로 취소되지 않는다(대기 실행이 취소되면 요청 종목이 누락).
+# 워치리스트 실행끼리는 한 그룹 — 새 실행이 이전 실행을 대체해 DART에 대형 실행이 겹치지 않게 한다.
+concurrency:
+  group: dart-${{ github.event_name == 'repository_dispatch' && github.run_id || 'watchlist' }}
+  cancel-in-progress: ${{ github.event_name != 'repository_dispatch' }}
 
 jobs:
   collect:
@@ -36,6 +39,7 @@ jobs:
         run: pip install requests
 
       - name: Collect DART data
+        timeout-minutes: 50
         env:
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           # 요청 값은 셸에 직접 끼워 넣지 않고 환경변수로만 넘긴다(스크립트 인젝션 방지).
@@ -45,10 +49,11 @@ jobs:
           if [ -n "$CODES" ] && [ "$CODES" != "null" ]; then
             python batch_dart.py
           else
-            python batch_dart.py --watchlist
+            python batch_dart.py --watchlist --max-minutes 40
           fi
 
       - name: Commit and Push
+        if: always()   # 수집이 시간 초과·실패로 끝나도 그때까지 저장된 종목은 커밋한다
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
