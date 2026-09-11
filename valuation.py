@@ -665,24 +665,22 @@ def render_valuation_menu():
                                 return float(tp), float(((tp / curr_p) - 1) * 100), float(target_marcap / UNIT)
                         return 0.0, 0.0, 0.0
 
-                    y1, y2        = datetime.today().year, datetime.today().year + 1
-                    tp1, up1, tm1 = get_t(y1)
-                    tp2, up2, tm2 = get_t(y2)
+                    this_year     = datetime.today().year
                     last_date_str = df_price.index[-1].strftime('%m.%d')
 
                     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
+                    card_cols = st.columns(4)
+                    with card_cols[0]:
                         rate_str = f"{updown:+.2f}%"
                         st.markdown(make_card_ui(f"현재가 ({last_date_str})", f"{curr_p:,.0f}원", f"{curr_marcap:,.0f}억", rate_str, updown > 0, is_zero=(updown == 0)), unsafe_allow_html=True)
-                    with col2:
-                        if tp1 > 0: st.markdown(make_card_ui(f"목표가 ({str(y1)[-2:]}년)", f"{tp1:,.0f}원", f"{tm1:,.0f}억", f"목표대비 {up1:+.1f}%", up1 > 0), unsafe_allow_html=True)
-                        elif tp1 <= 0 and up1 == -100.0: st.markdown(make_card_ui(f"목표가 ({str(y1)[-2:]}년)", "0원", f"{tm1:,.0f}억", "과차입(가치없음)", False, is_zero=False), unsafe_allow_html=True)
-                        else: st.markdown(make_card_ui(f"목표가 ({str(y1)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
-                    with col3:
-                        if tp2 > 0: st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", f"{tp2:,.0f}원", f"{tm2:,.0f}억", f"목표대비 {up2:+.1f}%", up2 > 0), unsafe_allow_html=True)
-                        elif tp2 <= 0 and up2 == -100.0: st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", "0원", f"{tm2:,.0f}억", "과차입(가치없음)", False, is_zero=False), unsafe_allow_html=True)
-                        else: st.markdown(make_card_ui(f"목표가 ({str(y2)[-2:]}년)", "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
+                    # 목표가 카드는 차트 연도 범위(_target_years)와 같게 올해~+2년
+                    for col, y in zip(card_cols[1:], range(this_year, this_year + 3)):
+                        tp, up, tm = get_t(y)
+                        title = f"목표가 ({str(y)[-2:]}년)"
+                        with col:
+                            if tp > 0: st.markdown(make_card_ui(title, f"{tp:,.0f}원", f"{tm:,.0f}억", f"목표대비 {up:+.1f}%", up > 0), unsafe_allow_html=True)
+                            elif tp <= 0 and up == -100.0: st.markdown(make_card_ui(title, "0원", f"{tm:,.0f}억", "과차입(가치없음)", False, is_zero=False), unsafe_allow_html=True)
+                            else: st.markdown(make_card_ui(title, "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=4, horizontal=True, label_visibility="collapsed", key="chart_period_radio")
