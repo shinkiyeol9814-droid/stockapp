@@ -379,14 +379,31 @@ _DELAY_ERRORS = (dart_fin.DartTimeout, requests.exceptions.Timeout,
                  requests.exceptions.ConnectionError)
 
 
+def _reason(err) -> str:
+    if isinstance(err, dart_fin.DartTimeout):
+        return str(err)
+    if isinstance(err, requests.exceptions.ConnectTimeout):
+        return "DART 서버 연결 시간 초과"
+    if isinstance(err, requests.exceptions.ReadTimeout):
+        return "DART 응답 읽기 시간 초과"
+    if isinstance(err, requests.exceptions.ConnectionError):
+        return "DART 서버 연결 실패"
+    return type(err).__name__
+
+
 def _fail(what, code, err, log=True):
+    msg = dart_fin._redact(err)
+    # requests 예외는 핵심("Caused by …")이 끝에 있어 앞뒤를 남기고 가운데를 줄인다.
+    short = msg if len(msg) <= 180 else msg[:60] + " … " + msg[-110:]
     if isinstance(err, _DELAY_ERRORS):
-        st.caption(f"⏳ DART 응답 지연 — {what} 조회를 건너뛰었습니다. "
+        st.caption(f"⏳ DART 응답 지연 — {what} 조회를 건너뛰었습니다 ({_reason(err)}). "
                    f"잠시 후 새로고침하면 다시 시도합니다.")
     else:
-        st.caption(f"{what} 조회 실패: {type(err).__name__}")
+        st.caption(f"{what} 조회 실패: {_reason(err)}")
+    st.markdown(f"<div style='font-size:10px;color:#bbb;margin-top:-10px;word-break:break-all;'>"
+                f"{type(err).__name__}: {html.escape(short)}</div>", unsafe_allow_html=True)
     if log:
-        print(f"[ui_dart_panel] {what} 실패 {code}: {type(err).__name__}: {err}")
+        print(f"[ui_dart_panel] {what} 실패 {code}: {type(err).__name__}: {msg}")
 
 
 def render_dart_panel(stock_code: str):

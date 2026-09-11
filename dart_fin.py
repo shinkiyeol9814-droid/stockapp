@@ -65,6 +65,11 @@ class DartTimeout(DartError):
     pass
 
 
+def _redact(msg) -> str:
+    """requests 예외 메시지엔 요청 URL이 통째로 들어가므로 API 키를 가린다."""
+    return re.sub(r"(crtfc_key=)[^&\s'\")]+", r"\1***", str(msg))
+
+
 def _map_with_deadline(fn, items, workers, budget, what):
     """ex.map과 같은 순서로 결과를 돌려주되, budget초를 넘기면 기다리지 않고 DartTimeout."""
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
@@ -595,7 +600,7 @@ def get_backlog_series(stock_code: str, limit: int = 8) -> dict:
                     "단위": got["unit"], "건수": got["rows"], "보고서": rep["name"],
                     "rcept_no": rep["rcept_no"], "내역": got.get("items") or []}
         except Exception as e:
-            print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {e}")
+            print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {_redact(e)}")
             return None
 
     rows = []
@@ -755,7 +760,7 @@ def get_utilization(stock_code: str) -> dict:
                         "보고서": rep["name"], "rcept_no": rep["rcept_no"],
                         **got}
         except Exception as e:
-            print(f"[dart_fin] 가동률 파싱 실패 {rep['rcept_no']}: {type(e).__name__}: {e}")
+            print(f"[dart_fin] 가동률 파싱 실패 {rep['rcept_no']}: {type(e).__name__}: {_redact(e)}")
     return {"corp_name": nm, "rows": [], "total": None}
 
 
@@ -789,7 +794,7 @@ def get_report_series(stock_code: str, limit: int = 12) -> dict:
                 "backlog": bl, "util": ut,
             }
         except Exception as e:
-            print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {e}")
+            print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {_redact(e)}")
             return None
 
     got = [r for r in _map_with_deadline(one, reps, 4, _REPORT_BUDGET, "정기보고서 원문") if r]

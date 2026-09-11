@@ -256,9 +256,14 @@ def fetch_consensus_data(ticker):
         return None
 
 
+def _target_years():
+    # 컨센서스가 올해+2년(E)까지 주므로 끝 연도를 고정하지 않는다.
+    return list(range(2021, datetime.today().year + 3))
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_hybrid_financials(ticker):
-    target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+    target_years = _target_years()
     master_dict = {
         y: {'매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
             '자본총계': np.nan, 'EV/EBITDA': np.nan}
@@ -370,7 +375,7 @@ def get_hybrid_financials(ticker):
     try:
         return _cached_hybrid_financials(ticker)
     except Exception:
-        target_years = [2021, 2022, 2023, 2024, 2025, 2026, 2027]
+        target_years = _target_years()
         rows = [
             {
                 '매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
@@ -688,7 +693,7 @@ def render_valuation_menu():
                     elif chart_period == "5년": start_date_chart = end_date_dt - pd.DateOffset(years=5)
                     else: start_date_chart = pd.to_datetime("2021-01-01")
 
-                    future_dates   = pd.date_range(start=df_price.index[-1], end=pd.to_datetime('2028-02-28'), freq='D')
+                    future_dates   = pd.date_range(start=df_price.index[-1], end=pd.to_datetime(f"{int(fin_df['Year'].max()) + 1}-02-28"), freq='D')
                     extended_dates = pd.DatetimeIndex(list(df_price.index) + list(future_dates[1:]))
 
                     raw_metrics   = pd.to_numeric(fin_df[col_p], errors='coerce').values
