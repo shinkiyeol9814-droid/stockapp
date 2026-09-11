@@ -96,6 +96,12 @@ def _missing_docs(data):
     return ((data or {}).get("reports") or {}).get("pending") or 0
 
 
+def _retryable(data):
+    """다시 요청할 만한 수집 실패가 있는지. DartError(DART에 없는 종목 등)는 재시도해도 같다."""
+    errors = (data or {}).get("errors") or {}
+    return _missing_docs(data) > 0 or any(not str(v).startswith("DartError:") for v in errors.values())
+
+
 def _request_batch(code):
     tok = _token()
     if not tok:
@@ -508,7 +514,7 @@ def render_dart_panel(stock_code: str):
     req_key, giveup_key = f"_dart_req_{code}", f"_dart_giveup_{code}"
     requested_at = st.session_state.get(req_key)
     gave_up = requested_at is not None and st.session_state.get(giveup_key) == requested_at
-    need = data is None or _is_stale(data) or _missing_docs(data) > 0
+    need = data is None or _is_stale(data) or _retryable(data)
 
     request_err = ""
     if need and not gave_up and (requested_at is None

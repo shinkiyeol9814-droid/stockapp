@@ -115,6 +115,12 @@ def _pending_docs(data):
     return ((data or {}).get("reports") or {}).get("pending") or 0
 
 
+def _needs_retry(data):
+    """원문이 남았거나 일시적 오류로 빠진 항목이 있으면 참. DartError(DART에 없는 종목 등)는 재시도해도 같다."""
+    errors = (data or {}).get("errors") or {}
+    return bool(_pending_docs(data)) or any(not str(v).startswith("DartError:") for v in errors.values())
+
+
 def _recent(data, now, window):
     try:
         return now - datetime.fromisoformat(data["updated_at"]) < window
@@ -130,7 +136,8 @@ def run_one(code):
         print(f"::warning::{code} 수집 실패, 기존 파일 유지: {payload['errors']}")
         return EXIT_FAILED
     now = datetime.now(KST)
-    if prev and _unchanged(prev, payload) and _recent(prev, now, REWRITE_AFTER):
+    # 오류가 남은 결과는 같아도 새로 써 updated_at을 올린다 — 앱이 재요청 결과가 반영됐는지 알 수 있게.
+    if prev and _unchanged(prev, payload) and _recent(prev, now, REWRITE_AFTER) and not payload["errors"]:
         print(f"{code} {payload['corp_name']} 변경 없음")
         return EXIT_UNCHANGED
     payload["updated_at"] = now.isoformat(timespec="seconds")
@@ -164,10 +171,10 @@ def main(argv=None):
     existing = {c: _load(c) for c in codes}
     todo = [c for c in codes
             if not (args.watchlist and _recent(existing[c], now, WATCHLIST_FRESH)
-                    and not _pending_docs(existing[c]))]
+                    and not _needs_retry(existing[c]))]
     if args.watchlist:
-        # 예산에 걸려도 빈 종목부터 채우도록: 미수집 → 원문 미완료 → 나머지 (안정 정렬)
-        todo.sort(key=lambda c: 0 if existing[c] is None else (1 if _pending_docs(existing[c]) else 2))
+        # 예산에 걸려도 빈 종목부터 채우도록: 미수집 → 재시도 필요(원문 미완료·일시 오류) → 나머지 (안정 정렬)
+        todo.sort(key=lambda c: 0 if existing[c] is None else (1 if _needs_retry(existing[c]) else 2))
     counts = {"저장": 0, "변경없음": 0, "실패": 0, "건너뜀(최근)": len(codes) - len(todo), "미처리": 0}
     timings = []
     started = time.time()
