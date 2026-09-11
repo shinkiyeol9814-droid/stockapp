@@ -164,6 +164,10 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
   3종목 연속 실패 시 중단한다. 커밋 단계는 `if: always()`.
 - 앱 요청 실행은 run_id별 concurrency 그룹(서로 취소 안 됨), 워치리스트 실행끼리는 한 그룹.
 - 푸시는 rebase 대신 최신 main 위에 이번 실행이 쓴 파일만 덮어쓴다(같은 종목 add/add 충돌 방지).
+- 정기보고서 원문은 rcept_no별 파싱 결과를 `reports.parsed`에 남겨 다시 받지 않는다(원문은 불변,
+  정정은 새 rcept_no). 150초 안에 못 받은 원문 수는 `reports.pending` — 워치리스트 실행이 우선
+  처리하고, 앱은 pending이 있으면 쿨다운 후 재요청한다. 러너(미국)에서 대형 공시 원문 12건을
+  매번 받다가 26종목 중 17종목의 수주잔고·가동률이 빠졌던 문제의 해결책이다.
 - 끝에 `::notice title=DART batch::` 요약(건수·소요·느린 종목)을 남긴다 — 로그는 관리자만 볼 수
   있지만 annotation은 공개 API로 읽힌다.
 

@@ -91,6 +91,11 @@ def _is_stale(data):
     return ts is None or datetime.now(_KST) - ts > _STALE
 
 
+def _missing_docs(data):
+    """배치가 시간 안에 못 받아 다음 수집으로 넘긴 정기보고서 원문 수."""
+    return ((data or {}).get("reports") or {}).get("pending") or 0
+
+
 def _request_batch(code):
     tok = _token()
     if not tok:
@@ -115,6 +120,8 @@ def _poll(code, requested_at, has_data):
     elapsed = int(time.time() - requested_at)
     ts = _updated_at(_fetch(code) or {})
     if ts and ts.timestamp() >= requested_at - 60:
+        # 반영 완료를 기록한다 — 원문이 아직 남은 결과면 need가 계속 참이라, 이게 없으면 폴링↔재실행이 무한 반복된다.
+        st.session_state[f"_dart_done_{code}"] = requested_at
         _load.clear()
         st.rerun()
     if elapsed > _GIVE_UP_SECONDS:
@@ -501,7 +508,7 @@ def render_dart_panel(stock_code: str):
     req_key, giveup_key = f"_dart_req_{code}", f"_dart_giveup_{code}"
     requested_at = st.session_state.get(req_key)
     gave_up = requested_at is not None and st.session_state.get(giveup_key) == requested_at
-    need = data is None or _is_stale(data)
+    need = data is None or _is_stale(data) or _missing_docs(data) > 0
 
     request_err = ""
     if need and not gave_up and (requested_at is None
@@ -509,7 +516,8 @@ def render_dart_panel(stock_code: str):
         ok, request_err = _request_batch(code)
         if ok:
             requested_at = st.session_state[req_key] = time.time()
-    pending = need and requested_at is not None and not gave_up
+    pending = (need and requested_at is not None and not gave_up
+               and st.session_state.get(f"_dart_done_{code}") != requested_at)
 
     if gave_up:
         st.warning("DART 수집이 10분 넘게 끝나지 않았습니다. GitHub Actions의 "
@@ -551,6 +559,9 @@ def render_dart_panel(stock_code: str):
         _section("가동률", code, lambda s: _render_utilization(s, code),
                  reports, errors.get("reports"))
 
+    if _missing_docs(data):
+        st.caption(f"ℹ️ 정기보고서 원문 {_missing_docs(data)}건은 아직 수집되지 않아 수주잔고·가동률 "
+                   f"추이에서 빠져 있습니다. 다음 수집 때 이어서 반영됩니다.")
     retained = [k for k in errors if data.get(k) is not None]
     if retained:
         st.caption("ℹ️ 최근 수집에서 일부 항목이 실패해 그 항목은 이전 수집값을 표시합니다.")

@@ -29,9 +29,11 @@ MAX_CONSECUTIVE_FAIL = 3
 EXIT_SAVED, EXIT_FAILED, EXIT_UNCHANGED = 0, 2, 3
 
 SECTIONS = {
-    "inventory_q": lambda code: dart_fin.get_inventory_quarterly(code, quarters=12),
-    "inventory_y": lambda code: dart_fin.get_inventory_series(code),
-    "reports": lambda code: dart_fin.get_report_series(code, limit=12),
+    "inventory_q": lambda code, prev: dart_fin.get_inventory_quarterly(code, quarters=12),
+    "inventory_y": lambda code, prev: dart_fin.get_inventory_series(code),
+    # 직전 파싱 결과를 넘겨 이미 읽은 원문은 다시 받지 않는다.
+    "reports": lambda code, prev: dart_fin.get_report_series(
+        code, limit=12, parsed=((prev or {}).get("reports") or {}).get("parsed")),
 }
 
 
@@ -88,7 +90,7 @@ def collect(code, prev):
     failures = []
     for key, fetch in SECTIONS.items():
         try:
-            payload[key] = fetch(code)
+            payload[key] = fetch(code, prev)
             payload["corp_name"] = payload["corp_name"] or payload[key].get("corp_name")
         except Exception as e:
             failures.append(e)
@@ -107,6 +109,10 @@ def _unchanged(prev, payload):
         return json.dumps({k: v for k, v in d.items() if k != "updated_at"},
                           sort_keys=True, ensure_ascii=False)
     return body(prev) == body(payload)
+
+
+def _pending_docs(data):
+    return ((data or {}).get("reports") or {}).get("pending") or 0
 
 
 def _recent(data, now, window):
@@ -155,7 +161,13 @@ def main(argv=None):
         return 1
 
     now = datetime.now(KST)
-    todo = [c for c in codes if not (args.watchlist and _recent(_load(c), now, WATCHLIST_FRESH))]
+    existing = {c: _load(c) for c in codes}
+    todo = [c for c in codes
+            if not (args.watchlist and _recent(existing[c], now, WATCHLIST_FRESH)
+                    and not _pending_docs(existing[c]))]
+    if args.watchlist:
+        # 예산에 걸려도 빈 종목부터 채우도록: 미수집 → 원문 미완료 → 나머지 (안정 정렬)
+        todo.sort(key=lambda c: 0 if existing[c] is None else (1 if _pending_docs(existing[c]) else 2))
     counts = {"저장": 0, "변경없음": 0, "실패": 0, "건너뜀(최근)": len(codes) - len(todo), "미처리": 0}
     timings = []
     started = time.time()
@@ -190,7 +202,9 @@ def main(argv=None):
 
     slow = ", ".join(f"{c} {s:.0f}s" for s, c in sorted(timings, reverse=True)[:5]) or "-"
     summary = " / ".join(f"{k} {v}" for k, v in counts.items())
-    print(f"::notice title=DART batch::{summary} · 소요 {time.time() - started:.0f}s · 느린 종목: {slow}")
+    waiting = sum(1 for c in codes if _pending_docs(_load(c)))
+    print(f"::notice title=DART batch::{summary} · 원문 미완료 {waiting}종목 · "
+          f"소요 {time.time() - started:.0f}s · 느린 종목: {slow}")
     return 1 if counts["실패"] and not (counts["저장"] or counts["변경없음"]) else 0
 
 

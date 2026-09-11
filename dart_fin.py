@@ -40,7 +40,7 @@ _BASE = "https://opendart.fss.or.kr/api"
 _TIMEOUT = (5, 20)
 _DOC_TIMEOUT = (5, 60)
 _INV_BUDGET = 30      # 재고자산 병렬 조회 전체 예산(초)
-_REPORT_BUDGET = 60   # 정기보고서 원문 병렬 조회 전체 예산(초)
+_REPORT_BUDGET = 150  # 정기보고서 원문 병렬 조회 예산(초) — 못 받은 원문은 pending으로 남아 다음 실행이 이어받는다
 # corp_code 목록은 신규 상장/사명변경 때만 바뀐다. 매번 3.6MB를 받을 이유가 없다.
 _CORP_MAP_TTL_DAYS = 7
 
@@ -70,16 +70,22 @@ def _redact(msg) -> str:
     return re.sub(r"(crtfc_key=)[^&\s'\")]+", r"\1***", str(msg))
 
 
-def _map_with_deadline(fn, items, workers, budget, what):
-    """ex.map과 같은 순서로 결과를 돌려주되, budget초를 넘기면 기다리지 않고 DartTimeout."""
+def _map_until(fn, items, workers, budget):
+    """budget초 안에 끝난 것만 입력 순서대로 돌려준다 -> (결과, 미완료 건수). 미완료 자리는 None."""
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
     futs = [ex.submit(fn, it) for it in items]
-    _done, pending = concurrent.futures.wait(futs, timeout=budget)
+    done, pending = concurrent.futures.wait(futs, timeout=budget)
     # with 블록은 종료 시 모든 스레드를 기다리므로 데드라인이 무력해진다.
     ex.shutdown(wait=False, cancel_futures=True)
+    return [f.result() if f in done else None for f in futs], len(pending)
+
+
+def _map_with_deadline(fn, items, workers, budget, what):
+    """ex.map과 같은 순서로 결과를 돌려주되, budget초를 넘기면 기다리지 않고 DartTimeout."""
+    results, pending = _map_until(fn, items, workers, budget)
     if pending:
-        raise DartTimeout(f"{what}: {len(futs)}건 중 {len(pending)}건이 {budget}초 내 무응답")
-    return [f.result() for f in futs]
+        raise DartTimeout(f"{what}: {len(items)}건 중 {pending}건이 {budget}초 내 무응답")
+    return results
 
 
 _STATUS_MSG = {
@@ -764,12 +770,13 @@ def get_utilization(stock_code: str) -> dict:
     return {"corp_name": nm, "rows": [], "total": None}
 
 
-def get_report_series(stock_code: str, limit: int = 12) -> dict:
+def get_report_series(stock_code: str, limit: int = 12, parsed: dict | None = None) -> dict:
     """
     정기보고서를 **한 번만** 내려받아 수주잔고와 가동률을 함께 뽑는다.
 
     둘을 따로 조회하면 같은 원문(압축 400KB / 펼치면 6~10MB)을 두 번씩
     받게 된다. 12개 분기면 왕복이 24번이라 체감이 크다.
+    parsed(직전 결과의 rcept_no별 파싱값)를 주면 이미 읽은 원문은 다시 받지 않는다.
     """
     cc, nm = corp_code_of(stock_code)
     if not cc:
@@ -779,7 +786,11 @@ def get_report_series(stock_code: str, limit: int = 12) -> dict:
     bgn = (datetime.now() - timedelta(days=365 * 4)).strftime("%Y%m%d")
     reps = _report_list(cc, bgn, end)[:limit]
     if not reps:
-        return {"corp_name": nm, "backlog": [], "util": [], "dropped": 0}
+        return {"corp_name": nm, "backlog": [], "util": [], "dropped": 0, "parsed": {}, "pending": 0}
+    # 공시 원문은 한 번 나오면 바뀌지 않는다(정정은 새 rcept_no) — 이미 파싱한 원문은 다시 받지 않는다.
+    current = {r["rcept_no"] for r in reps}
+    parsed = {k: v for k, v in (parsed or {}).items() if k in current}
+    todo = [r for r in reps if r["rcept_no"] not in parsed]
 
     def one(rep):
         try:
@@ -797,8 +808,14 @@ def get_report_series(stock_code: str, limit: int = 12) -> dict:
             print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {_redact(e)}")
             return None
 
-    got = [r for r in _map_with_deadline(one, reps, 4, _REPORT_BUDGET, "정기보고서 원문") if r]
-    got.sort(key=lambda x: x["기간"])
+    results, _ = _map_until(one, todo, 4, _REPORT_BUDGET)
+    for r in results:
+        if r:
+            parsed[r["rcept_no"]] = r
+    pending = len(current) - len(parsed)
+    if not parsed and pending:
+        raise DartTimeout(f"정기보고서 원문: {len(current)}건 모두 {_REPORT_BUDGET}초 내 수집 실패")
+    got = sorted(parsed.values(), key=lambda x: x["기간"])
 
     backlog = [{"기간": g["기간"], "보고서": g["보고서"], "rcept_no": g["rcept_no"],
                 "수주잔고": g["backlog"]["total_won"], "단위": g["backlog"]["unit"],
@@ -819,4 +836,5 @@ def get_report_series(stock_code: str, limit: int = 12) -> dict:
              "rows": g["util"]["rows"], "total": g["util"].get("total")}
             for g in got if g["util"]]
 
-    return {"corp_name": nm, "backlog": backlog, "util": util, "dropped": dropped}
+    return {"corp_name": nm, "backlog": backlog, "util": util, "dropped": dropped,
+            "parsed": parsed, "pending": pending}
