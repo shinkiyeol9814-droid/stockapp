@@ -1,7 +1,8 @@
 """
 ui_dart_panel.py — 가치평가 화면 하단의 「재고자산 · 수주잔고 추이」 패널.
 
-dart_fin이 숫자를 만들고, 여기서는 그리기만 한다.
+숫자는 GitHub Actions 배치(batch_dart.py)가 data/dart/{종목코드}.json으로 만들어 두고,
+여기서는 읽어서 그리기만 한다 — Streamlit Cloud에서는 DART 연결 자체가 막혀 있다.
 
 수주잔고는 회사마다 공시 양식이 달라 못 뽑거나 일부만 뽑히는 경우가 있다
 (예: 한국항공우주는 주요 계약이 중첩 테이블로 들어가 있어 부분값만 잡힌다).
@@ -14,35 +15,121 @@ dart_fin이 숫자를 만들고, 여기서는 그리기만 한다.
 숫자를 못 믿을 상황을 조용히 숨기지 않는 게 이 패널의 설계 의도다.
 """
 import html
+import json
+import os
+import re
+import time
+from datetime import datetime, timedelta, timezone
 
 import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-import dart_fin
-
 # 한국 시장 관행: 증가/양수는 빨강, 감소/음수는 파랑.
 _UP, _DOWN = "#ef5350", "#1565C0"
 _DART_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
 
-
-@st.cache_data(ttl=43200, show_spinner=False)
-def _reports(code: str):
-    # 수주잔고와 가동률은 같은 공시원문에서 나온다. 따로 부르면 12개 분기치
-    # 원문을 두 번 내려받게 되므로 한 번에 받아 둘 다 뽑는다.
-    return dart_fin.get_report_series(code, limit=12)
-
-
-@st.cache_data(ttl=43200, show_spinner=False)
-def _inventory(code: str):
-    return dart_fin.get_inventory_series(code)
+_REPO = "shinkiyeol9814-droid/stockapp"
+_BRANCH = "main"
+_LOCAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "dart")
+_KST = timezone(timedelta(hours=9))
+_CODE_RE = re.compile(r"^[0-9A-Z]{6}$")
+_STALE = timedelta(days=7)      # 이보다 오래된 파일은 보여주되 배치에 갱신을 요청한다
+_REQUEST_COOLDOWN = 600         # 같은 종목 재요청 간격(초) — 재실행마다 워크플로가 쌓이지 않게
+_POLL_SECONDS = 20
+_GIVE_UP_SECONDS = 600
 
 
-@st.cache_data(ttl=43200, show_spinner=False)
-def _inventory_q(code: str):
-    return dart_fin.get_inventory_quarterly(code, quarters=12)
+# ─────────────────────────────────────────────────────────────────────────────
+# 데이터 — 배치가 커밋한 파일 읽기 / 배치 요청
+# ─────────────────────────────────────────────────────────────────────────────
+def _token():
+    try:
+        return st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", "")
+    except Exception:
+        return ""
 
 
+def _fetch(code):
+    """GitHub 최신 커밋 우선(배치 직후에도 바로 보이게), 토큰이 없거나 API가 실패하면 로컬 체크아웃."""
+    tok = _token()
+    if tok:
+        try:
+            r = requests.get(
+                f"https://api.github.com/repos/{_REPO}/contents/data/dart/{code}.json",
+                headers={"Authorization": f"token {tok}",
+                         "Accept": "application/vnd.github.raw+json"},
+                params={"ref": _BRANCH}, timeout=7)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 404:
+                return None
+            print(f"[ui_dart_panel] {code} 파일 조회 HTTP {r.status_code}")
+        except Exception as e:
+            print(f"[ui_dart_panel] {code} 파일 조회 실패: {type(e).__name__}: {e}")
+    try:
+        with open(os.path.join(_LOCAL_DIR, f"{code}.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load(code):
+    return _fetch(code)
+
+
+def _updated_at(data):
+    try:
+        return datetime.fromisoformat(data["updated_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _is_stale(data):
+    ts = _updated_at(data)
+    return ts is None or datetime.now(_KST) - ts > _STALE
+
+
+def _request_batch(code):
+    tok = _token()
+    if not tok:
+        return False, "GH_PAT 없음"
+    try:
+        r = requests.post(
+            f"https://api.github.com/repos/{_REPO}/dispatches",
+            headers={"Authorization": f"token {tok}", "Accept": "application/vnd.github+json"},
+            json={"event_type": "run_dart_batch", "client_payload": {"codes": [code]}},
+            timeout=7)
+    except Exception as e:
+        return False, type(e).__name__
+    if r.status_code == 204:
+        return True, ""
+    # 403/404는 토큰에 이 레포 Contents 쓰기 권한이 없을 때 난다.
+    return False, f"HTTP {r.status_code}"
+
+
+@st.fragment(run_every=_POLL_SECONDS)
+def _poll(code, requested_at, has_data):
+    """배치 결과가 커밋될 때까지 이 조각만 주기적으로 다시 그린다."""
+    elapsed = int(time.time() - requested_at)
+    ts = _updated_at(_fetch(code) or {})
+    if ts and ts.timestamp() >= requested_at - 60:
+        _load.clear()
+        st.rerun()
+    if elapsed > _GIVE_UP_SECONDS:
+        st.session_state[f"_dart_giveup_{code}"] = requested_at
+        st.rerun()
+    if has_data:
+        st.caption(f"🔄 최신 공시로 갱신 중… ({elapsed}초 경과)")
+    else:
+        st.info(f"⏳ DART 데이터를 수집하고 있습니다… {elapsed}초 경과 (보통 1~2분). "
+                f"완료되면 자동으로 표시됩니다.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 그리기
+# ─────────────────────────────────────────────────────────────────────────────
 def _jo(v):
     """원 단위 금액을 조/억으로. 수주잔고는 조 단위가 보통이라 둘을 나눈다."""
     if v is None:
@@ -375,89 +462,95 @@ def _render_utilization(data, code):
                    f"부문만 볼 수 있습니다. 점선은 100%(만가동) 기준선입니다.")
 
 
-_DELAY_ERRORS = (dart_fin.DartTimeout, requests.exceptions.Timeout,
-                 requests.exceptions.ConnectionError)
-
-
-def _reason(err) -> str:
-    if isinstance(err, dart_fin.DartTimeout):
-        return str(err)
-    if isinstance(err, requests.exceptions.ConnectTimeout):
-        return "DART 서버 연결 시간 초과"
-    if isinstance(err, requests.exceptions.ReadTimeout):
-        return "DART 응답 읽기 시간 초과"
-    if isinstance(err, requests.exceptions.ConnectionError):
-        return "DART 서버 연결 실패"
-    return type(err).__name__
-
-
-def _fail(what, code, err, log=True):
-    msg = dart_fin._redact(err)
-    # requests 예외는 핵심("Caused by …")이 끝에 있어 앞뒤를 남기고 가운데를 줄인다.
-    short = msg if len(msg) <= 180 else msg[:60] + " … " + msg[-110:]
-    if isinstance(err, _DELAY_ERRORS):
-        st.caption(f"⏳ DART 응답 지연 — {what} 조회를 건너뛰었습니다 ({_reason(err)}). "
-                   f"잠시 후 새로고침하면 다시 시도합니다.")
-    else:
-        st.caption(f"{what} 조회 실패: {_reason(err)}")
-    st.markdown(f"<div style='font-size:10px;color:#bbb;margin-top:-10px;word-break:break-all;'>"
-                f"{type(err).__name__}: {html.escape(short)}</div>", unsafe_allow_html=True)
-    if log:
-        print(f"[ui_dart_panel] {what} 실패 {code}: {type(err).__name__}: {msg}")
+def _section(what, code, render, section, err):
+    """저장된 항목 하나를 그린다. 수집 실패나 깨진 파일이 위쪽 가치평가 화면을 망치지 않게 한다."""
+    if section is None:
+        st.caption(f"{what} 데이터를 수집하지 못했습니다." + (f" ({err[:150]})" if err else ""))
+        return None
+    try:
+        return render(section)
+    except Exception as e:
+        st.caption(f"{what} 표시 실패: {type(e).__name__}")
+        print(f"[ui_dart_panel] {what} 표시 실패 {code}: {type(e).__name__}: {e}")
+        return None
 
 
 def render_dart_panel(stock_code: str):
     """가치평가 화면 하단에 붙는 진입점. 실패해도 위쪽 차트를 망치지 않는다."""
     if not stock_code:
         return
+    code = str(stock_code).strip().upper()
+    valid = bool(_CODE_RE.match(code))
+    data = _load(code) if valid else None
+    ts = _updated_at(data) if data else None
+
     st.markdown("---")
     # 💡 기간 선택을 왼쪽 칼럼 안에 두면 그 칼럼만 아래로 밀려서 두 차트가
     # 세로로 어긋난다. 칼럼 밖(헤더 줄)에 둬야 좌우 높이가 맞는다.
     hc1, hc2 = st.columns([3, 1])
     with hc1:
+        when = f" · {ts:%m/%d %H:%M} 수집" if ts else ""
         st.markdown("<div style='font-size:1.1rem;font-weight:700;padding-top:4px;'>"
                     "📦 재고자산 · 수주잔고 추이 <span style='font-size:11px;"
-                    "color:#999;font-weight:400;'>DART 공시 기준</span></div>",
+                    f"color:#999;font-weight:400;'>DART 공시 기준{when}</span></div>",
                     unsafe_allow_html=True)
-
-    if not dart_fin._api_key():
-        st.info("DART_API_KEY가 설정되어 있지 않습니다. "
-                "Secrets에 키를 넣으면 재고자산·수주잔고 추이가 표시됩니다.")
+    if not valid:
+        st.caption("종목코드 형식이 올바르지 않아 DART 데이터를 조회할 수 없습니다.")
         return
+
+    req_key, giveup_key = f"_dart_req_{code}", f"_dart_giveup_{code}"
+    requested_at = st.session_state.get(req_key)
+    gave_up = requested_at is not None and st.session_state.get(giveup_key) == requested_at
+    need = data is None or _is_stale(data)
+
+    request_err = ""
+    if need and not gave_up and (requested_at is None
+                                 or time.time() - requested_at > _REQUEST_COOLDOWN):
+        ok, request_err = _request_batch(code)
+        if ok:
+            requested_at = st.session_state[req_key] = time.time()
+    pending = need and requested_at is not None and not gave_up
+
+    if gave_up:
+        st.warning("DART 수집이 10분 넘게 끝나지 않았습니다. GitHub Actions의 "
+                   "'DART Inventory & Backlog Batch' 실행 결과를 확인해주세요.")
+        if st.button("DART 수집 다시 요청", key=f"dart_retry_{code}"):
+            st.session_state.pop(req_key, None)
+            st.session_state.pop(giveup_key, None)
+            st.rerun()
+    elif need and request_err:
+        st.caption(f"DART 수집 요청 실패 ({request_err}) — Streamlit Secrets의 "
+                   f"GH_PAT에 이 레포 쓰기 권한이 있는지 확인해주세요.")
+
+    if data is None:
+        if pending:
+            _poll(code, requested_at, False)
+        return
+    if pending:
+        _poll(code, requested_at, True)
 
     with hc2:
         period = st.radio("재고 기간", ["분기", "연간"], index=0, horizontal=True,
-                          key=f"inv_period_{stock_code}",
-                          label_visibility="collapsed")
+                          key=f"inv_period_{code}", label_visibility="collapsed")
     quarterly = (period == "분기")
+    errors = data.get("errors") or {}
+    inv_key = "inventory_q" if quarterly else "inventory_y"
+    reports = data.get("reports")
 
     c1, c2 = st.columns(2)
-    inv_last = None
     with c1:
-        try:
-            with st.spinner("재고자산 조회 중..."):
-                data = _inventory_q(stock_code) if quarterly else _inventory(stock_code)
-                inv_last = _render_inventory(data, quarterly)
-        except Exception as e:
-            _fail("재고자산", stock_code, e)
-    # 수주잔고·가동률은 같은 원문을 쓴다 — 한 번만 불러 실패 시 두 번 기다리지 않게 한다.
-    reports, rep_err = None, None
+        inv_last = _section("재고자산", code, lambda s: _render_inventory(s, quarterly),
+                            data.get(inv_key), errors.get(inv_key))
     with c2:
-        try:
-            with st.spinner("수주잔고 조회 중..."):
-                reports = _reports(stock_code)
-                _render_backlog(reports, inv_last, stock_code)
-        except Exception as e:
-            rep_err = e
-            _fail("수주잔고", stock_code, e)
+        _section("수주잔고", code, lambda s: _render_backlog(s, inv_last, code),
+                 reports, errors.get("reports"))
 
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
     uc1, _uc2 = st.columns(2)
     with uc1:
-        if reports is None:
-            _fail("가동률", stock_code, rep_err, log=False)
-        else:
-            try:
-                _render_utilization(reports, stock_code)
-            except Exception as e:
-                _fail("가동률", stock_code, e)
+        _section("가동률", code, lambda s: _render_utilization(s, code),
+                 reports, errors.get("reports"))
+
+    retained = [k for k in errors if data.get(k) is not None]
+    if retained:
+        st.caption("ℹ️ 최근 수집에서 일부 항목이 실패해 그 항목은 이전 수집값을 표시합니다.")

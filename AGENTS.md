@@ -121,6 +121,7 @@ data/
   earnings/q_2026_2Q.json        # 분기별 실적 (단일 4MB 파일에서 분리)
   broker_report/*.json           # 날짜별, 180일 보존
   new_high/*.json                # 날짜별, 180일 보존
+  dart/{종목코드}.json            # 재고자산·수주잔고·가동률 (dart 배치가 수집, 앱은 읽기만)
 ```
 
 **실적 데이터는 `earnings_store`를 통해서만 읽고 쓴다.** 단일 파일을 매 배치마다
@@ -144,6 +145,17 @@ ui_macro._today_ms_utc_midnight()   # 앱 쪽 (같은 규칙)
 - 매일 바뀌는 값(주가/시총)을 커밋되는 파일에 넣지 말 것. 종목목록 시드에
   `Close`/`Marcap`을 빼고 `Code/Name/Market`만 둔 이유가 이것이다.
 
+
+### DART 재고자산·수주잔고 (배치 수집)
+Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결 시간 초과 — 같은
+시점 GitHub Actions·국내망에서는 정상). **앱에서 `dart_fin`을 직접 호출하지 말 것.**
+
+1. 앱(`ui_dart_panel`)이 `data/dart/{종목코드}.json`을 GitHub API로 읽는다(실패 시 로컬).
+2. 파일이 없거나 7일이 지났으면 `repository_dispatch`(`run_dart_batch`, `client_payload.codes`)로
+   `dart_batch.yml`을 요청하고, 커밋될 때까지 `st.fragment(run_every=20)`로 확인한다.
+3. `batch_dart.py`가 `dart_fin`으로 수집해 커밋한다. 워치리스트 전체는 평일 19시에 갱신.
+
+일시적 실패는 기존 파일을 지우지 않고, 내용이 같으면 3일간 다시 쓰지 않는다(리포 비대화 방지).
 
 ### 워치리스트 저장 (GitHub)
 - 파일: `data/watchlist/watchlist.json` in `GITHUB_REPO`
@@ -224,7 +236,7 @@ st.plotly_chart(fig, config={
 
 | 키 | 용도 |
 |----|------|
-| `GH_PAT` / `GITHUB_TOKEN` | GitHub 워치리스트 저장 |
+| `GH_PAT` / `GITHUB_TOKEN` | GitHub 워치리스트 저장 · DART 배치 요청(repository_dispatch) · `data/dart` 조회 |
 | `DATA_GO_KR_KEY` | 관세청 수출입 통계 API (수출입 탭) |
 
 > 텔레그램 시크릿은 앱에서 더 이상 쓰지 않는다 — 뷰어 탭을 없앴고,
@@ -235,6 +247,7 @@ st.plotly_chart(fig, config={
 | 키 | 용도 |
 |----|------|
 | `GEMINI_API_KEY_A` | Gemini AI 분석 |
+| `DART_API_KEY` | DART 재고자산·수주잔고·가동률 수집 (`dart_batch.yml`) |
 | `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | 텔레그램 접속 |
 | `TELEGRAM_SESSION` / `TELEGRAM_SESSION_BATCH` | 텔레그램 세션 문자열 |
 | `SURGE_ALERT_CHAT` | 급등주 알림 대상 (초대 링크 / @유저네임 / 채널 ID) |

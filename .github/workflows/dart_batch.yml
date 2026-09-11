@@ -1,0 +1,65 @@
+name: DART Inventory & Backlog Batch
+
+# Streamlit Cloud에서는 opendart.fss.or.kr 연결이 막혀(TCP 연결 시간 초과) 여기서 수집해
+# data/dart/{종목코드}.json으로 커밋한다. 앱(ui_dart_panel)은 그 파일만 읽는다.
+on:
+  repository_dispatch:
+    types: [run_dart_batch]      # 앱이 종목 조회 시 요청 — client_payload.codes
+  schedule:
+    - cron: '0 10 * * 1-5'       # 월~금 KST 19:00 — 워치리스트 전체
+  push:
+    branches: [main]
+    paths: ['batch_dart.py', 'dart_fin.py', '.github/workflows/dart_batch.yml']
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: '종목코드 (공백 구분). 비우면 워치리스트 전체'
+        required: false
+        default: ''
+
+# 동시 실행 그룹은 두지 않는다 — 그룹은 대기 중인 실행을 하나만 남기고 취소해서
+# 연달아 요청한 종목이 누락된다. 종목마다 파일이 달라 push 경합은 재시도로 충분하다.
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Collect DART data
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          # 요청 값은 셸에 직접 끼워 넣지 않고 환경변수로만 넘긴다(스크립트 인젝션 방지).
+          # 형식 검증은 batch_dart.py가 한다.
+          CODES: ${{ github.event.client_payload.codes && toJSON(github.event.client_payload.codes) || github.event.inputs.codes }}
+        run: |
+          if [ -n "$CODES" ] && [ "$CODES" != "null" ]; then
+            python batch_dart.py
+          else
+            python batch_dart.py --watchlist
+          fi
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add data/dart/
+          git commit -m "Auto-update: DART inventory & backlog" || { echo "No changes to commit"; exit 0; }
+          BR="${{ github.ref_name }}"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
+              echo "push 성공 (시도 $i)"; exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
