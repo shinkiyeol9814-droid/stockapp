@@ -52,14 +52,23 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add data/dart/
-          git commit -m "Auto-update: DART inventory & backlog" || { echo "No changes to commit"; exit 0; }
-          BR="${{ github.ref_name }}"
+          CHANGED=$(git status --porcelain --untracked-files=all -- data/dart | awk '{print $2}')
+          if [ -z "$CHANGED" ]; then echo "No changes to commit"; exit 0; fi
+          OUT="$RUNNER_TEMP/dart_out"
+          mkdir -p "$OUT"
+          for f in $CHANGED; do cp "$f" "$OUT/"; done
+          # rebase 대신 최신 main 위에 이번 실행 파일만 덮어쓴다 — 앱 요청 실행과 같은 종목 파일을
+          # 동시에 만들면 rebase가 add/add 충돌로 매번 실패해 수집 결과 전체를 잃었다.
           for i in 1 2 3 4 5; do
-            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
-              echo "push 성공 (시도 $i)"; exit 0
+            git fetch -q origin main && git reset -q --hard origin/main
+            mkdir -p data/dart
+            cp "$OUT"/*.json data/dart/
+            git add data/dart/
+            if git diff --cached --quiet; then echo "No changes after sync"; exit 0; fi
+            git commit -q -m "Auto-update: DART inventory & backlog"
+            if git push -q origin HEAD:main; then
+              echo "push 성공 (시도 $i, 파일 $(ls "$OUT" | wc -l)개)"; exit 0
             fi
-            git rebase --abort 2>/dev/null || true
             sleep $((i * 5))
           done
           echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
