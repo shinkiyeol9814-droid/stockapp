@@ -78,14 +78,20 @@ def _area_trace(xs, scaled, raw, label, hover_x="%{x}", fmt=None):
     두 차트가 나란히 놓이는데 하나는 막대, 하나는 선이면 비교가 안 된다.
     한 곳에서만 만들어야 나중에 한쪽만 바뀌는 일이 없다.
     """
-    rising = len(scaled) > 1 and scaled[-1] >= scaled[0]
+    # 💡 결측(None)을 건너뛰고 첫/마지막 실측값으로 방향을 정한다.
+    # 부문을 골라 보면 그 부문이 없던 분기가 None으로 남는데, 예전 코드는
+    # scaled[0]을 그대로 비교해서 첫 분기가 비어 있으면 TypeError로 죽었다
+    # (HD현대중공업에서 '조 선'을 고르면 바로 재현됐다).
+    real = [v for v in scaled if v is not None]
+    rising = len(real) > 1 and real[-1] >= real[0]
     color = _UP if rising else _DOWN
     fill = "rgba(239,83,80,0.10)" if rising else "rgba(21,101,192,0.10)"
+    _fmt = fmt or _jo
     return go.Scatter(
         x=xs, y=scaled, mode="lines+markers", name=label,
         line=dict(color=color, width=2), marker=dict(size=5),
         fill="tozeroy", fillcolor=fill,
-        customdata=[(fmt or _jo)(v) for v in raw],
+        customdata=[("-" if v is None else _fmt(v)) for v in raw],
         hovertemplate=f"{hover_x}<br>{label} %{{customdata}}<extra></extra>",
     )
 
@@ -170,29 +176,49 @@ def _render_inventory(data, quarterly: bool):
     return {"매출액": annual_rev}
 
 
+def _seg_name(it):
+    return it.get("이름") or it.get("부문") or ""
+
+
+def _norm(name: str) -> str:
+    """
+    부문 이름 비교용 정규화.
+
+    💡 같은 부문을 분기마다 다르게 띄어 쓴다. HD현대중공업은 '조선'과
+    '조 선'을 섞어 쓰는데, 그대로 두면 셀렉터에 같은 부문이 두 번 뜨고
+    각각은 절반의 분기만 값이 있어 그래프가 끊긴다.
+    """
+    return "".join((name or "").split())
+
+
 def _pick_segment(rows, key, label, code):
     """
     부문 선택 셀렉터. 나뉘어 있지 않으면 아예 그리지 않는다.
 
-    반환값은 선택된 부문명 또는 None(= 전체).
+    반환값은 (정규화 키 또는 None, 전체 이름 목록, 화면 표기용 이름).
+    비교는 정규화 키로, 화면 표시는 원래 표기로 해야 '조 선'을 고른 사람이
+    헤더에서 '조선'을 보고 갸웃하지 않는다.
     """
-    names = []
+    display = {}   # 정규화 키 -> 화면에 쓸 이름(최신 표기)
     for r in rows:
         for it in (r.get(key) or []):
-            nm = it.get("이름") or it.get("부문")
-            if nm and nm not in names:
-                names.append(nm)
-    if len(names) < 2:
-        return None, names
+            nm = _seg_name(it)
+            if nm:
+                display[_norm(nm)] = nm   # 뒤(최신)가 이기도록 덮어쓴다
+    if len(display) < 2:
+        return None, list(display.values()), None
     # 최신 기간에서 큰 것부터 보이도록 정렬
-    latest = {(it.get("이름") or it.get("부문")): (it.get("금액") or it.get("가동률") or 0)
+    latest = {_norm(_seg_name(it)): (it.get("금액") or it.get("가동률") or 0)
               for it in (rows[-1].get(key) or [])}
-    names.sort(key=lambda n: -latest.get(n, 0))
+    keys = sorted(display, key=lambda k: -latest.get(k, 0))
+    names = [display[k] for k in keys]
     # 💡 위젯 키는 재실행 사이에 안정적이어야 한다. id(rows)를 쓰면 매번
     # 새 위젯이 되어 고른 부문이 곧바로 '전체'로 되돌아간다.
     sel = st.selectbox(label, ["전체"] + names, index=0,
                        key=f"seg_{label}_{code}", label_visibility="collapsed")
-    return (None if sel == "전체" else sel), names
+    if sel == "전체":
+        return None, names, None
+    return _norm(sel), names, sel
 
 
 def _render_backlog(data, inv_last, code):
@@ -202,7 +228,7 @@ def _render_backlog(data, inv_last, code):
                    "(수주산업이 아닌 경우 정상입니다)")
         return
 
-    seg, names = _pick_segment(rows, "내역", "수주잔고 부문", code)
+    seg, names, seg_label = _pick_segment(rows, "내역", "수주잔고 부문", code)
 
     # 선택한 부문만 뽑아낸다. 어떤 기간엔 그 부문이 없을 수 있어 None을 남기고
     # 선으로 이어 그린다(connectgaps) — 0으로 채우면 없던 급락이 생긴다.
@@ -210,7 +236,7 @@ def _render_backlog(data, inv_last, code):
         if seg is None:
             return r["수주잔고"]
         for it in (r.get("내역") or []):
-            if it.get("이름") == seg:
+            if _norm(it.get("이름")) == seg:
                 return it["금액"]
         return None
 
@@ -225,7 +251,7 @@ def _render_backlog(data, inv_last, code):
     yoy = next(((r, v) for r, v in reversed(shown)
                 if r["기간"][5:] == last["기간"][5:] and r["기간"] < last["기간"]), None)
     base = yoy or prev
-    _header(f"수주잔고{'' if seg is None else ' · ' + html.escape(seg)}",
+    _header(f"수주잔고{'' if seg is None else ' · ' + html.escape(seg_label)}",
             _jo(last_v),
             _delta_html(last_v, base[1] if base else None, "YoY" if yoy else "전분기"),
             f"{html.escape(last['보고서'])} · {last['건수']}개 항목 집계")
@@ -297,7 +323,7 @@ def _render_utilization(data, code):
                    "(제조업이 아니거나 공시 양식이 다른 경우입니다)")
         return
 
-    seg, names = _pick_segment(periods, "rows", "가동률 부문", code)
+    seg, names, seg_label = _pick_segment(periods, "rows", "가동률 부문", code)
 
     def value_of(p):
         if seg is None:
@@ -307,7 +333,7 @@ def _render_utilization(data, code):
             rs = p.get("rows") or []
             return sum(r["가동률"] for r in rs) / len(rs) if rs else None
         for r in (p.get("rows") or []):
-            if r["부문"] == seg:
+            if _norm(r["부문"]) == seg:
                 return r["가동률"]
         return None
 
@@ -325,7 +351,7 @@ def _render_utilization(data, code):
     note = (f"{html.escape(str(last.get('보고서', '-')))}"
             f" · {'전사 평균' if last.get('total') is not None else '부문 단순평균'}"
             if seg is None else html.escape(str(last.get("보고서", "-"))))
-    _header(f"가동률{'' if seg is None else ' · ' + html.escape(seg)}",
+    _header(f"가동률{'' if seg is None else ' · ' + html.escape(seg_label)}",
             f"{last_v:.1f}%",
             _delta_html(last_v, base[1] if base else None, "YoY" if yoy else "직전"),
             note)
