@@ -735,3 +735,65 @@ def get_utilization(stock_code: str) -> dict:
         except Exception as e:
             print(f"[dart_fin] 가동률 파싱 실패 {rep['rcept_no']}: {type(e).__name__}: {e}")
     return {"corp_name": nm, "rows": [], "total": None}
+
+
+def get_report_series(stock_code: str, limit: int = 12) -> dict:
+    """
+    정기보고서를 **한 번만** 내려받아 수주잔고와 가동률을 함께 뽑는다.
+
+    둘을 따로 조회하면 같은 원문(압축 400KB / 펼치면 6~10MB)을 두 번씩
+    받게 된다. 12개 분기면 왕복이 24번이라 체감이 크다.
+    """
+    cc, nm = corp_code_of(stock_code)
+    if not cc:
+        raise DartError(f"종목코드 {stock_code}의 DART corp_code를 찾지 못했습니다.")
+
+    end = datetime.now().strftime("%Y%m%d")
+    bgn = (datetime.now() - timedelta(days=365 * 4)).strftime("%Y%m%d")
+    reps = _report_list(cc, bgn, end)[:limit]
+    if not reps:
+        return {"corp_name": nm, "backlog": [], "util": [], "dropped": 0}
+
+    def one(rep):
+        try:
+            t = _document_text(rep["rcept_no"])
+            if not t:
+                return None
+            bl = parse_backlog(t)
+            ut = parse_utilization(t)
+            return {
+                "기간": rep["period"], "보고서": rep["name"],
+                "rcept_no": rep["rcept_no"],
+                "backlog": bl, "util": ut,
+            }
+        except Exception as e:
+            print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {e}")
+            return None
+
+    got = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        for r in ex.map(one, reps):
+            if r:
+                got.append(r)
+    got.sort(key=lambda x: x["기간"])
+
+    backlog = [{"기간": g["기간"], "보고서": g["보고서"], "rcept_no": g["rcept_no"],
+                "수주잔고": g["backlog"]["total_won"], "단위": g["backlog"]["unit"],
+                "건수": g["backlog"]["rows"], "내역": g["backlog"].get("items") or []}
+               for g in got if g["backlog"]]
+
+    # 이상치 제거 사유는 get_backlog_series의 주석 참고 (V자 폭락 방지).
+    dropped = 0
+    if len(backlog) >= 3:
+        vals = sorted(r["수주잔고"] for r in backlog)
+        med = vals[len(vals) // 2]
+        if med > 0:
+            keep = [r for r in backlog if r["수주잔고"] >= med * 0.25]
+            dropped = len(backlog) - len(keep)
+            backlog = keep
+
+    util = [{"기간": g["기간"], "보고서": g["보고서"],
+             "rows": g["util"]["rows"], "total": g["util"].get("total")}
+            for g in got if g["util"]]
+
+    return {"corp_name": nm, "backlog": backlog, "util": util, "dropped": dropped}

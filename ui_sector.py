@@ -12,6 +12,7 @@ import html
 import urllib.parse
 import xml.etree.ElementTree as ET
 import concurrent.futures
+from krx_listing import fetch_krx_marcap
 import os
 import json
 from datetime import datetime, timezone, timedelta
@@ -19,51 +20,111 @@ from datetime import datetime, timezone, timedelta
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
-SECTOR_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
-SECTOR_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={no}"
+# 💡 네이버 레거시 페이지(finance.naver.com/sise/...)는 2026-09월 폐기됐다.
+# 지금은 stock.naver.com SPA로 302 리다이렉트되고 서버가 표를 내려주지 않아
+# read_html이 "No tables found"로 떨어졌다 — 섹터 탭이 통째로 빈 화면이 된
+# 원인이다. (같은 계열인 item/main.naver도 함께 죽었다.)
+#
+# 그래서 스크래핑을 걷어내고 직접 계산한다:
+#   업종 분류 ← KRX KIND corpList (종목코드 → 업종, 158개 분류)
+#   시세     ← krx_listing.fetch_krx_marcap (종목별 등락률 / 시가총액)
+# 둘 다 이미 앱이 쓰던 소스라 새 의존이 늘지 않고, 네이버가 또 화면을 바꿔도
+# 영향을 받지 않는다.
+_KIND_URL = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
+# 구성 종목이 너무 적은 업종은 한 종목 급등에 업종 전체가 끌려가 순위가 무의미해진다.
+_MIN_MEMBERS = 3
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _industry_map():
+    """종목코드 → 업종명. KIND 다운로드(EUC-KR)를 파싱한다."""
+    res = requests.get(_KIND_URL, headers=HEADERS, timeout=15)
+    res.encoding = "euc-kr"   # charset 헤더가 없어 명시하지 않으면 한글이 깨진다
+    df = pd.read_html(io.StringIO(res.text), header=0)[0]
+    df = df.rename(columns={"회사명": "Name", "종목코드": "Code", "업종": "업종명"})
+    df["Code"] = df["Code"].astype(str).str.strip().str.zfill(6)
+    df = df.dropna(subset=["업종명"])
+    return dict(zip(df["Code"], df["업종명"].astype(str).str.strip()))
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _merged_quotes():
+    """종목별 시세 + 업종명을 붙인 표. 업종 집계와 종목 드릴다운이 함께 쓴다."""
+    try:
+        q = fetch_krx_marcap()
+        ind = _industry_map()
+    except Exception as e:
+        print(f"[ui_sector] 시세/업종 조회 실패: {type(e).__name__}: {e}")
+        return None
+    df = q.copy()
+    df["업종명"] = df["Code"].map(ind)
+    df = df.dropna(subset=["업종명"])
+    # 스팩은 업종이 '금융 지원 서비스업'으로 묶이는데 거의 움직이지 않아
+    # 그 업종 전체를 0% 쪽으로 끌어내린다. 제외한다.
+    df = df[~df["Name"].astype(str).str.contains("스팩", na=False)]
+    for c in ("ChagesRatio", "Marcap", "Close"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.dropna(subset=["ChagesRatio", "Marcap"])
 
 
 @st.cache_data(ttl=180, show_spinner=False)
 def get_sector_performance():
-    """업종명 / 업종코드(no) / 등락률 / 상승·보합·하락 종목수. 실패하면 None."""
+    """업종명 / 업종코드 / 등락률 / 상승·보합·하락 종목수. 실패하면 None."""
+    df = _merged_quotes()
+    if df is None or df.empty:
+        return None
     try:
-        res = requests.get(SECTOR_URL, headers=HEADERS, timeout=10)
-        res.encoding = "euc-kr"
-        # pd.read_html은 <a> 링크를 버려서 업종코드(no=)를 못 가져오므로,
-        # 업종 상세 드릴다운에 필요한 업종명→업종코드 매핑을 정규식으로 따로 추출한다.
-        name_to_no = dict(re.findall(r'sise_group_detail\.naver\?type=upjong&no=(\d+)">([^<]+)<', res.text))
-        no_by_name = {name: no for no, name in name_to_no.items()}
-
-        tables = pd.read_html(io.StringIO(res.text))
-        df = tables[0]
-        df.columns = ["업종명", "등락률", "전체", "상승", "보합", "하락", "그래프"]
-        df = df.dropna(subset=["업종명"]).copy()
-        df["등락률_num"] = (
-            df["등락률"].astype(str).str.replace("%", "", regex=False)
-            .str.replace("+", "", regex=False).astype(float)
-        )
-        for c in ["전체", "상승", "보합", "하락"]:
-            df[c] = df[c].fillna(0).astype(int)
-        df["업종코드"] = df["업종명"].map(no_by_name)
-        df = df.sort_values("등락률_num", ascending=False).reset_index(drop=True)
-        return df
-    except Exception:
+        rows = []
+        for name, g in df.groupby("업종명"):
+            if len(g) < _MIN_MEMBERS:
+                continue
+            w = g["Marcap"].sum()
+            # 시총가중 평균 — 업종 지수가 실제로 움직인 정도에 가깝다.
+            # 단순평균을 쓰면 소형주 몇 개가 업종 순위를 좌우한다.
+            rate = float((g["ChagesRatio"] * g["Marcap"]).sum() / w) if w else 0.0
+            rows.append({
+                "업종명": name,
+                "등락률": f"{rate:+.2f}%",
+                "등락률_num": round(rate, 2),
+                "전체": int(len(g)),
+                "상승": int((g["ChagesRatio"] > 0).sum()),
+                "보합": int((g["ChagesRatio"] == 0).sum()),
+                "하락": int((g["ChagesRatio"] < 0).sum()),
+                # 드릴다운 키. 예전엔 네이버 업종번호였는데 이제 업종명이 곧 키다.
+                "업종코드": name,
+            })
+        if not rows:
+            return None
+        return (pd.DataFrame(rows)
+                .sort_values("등락률_num", ascending=False)
+                .reset_index(drop=True))
+    except Exception as e:
+        print(f"[ui_sector] 업종 집계 실패: {type(e).__name__}: {e}")
         return None
 
 
 @st.cache_data(ttl=180, show_spinner=False)
 def get_sector_stocks(no: str):
-    """해당 업종코드 소속 종목명 / 현재가 / 등락률. 실패하면 None."""
+    """해당 업종 소속 종목명 / 현재가 / 등락률. 실패하면 None."""
+    df = _merged_quotes()
+    if df is None or df.empty:
+        return None
     try:
-        res = requests.get(SECTOR_DETAIL_URL.format(no=no), headers=HEADERS, timeout=10)
-        res.encoding = "euc-kr"
-        tables = pd.read_html(io.StringIO(res.text))
-        df = tables[2].dropna(subset=["종목명"]).copy()
-        df = df[["종목명", "현재가", "등락률"]]
-        df["등락률_num"] = df["등락률"].astype(str).str.extract(r"([+-]?\d+\.?\d*)").astype(float)
-        df = df.sort_values("등락률_num", ascending=False).reset_index(drop=True)
-        return df
-    except Exception:
+        g = df[df["업종명"] == no]
+        if g.empty:
+            return None
+        # 💡 현재가는 숫자 그대로 돌려준다. 화면 쪽(render_sector_menu)이
+        # int()로 다시 포맷하므로 여기서 "2,135" 같은 문자열을 주면 거기서
+        # ValueError로 죽는다.
+        out = pd.DataFrame({
+            "종목명": g["Name"].astype(str),
+            "현재가": pd.to_numeric(g["Close"], errors="coerce"),
+            "등락률": g["ChagesRatio"].map(lambda v: f"{v:+.2f}%"),
+            "등락률_num": g["ChagesRatio"].astype(float),
+        })
+        return out.sort_values("등락률_num", ascending=False).reset_index(drop=True)
+    except Exception as e:
+        print(f"[ui_sector] 업종 종목 조회 실패: {type(e).__name__}: {e}")
         return None
 
 
@@ -211,7 +272,8 @@ def _spotlight_card(row, news):
 
 def render_sector_menu():
     st.markdown("<div class='main-title'>🏭 섹터별 등락률</div>", unsafe_allow_html=True)
-    st.caption("네이버 금융 업종별 시세(KRX 공식 업종 분류) 기준 · 3분 캐시")
+    st.caption("KRX 업종분류(KIND) × 종목별 종가 등락률을 시가총액으로 가중해 "
+               f"직접 집계합니다 · 구성종목 {_MIN_MEMBERS}개 이상 업종만 · 3분 캐시")
 
     _, col_r = st.columns([8, 1.5])
     with col_r:

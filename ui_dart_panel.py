@@ -26,8 +26,10 @@ _DART_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
 
 
 @st.cache_data(ttl=43200, show_spinner=False)
-def _utilization(code: str):
-    return dart_fin.get_utilization(code)
+def _reports(code: str):
+    # 수주잔고와 가동률은 같은 공시원문에서 나온다. 따로 부르면 12개 분기치
+    # 원문을 두 번 내려받게 되므로 한 번에 받아 둘 다 뽑는다.
+    return dart_fin.get_report_series(code, limit=12)
 
 
 @st.cache_data(ttl=43200, show_spinner=False)
@@ -38,13 +40,6 @@ def _inventory(code: str):
 @st.cache_data(ttl=43200, show_spinner=False)
 def _inventory_q(code: str):
     return dart_fin.get_inventory_quarterly(code, quarters=12)
-
-
-@st.cache_data(ttl=43200, show_spinner=False)
-def _backlog(code: str):
-    # 재고 차트가 12분기라 x축 범위를 맞춘다. 8 → 12로 늘려도 실측 0.2~0.4초
-    # 차이라(원문 다운로드가 병렬) 굳이 아낄 이유가 없었다.
-    return dart_fin.get_backlog_series(code, limit=12)
 
 
 def _jo(v):
@@ -76,7 +71,7 @@ def _q_label(period: str) -> str:
         return period
 
 
-def _area_trace(xs, scaled, raw, label, hover_x="%{x}"):
+def _area_trace(xs, scaled, raw, label, hover_x="%{x}", fmt=None):
     """
     재고자산·수주잔고가 같은 모양으로 보이도록 만든 공용 면적 꺾은선.
 
@@ -90,7 +85,7 @@ def _area_trace(xs, scaled, raw, label, hover_x="%{x}"):
         x=xs, y=scaled, mode="lines+markers", name=label,
         line=dict(color=color, width=2), marker=dict(size=5),
         fill="tozeroy", fillcolor=fill,
-        customdata=[_jo(v) for v in raw],
+        customdata=[(fmt or _jo)(v) for v in raw],
         hovertemplate=f"{hover_x}<br>{label} %{{customdata}}<extra></extra>",
     )
 
@@ -175,42 +170,85 @@ def _render_inventory(data, quarterly: bool):
     return {"매출액": annual_rev}
 
 
-def _render_backlog(data, inv_last):
-    rows = data.get("rows") or []
+def _pick_segment(rows, key, label, code):
+    """
+    부문 선택 셀렉터. 나뉘어 있지 않으면 아예 그리지 않는다.
+
+    반환값은 선택된 부문명 또는 None(= 전체).
+    """
+    names = []
+    for r in rows:
+        for it in (r.get(key) or []):
+            nm = it.get("이름") or it.get("부문")
+            if nm and nm not in names:
+                names.append(nm)
+    if len(names) < 2:
+        return None, names
+    # 최신 기간에서 큰 것부터 보이도록 정렬
+    latest = {(it.get("이름") or it.get("부문")): (it.get("금액") or it.get("가동률") or 0)
+              for it in (rows[-1].get(key) or [])}
+    names.sort(key=lambda n: -latest.get(n, 0))
+    # 💡 위젯 키는 재실행 사이에 안정적이어야 한다. id(rows)를 쓰면 매번
+    # 새 위젯이 되어 고른 부문이 곧바로 '전체'로 되돌아간다.
+    sel = st.selectbox(label, ["전체"] + names, index=0,
+                       key=f"seg_{label}_{code}", label_visibility="collapsed")
+    return (None if sel == "전체" else sel), names
+
+
+def _render_backlog(data, inv_last, code):
+    rows = data.get("backlog") or []
     if not rows:
         st.caption("이 종목은 수주잔고를 공시하지 않습니다. "
                    "(수주산업이 아닌 경우 정상입니다)")
         return
 
-    last = rows[-1]
-    prev = rows[-2] if len(rows) > 1 else None
-    # 💡 reversed가 중요하다. 정방향으로 next()를 쓰면 같은 분기 중 '가장 오래된'
-    # 것을 집는다 — 8분기일 땐 우연히 1년 전이었지만 12분기로 늘리자 3년 전과
-    # 비교해 현대로템이 +4.8%가 아닌 +58.8%로 표시됐다.
-    yoy = next((r for r in reversed(rows) if r["기간"][5:] == last["기간"][5:]
-                and r["기간"] < last["기간"]), None)
-    _header("수주잔고", _jo(last["수주잔고"]),
-            _delta_html(last["수주잔고"],
-                        (yoy or prev)["수주잔고"] if (yoy or prev) else None,
-                        "YoY" if yoy else "전분기"),
+    seg, names = _pick_segment(rows, "내역", "수주잔고 부문", code)
+
+    # 선택한 부문만 뽑아낸다. 어떤 기간엔 그 부문이 없을 수 있어 None을 남기고
+    # 선으로 이어 그린다(connectgaps) — 0으로 채우면 없던 급락이 생긴다.
+    def value_of(r):
+        if seg is None:
+            return r["수주잔고"]
+        for it in (r.get("내역") or []):
+            if it.get("이름") == seg:
+                return it["금액"]
+        return None
+
+    pairs = [(r, value_of(r)) for r in rows]
+    shown = [(r, v) for r, v in pairs if v is not None]
+    if not shown:
+        st.caption("선택한 부문의 값을 찾지 못했습니다.")
+        return
+
+    last, last_v = shown[-1]
+    prev = shown[-2] if len(shown) > 1 else None
+    yoy = next(((r, v) for r, v in reversed(shown)
+                if r["기간"][5:] == last["기간"][5:] and r["기간"] < last["기간"]), None)
+    base = yoy or prev
+    _header(f"수주잔고{'' if seg is None else ' · ' + html.escape(seg)}",
+            _jo(last_v),
+            _delta_html(last_v, base[1] if base else None, "YoY" if yoy else "전분기"),
             f"{html.escape(last['보고서'])} · {last['건수']}개 항목 집계")
 
-    xs = [_q_label(r["기간"]) for r in rows]
-    ys = [r["수주잔고"] for r in rows]
-    fig = go.Figure(_area_trace(xs, [v / 1e12 for v in ys], ys, "수주잔고"))
+    xs = [_q_label(r["기간"]) for r, _ in pairs]
+    ys = [v for _, v in pairs]
+    plot = [None if v is None else v / 1e12 for v in ys]
+    tr = _area_trace(xs, plot, ys, "수주잔고")
+    tr.connectgaps = True
+    fig = go.Figure(tr)
     fig.update_yaxes(ticksuffix="조", tickformat=",.0f")
     st.plotly_chart(_lock(fig, 190), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False})
 
-    # 부분 집계 경고 — 연매출의 절반도 안 되는 수주잔고는 표를 덜 읽었다는 신호다.
     rev = (inv_last or {}).get("매출액")
-    if rev and last["수주잔고"] < rev * 0.5:
+    if seg is None and rev and last_v < rev * 0.5:
         st.caption("⚠️ 연매출 대비 수주잔고가 작습니다. 공시 양식에 따라 일부 "
                    "품목만 집계됐을 수 있으니 원문을 확인해주세요.")
     if data.get("dropped"):
         st.caption(f"ℹ️ 공시 양식이 달라 값이 온전치 않은 {data['dropped']}개 "
                    f"기간은 그래프에서 제외했습니다.")
-    _render_breakdown(last.get("내역"), last["수주잔고"])
+    if seg is None:
+        _render_breakdown(last.get("내역"), last["수주잔고"])
     st.markdown(
         f"<a href='{_DART_URL.format(last['rcept_no'])}' target='_blank' "
         f"style='font-size:11px;color:#1565C0;text-decoration:none;'>"
@@ -251,40 +289,63 @@ def _render_breakdown(items, total):
             )
 
 
-def _render_utilization(data):
-    rows = (data or {}).get("rows") or []
-    total = (data or {}).get("total")
-    if not rows and total is None:
+def _render_utilization(data, code):
+    """부문별 가동률 추이. 재고/수주잔고와 같은 꺾은선으로 그린다."""
+    periods = data.get("util") or []
+    if not periods:
         st.caption("이 종목은 가동률을 공시하지 않습니다. "
                    "(제조업이 아니거나 공시 양식이 다른 경우입니다)")
         return
 
-    head = total if total is not None else (
-        sum(r["가동률"] for r in rows) / len(rows) if rows else None)
-    label = "전사 평균" if total is not None else "부문 단순평균"
-    _header("가동률", f"{head:.1f}%" if head is not None else "-", "",
-            f"{html.escape(str(data.get('보고서', '-')))} · {label}")
+    seg, names = _pick_segment(periods, "rows", "가동률 부문", code)
 
-    # 💡 100%를 넘는 값이 흔하다(초과가동). 막대는 100 기준으로 그리되 넘치는
-    # 만큼은 색을 바꿔 눈에 띄게 한다 — 잘라버리면 호황 신호가 사라진다.
-    for r in rows[:8]:
-        v = r["가동률"]
-        w = min(v, 100.0)
-        over = v > 100.0
-        st.markdown(
-            f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
-            f"<div style='flex:0 0 42%;font-size:11.5px;color:#444;"
-            f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'"
-            f" title='{html.escape(r['부문'])}'>{html.escape(r['부문'])}</div>"
-            f"<div style='flex:1;background:#f0f0f0;border-radius:2px;height:12px;'>"
-            f"<div style='width:{w:.1f}%;background:{_UP if over else '#5b8def'};"
-            f"height:12px;border-radius:2px;'></div></div>"
-            f"<div style='flex:0 0 52px;text-align:right;font-size:11.5px;"
-            f"font-weight:700;color:{_UP if over else '#333'};'>{v:.1f}%</div></div>",
-            unsafe_allow_html=True,
-        )
-    if any(r["가동률"] > 100 for r in rows[:8]):
-        st.caption("빨간색은 100% 초과 가동 — 설비가 이미 꽉 찼다는 뜻입니다.")
+    def value_of(p):
+        if seg is None:
+            # 전사 합계가 공시돼 있으면 그걸, 없으면 부문 단순평균.
+            if p.get("total") is not None:
+                return p["total"]
+            rs = p.get("rows") or []
+            return sum(r["가동률"] for r in rs) / len(rs) if rs else None
+        for r in (p.get("rows") or []):
+            if r["부문"] == seg:
+                return r["가동률"]
+        return None
+
+    pairs = [(p, value_of(p)) for p in periods]
+    shown = [(p, v) for p, v in pairs if v is not None]
+    if not shown:
+        st.caption("선택한 부문의 가동률을 찾지 못했습니다.")
+        return
+
+    last, last_v = shown[-1]
+    yoy = next(((p, v) for p, v in reversed(shown)
+                if p["기간"][5:] == last["기간"][5:] and p["기간"] < last["기간"]), None)
+    prev = shown[-2] if len(shown) > 1 else None
+    base = yoy or prev
+    note = (f"{html.escape(str(last.get('보고서', '-')))}"
+            f" · {'전사 평균' if last.get('total') is not None else '부문 단순평균'}"
+            if seg is None else html.escape(str(last.get("보고서", "-"))))
+    _header(f"가동률{'' if seg is None else ' · ' + html.escape(seg)}",
+            f"{last_v:.1f}%",
+            _delta_html(last_v, base[1] if base else None, "YoY" if yoy else "직전"),
+            note)
+
+    xs = [_q_label(p["기간"]) for p, _ in pairs]
+    ys = [v for _, v in pairs]
+    tr = _area_trace(xs, ys, ys, "가동률", fmt=lambda v: f"{v:.1f}%")
+    tr.connectgaps = True
+    fig = go.Figure(tr)
+    # 💡 y축을 0부터 열어둔다. 100 근처만 확대하면 60%와 100%가 비슷해 보여
+    # "설비가 놀고 있다"는 신호가 죽는다. 100% 기준선을 같이 그린다.
+    top = max([v for v in ys if v is not None] + [100]) * 1.12
+    fig.update_yaxes(range=[0, top], ticksuffix="%", tickformat=",.0f")
+    fig.add_hline(y=100, line=dict(color="#bbb", width=1, dash="dot"))
+    st.plotly_chart(_lock(fig, 190), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False})
+
+    if len(names) > 1 and seg is None:
+        st.caption(f"부문 {len(names)}개의 평균입니다. 위 선택 상자로 개별 "
+                   f"부문만 볼 수 있습니다. 점선은 100%(만가동) 기준선입니다.")
 
 
 def render_dart_panel(stock_code: str):
@@ -325,7 +386,7 @@ def render_dart_panel(stock_code: str):
     with c2:
         try:
             with st.spinner("수주잔고 조회 중..."):
-                _render_backlog(_backlog(stock_code), inv_last)
+                _render_backlog(_reports(stock_code), inv_last, stock_code)
         except Exception as e:
             st.caption(f"수주잔고 조회 실패: {type(e).__name__}")
             print(f"[ui_dart_panel] 수주잔고 실패 {stock_code}: {e}")
@@ -335,7 +396,7 @@ def render_dart_panel(stock_code: str):
     with uc1:
         try:
             with st.spinner("가동률 조회 중..."):
-                _render_utilization(_utilization(stock_code))
+                _render_utilization(_reports(stock_code), stock_code)
         except Exception as e:
             st.caption(f"가동률 조회 실패: {type(e).__name__}")
             print(f"[ui_dart_panel] 가동률 실패 {stock_code}: {e}")
