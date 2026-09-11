@@ -181,6 +181,10 @@ def _save_to_disk(df: pd.DataFrame) -> None:
                 except Exception:
                     pass  # 기존 캐시를 못 읽으면 그냥 새로 쓴다
 
+        # 💡 종목코드로 정렬해서 저장한다. 소스마다(fdr / 캐시 리포지토리 /
+        # KIND) 행 순서가 달라서, 정렬하지 않으면 내용이 같아도 소스가 바뀔
+        # 때마다 2,873줄 전체가 diff로 잡혀 매일 커밋이 통째로 불어난다.
+        new_df = new_df.sort_values("Code")
         os.makedirs(os.path.dirname(LISTING_CACHE), exist_ok=True)
         new_df.to_csv(LISTING_CACHE, index=False, encoding="utf-8")
     except Exception as e:
