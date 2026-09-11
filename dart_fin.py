@@ -36,7 +36,11 @@ _DART_DIR = os.path.join(_DIR, "data", "dart")
 _CORP_MAP = os.path.join(_DART_DIR, "corp_map.json")
 
 _BASE = "https://opendart.fss.or.kr/api"
-_TIMEOUT = 60
+# (connect, read) — read는 바이트 간격 제한일 뿐이라 전체 시간은 _map_with_deadline이 막는다.
+_TIMEOUT = (5, 20)
+_DOC_TIMEOUT = (5, 60)
+_INV_BUDGET = 30      # 재고자산 병렬 조회 전체 예산(초)
+_REPORT_BUDGET = 60   # 정기보고서 원문 병렬 조회 전체 예산(초)
 # corp_code 목록은 신규 상장/사명변경 때만 바뀐다. 매번 3.6MB를 받을 이유가 없다.
 _CORP_MAP_TTL_DAYS = 7
 
@@ -57,6 +61,22 @@ class DartError(RuntimeError):
     pass
 
 
+class DartTimeout(DartError):
+    pass
+
+
+def _map_with_deadline(fn, items, workers, budget, what):
+    """ex.map과 같은 순서로 결과를 돌려주되, budget초를 넘기면 기다리지 않고 DartTimeout."""
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+    futs = [ex.submit(fn, it) for it in items]
+    _done, pending = concurrent.futures.wait(futs, timeout=budget)
+    # with 블록은 종료 시 모든 스레드를 기다리므로 데드라인이 무력해진다.
+    ex.shutdown(wait=False, cancel_futures=True)
+    if pending:
+        raise DartTimeout(f"{what}: {len(futs)}건 중 {len(pending)}건이 {budget}초 내 무응답")
+    return [f.result() for f in futs]
+
+
 _STATUS_MSG = {
     "010": "등록되지 않은 API 키입니다.",
     "011": "사용할 수 없는 API 키입니다 (오픈API 등록 여부 확인).",
@@ -73,7 +93,7 @@ _STATUS_MSG = {
 # ─────────────────────────────────────────────────────────────────────────────
 def _download_corp_map() -> dict:
     r = requests.get(f"{_BASE}/corpCode.xml",
-                     params={"crtfc_key": _api_key()}, timeout=_TIMEOUT)
+                     params={"crtfc_key": _api_key()}, timeout=_DOC_TIMEOUT)
     r.raise_for_status()
     # 실패 시엔 zip이 아니라 JSON 에러가 온다.
     if r.content[:2] != b"PK":
@@ -86,13 +106,17 @@ def _download_corp_map() -> dict:
 
     import xml.etree.ElementTree as ET
     z = zipfile.ZipFile(io.BytesIO(r.content))
-    root = ET.fromstring(z.read(z.namelist()[0]))
     out = {}
-    for e in root.iter("list"):
-        sc = (e.findtext("stock_code") or "").strip()
-        if sc:  # 상장사만 (비상장 11만 건은 쓸 일이 없다)
-            out[sc] = [(e.findtext("corp_code") or "").strip(),
-                       (e.findtext("corp_name") or "").strip()]
+    # 스트리밍 파싱 — 트리 전체를 올리면 피크 메모리가 약 13배(10MB→128MB).
+    with z.open(z.namelist()[0]) as fp:
+        for _ev, e in ET.iterparse(fp, events=("end",)):
+            if e.tag != "list":
+                continue
+            sc = (e.findtext("stock_code") or "").strip()
+            if sc:  # 상장사만 (비상장 11만 건은 쓸 일이 없다)
+                out[sc] = [(e.findtext("corp_code") or "").strip(),
+                           (e.findtext("corp_name") or "").strip()]
+            e.clear()
     if not out:
         raise DartError("corpCode에서 상장사를 찾지 못했습니다.")
     os.makedirs(_DART_DIR, exist_ok=True)
@@ -188,10 +212,9 @@ def get_inventory_series(stock_code: str, years: int = 5) -> dict:
         return y, None, None
 
     got = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        for y, rows, fs in ex.map(one, targets):
-            if rows:
-                got[y] = (rows, fs)
+    for y, rows, fs in _map_with_deadline(one, targets, 5, _INV_BUDGET, "연간 재고자산"):
+        if rows:
+            got[y] = (rows, fs)
 
     out = []
     for y in sorted(got):
@@ -290,10 +313,9 @@ def get_inventory_quarterly(stock_code: str, quarters: int = 12) -> dict:
         return y, rc, qn, None, None
 
     got = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        for y, rc, qn, rows, fs in ex.map(one, combos):
-            if rows:
-                got[(y, qn)] = (rc, rows, fs)
+    for y, rc, qn, rows, fs in _map_with_deadline(one, combos, 8, _INV_BUDGET, "분기 재고자산"):
+        if rows:
+            got[(y, qn)] = (rc, rows, fs)
 
     # 누적 매출 → 당분기 매출로 차분
     seq = sorted(got)
@@ -527,7 +549,7 @@ def _report_list(corp_code: str, bgn: str, end: str):
 def _document_text(rcept_no: str):
     r = requests.get(f"{_BASE}/document.xml",
                      params={"crtfc_key": _api_key(), "rcept_no": rcept_no},
-                     timeout=120)
+                     timeout=_DOC_TIMEOUT)
     if r.content[:2] != b"PK":
         return None
     z = zipfile.ZipFile(io.BytesIO(r.content))
@@ -770,11 +792,7 @@ def get_report_series(stock_code: str, limit: int = 12) -> dict:
             print(f"[dart_fin] {rep['rcept_no']} 파싱 실패: {type(e).__name__}: {e}")
             return None
 
-    got = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        for r in ex.map(one, reps):
-            if r:
-                got.append(r)
+    got = [r for r in _map_with_deadline(one, reps, 4, _REPORT_BUDGET, "정기보고서 원문") if r]
     got.sort(key=lambda x: x["기간"])
 
     backlog = [{"기간": g["기간"], "보고서": g["보고서"], "rcept_no": g["rcept_no"],

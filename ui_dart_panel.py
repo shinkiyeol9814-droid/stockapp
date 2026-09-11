@@ -16,6 +16,7 @@ dart_fin이 숫자를 만들고, 여기서는 그리기만 한다.
 import html
 
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 
 import dart_fin
@@ -374,6 +375,20 @@ def _render_utilization(data, code):
                    f"부문만 볼 수 있습니다. 점선은 100%(만가동) 기준선입니다.")
 
 
+_DELAY_ERRORS = (dart_fin.DartTimeout, requests.exceptions.Timeout,
+                 requests.exceptions.ConnectionError)
+
+
+def _fail(what, code, err, log=True):
+    if isinstance(err, _DELAY_ERRORS):
+        st.caption(f"⏳ DART 응답 지연 — {what} 조회를 건너뛰었습니다. "
+                   f"잠시 후 새로고침하면 다시 시도합니다.")
+    else:
+        st.caption(f"{what} 조회 실패: {type(err).__name__}")
+    if log:
+        print(f"[ui_dart_panel] {what} 실패 {code}: {type(err).__name__}: {err}")
+
+
 def render_dart_panel(stock_code: str):
     """가치평가 화면 하단에 붙는 진입점. 실패해도 위쪽 차트를 망치지 않는다."""
     if not stock_code:
@@ -407,22 +422,25 @@ def render_dart_panel(stock_code: str):
                 data = _inventory_q(stock_code) if quarterly else _inventory(stock_code)
                 inv_last = _render_inventory(data, quarterly)
         except Exception as e:
-            st.caption(f"재고자산 조회 실패: {type(e).__name__}")
-            print(f"[ui_dart_panel] 재고자산 실패 {stock_code}: {e}")
+            _fail("재고자산", stock_code, e)
+    # 수주잔고·가동률은 같은 원문을 쓴다 — 한 번만 불러 실패 시 두 번 기다리지 않게 한다.
+    reports, rep_err = None, None
     with c2:
         try:
             with st.spinner("수주잔고 조회 중..."):
-                _render_backlog(_reports(stock_code), inv_last, stock_code)
+                reports = _reports(stock_code)
+                _render_backlog(reports, inv_last, stock_code)
         except Exception as e:
-            st.caption(f"수주잔고 조회 실패: {type(e).__name__}")
-            print(f"[ui_dart_panel] 수주잔고 실패 {stock_code}: {e}")
+            rep_err = e
+            _fail("수주잔고", stock_code, e)
 
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
     uc1, _uc2 = st.columns(2)
     with uc1:
-        try:
-            with st.spinner("가동률 조회 중..."):
-                _render_utilization(_reports(stock_code), stock_code)
-        except Exception as e:
-            st.caption(f"가동률 조회 실패: {type(e).__name__}")
-            print(f"[ui_dart_panel] 가동률 실패 {stock_code}: {e}")
+        if reports is None:
+            _fail("가동률", stock_code, rep_err, log=False)
+        else:
+            try:
+                _render_utilization(reports, stock_code)
+            except Exception as e:
+                _fail("가동률", stock_code, e)
