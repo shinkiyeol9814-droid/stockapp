@@ -471,6 +471,7 @@ def _render_breakdown(items, total):
 
 
 _DIV_SUFFIX = re.compile(r"(사업본부|사업부문|사업부|본부|부문)$")
+_PAREN = re.compile(r"[（(][^）)]*[）)]")
 
 
 def _division(label: str) -> str:
@@ -478,8 +479,14 @@ def _division(label: str) -> str:
 
     공시는 사업부를 품목·공장까지 쪼개 적어서 그대로 쓰면 셀렉터가 수십 줄이 된다
     (LG이노텍 19개, 현대차 25개). 접미사를 떼야 '전장부품사업부'와 '전장부품'이 합쳐진다.
+
+    괄호 안 내용도 지운다 — 삼성전기는 같은 사업부를 '컴포넌트(억개)'/'컴포넌트(億個)'처럼
+    분기마다 다른 단위 표기로 적어서 괄호를 살려두면 같은 사업부가 갈라진다. 다른 회사에서도
+    괄호는 '(주)'(법인 표기), '생석회공장(광양)'(공장 소재지) 등 부가 정보일 뿐이라 지워도
+    그룹을 잘못 합치는 부작용이 없다.
     """
-    head = re.sub(r"\s+", "", (label or "").split("·")[0])
+    head = _PAREN.sub("", (label or "").split("·")[0])
+    head = re.sub(r"\s+", "", head)
     return _DIV_SUFFIX.sub("", head) or head
 
 
