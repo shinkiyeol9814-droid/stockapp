@@ -5,7 +5,9 @@ name: Keep Streamlit Alive
 # 그래서 헤드리스 브라우저로 실제 접속하고, 잠들어 있으면 깨우기 버튼까지 누른다.
 on:
   schedule:
-    - cron: '0 1 * * *'   # 매일 한국시간 오전 10시
+    # 💡 Streamlit 측이 밝힌 절전 임계값은 12시간이다(7일 → 2~3일 → 12시간으로 계속 짧아졌다).
+    # GitHub 스케줄은 지연·누락이 잦아서, 3시간 간격이면 두 번 연속 걸러도 9시간이라 여유가 있다.
+    - cron: '0 */3 * * *'
   push:
     branches: [main]
     paths: ['.github/workflows/keep_alive.yml']
