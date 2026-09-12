@@ -284,8 +284,8 @@ def _render_inventory(data, quarterly: bool, code: str):
                               "%{x}" if quarterly else "%{x}년"))
     fig.data[0].connectgaps = False
     fig.add_trace(go.Scatter(
-        x=xs, y=[None if v is None else v / 1e8 for v in rev], name="매출", mode="lines",
-        line=dict(color="#1565C0", width=1.6), connectgaps=False,
+        x=xs, y=[None if v is None else v / 1e8 for v in rev], name="매출", mode="lines+markers",
+        line=dict(color="#1565C0", width=1.6), marker=dict(size=5), connectgaps=False,
         customdata=[("-" if v is None else _jo(v)) for v in rev],
         hovertemplate="매출 %{customdata}<extra></extra>",
     ))
@@ -295,8 +295,8 @@ def _render_inventory(data, quarterly: bool, code: str):
     if any(v is not None for v in turn):
         unit = "회/분기" if quarterly else "회/년"
         fig.add_trace(go.Scatter(
-            x=xs, y=turn, name="회전율", yaxis="y2", mode="lines",
-            line=dict(color="#8a8a8a", width=1.3, dash="dot"), connectgaps=False,
+            x=xs, y=turn, name="회전율", yaxis="y2", mode="lines+markers",
+            line=dict(color="#8a8a8a", width=1.3, dash="dot"), marker=dict(size=4), connectgaps=False,
             hovertemplate="회전율 %{y:.2f}" + unit + "<extra></extra>",
         ))
         fig.update_layout(yaxis2=dict(overlaying="y", side="right",
