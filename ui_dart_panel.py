@@ -221,7 +221,24 @@ def _header(title, value, delta_html, note=""):
     )
 
 
-def _render_inventory(data, quarterly: bool):
+_LAGS = {"래깅 없음": 0, "1분기 래깅": 1, "2분기 래깅": 2, "3분기 래깅": 3}
+
+
+def _next_periods(rows, k):
+    """마지막 분기 다음의 k개 분기 라벨. 재고를 뒤로 밀어도 최신 재고가 화면에서 사라지지 않게 x축을 늘린다."""
+    y, q = rows[-1].get("_y"), rows[-1].get("_q")
+    if y is None or q is None:
+        return []
+    out = []
+    for _ in range(k):
+        q += 1
+        if q > 4:
+            y, q = y + 1, 1
+        out.append(f"{str(y)[2:]}.{q}Q")
+    return out
+
+
+def _render_inventory(data, quarterly: bool, code: str):
     rows = data.get("rows") or []
     if not rows:
         st.caption("재고자산 데이터를 찾지 못했습니다.")
@@ -246,34 +263,60 @@ def _render_inventory(data, quarterly: bool):
             _delta_html(last["재고자산"], base["재고자산"] if base else None, label),
             f"{when} · {'연결' if last['기준'] == 'CFS' else '별도'}기준")
 
-    xs = [r["기간"] if quarterly else str(r["연도"]) for r in rows]
+    lag = 0
+    if quarterly:
+        # 재고는 매출보다 먼저 움직인다(수집 종목 48개 중 23개에서 '다음 분기 매출'과 상관이 가장 높았다).
+        # 그래서 재고를 k분기 뒤로 밀어 "그 재고가 만든 매출"과 짝지어 볼 수 있게 한다.
+        lag = _LAGS[st.selectbox("재고 래깅", list(_LAGS), index=0,
+                                 key=f"inv_lag_{code}", label_visibility="collapsed")]
+
+    xs = ([r["기간"] for r in rows] + _next_periods(rows, lag)) if quarterly else [str(r["연도"]) for r in rows]
+    inv = [None] * lag + [r["재고자산"] for r in rows]
+    rev = [r.get("매출액") for r in rows] + [None] * lag
+    # 회전율은 두 계열의 비율이라 래깅을 걸면 값 자체가 바뀐다 — 매출(t) ÷ 재고(t-lag).
+    # 짝지을 매출이 아직 없는 최근 lag개 분기는 비워 둔다.
+    turn = [(rv / iv) if (rv and iv) else None for rv, iv in zip(rev, inv)]
+
     fig = go.Figure()
     # 💡 원 단위 그대로 그리면 Plotly가 축을 "200B, 400B"로 붙인다. 억 단위로
     # 변환해서 그리고 축에 '억'을 달아야 한국 사용자가 바로 읽는다.
-    raw = [r["재고자산"] for r in rows]
-    fig.add_trace(_area_trace(xs, [v / 1e8 for v in raw], raw, "재고자산",
+    fig.add_trace(_area_trace(xs, [None if v is None else v / 1e8 for v in inv], inv, "재고자산",
                               "%{x}" if quarterly else "%{x}년"))
+    fig.data[0].connectgaps = False
+    fig.add_trace(go.Scatter(
+        x=xs, y=[None if v is None else v / 1e8 for v in rev], name="매출", mode="lines",
+        line=dict(color="#1565C0", width=1.6), connectgaps=False,
+        customdata=[("-" if v is None else _jo(v)) for v in rev],
+        hovertemplate="매출 %{customdata}<extra></extra>",
+    ))
     fig.update_yaxes(ticksuffix="억", tickformat=",.0f")
     # 💡 금액만 보면 '재고가 늘었다'가 성장 때문인지 안 팔려서인지 구분이 안 된다.
-    # 매출 대비 비율을 겹쳐 그려야 그 판단이 된다.
-    ratio = [r["비율"] for r in rows]
-    if any(v is not None for v in ratio):
-        rname = "재고/TTM매출" if quarterly else "매출대비"
-        # 재고자산이 이제 선이라, 비율선은 점선 회색으로 눌러 구분한다.
+    # 회전율을 겹쳐 그려야 그 판단이 된다.
+    if any(v is not None for v in turn):
+        unit = "회/분기" if quarterly else "회/년"
         fig.add_trace(go.Scatter(
-            x=xs, y=ratio, name=rname, yaxis="y2", mode="lines",
-            line=dict(color="#8a8a8a", width=1.3, dash="dot"),
-            connectgaps=True,
-            hovertemplate=rname + " %{y:.1f}%<extra></extra>",
+            x=xs, y=turn, name="회전율", yaxis="y2", mode="lines",
+            line=dict(color="#8a8a8a", width=1.3, dash="dot"), connectgaps=False,
+            hovertemplate="회전율 %{y:.2f}" + unit + "<extra></extra>",
         ))
         fig.update_layout(yaxis2=dict(overlaying="y", side="right",
-                                      showgrid=False, ticksuffix="%",
+                                      showgrid=False, ticksuffix="회",
                                       fixedrange=True))
-    st.plotly_chart(_lock(fig, 190), use_container_width=True,
+    _lock(fig, 215)
+    fig.update_layout(showlegend=True, margin=dict(l=0, r=10, t=24, b=20),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left",
+                                  x=0, font=dict(size=10)))
+    st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False})
     if quarterly:
-        st.caption("회색 점선은 재고 ÷ 최근 4개 분기 매출(TTM). "
-                   "당분기 매출로 나누면 값이 4배로 튀어 연간과 비교가 안 됩니다.")
+        base = "회전율 = 당분기 매출 ÷ 재고 (매출 기준, 회/분기). "
+        st.caption(base + (
+            f"래깅 {lag}분기 — 재고를 {lag}분기 뒤로 밀어 그 재고가 만든 매출과 짝지었습니다. "
+            f"최근 {lag}개 분기는 짝지을 매출이 아직 없어 회전율이 비어 있습니다."
+            if lag else
+            "재고가 매출보다 먼저 움직이는 편이라, 래깅을 걸면 같은 재고를 이후 매출과 비교할 수 있습니다."))
+    else:
+        st.caption("회전율 = 연매출 ÷ 기말 재고 (매출 기준, 회/년).")
     return {"매출액": annual_rev}
 
 
@@ -553,7 +596,7 @@ def render_dart_panel(stock_code: str):
 
     c1, c2 = st.columns(2)
     with c1:
-        inv_last = _section("재고자산", code, lambda s: _render_inventory(s, quarterly),
+        inv_last = _section("재고자산", code, lambda s: _render_inventory(s, quarterly, code),
                             data.get(inv_key), errors.get(inv_key))
     with c2:
         _section("수주잔고", code, lambda s: _render_backlog(s, inv_last, code),
