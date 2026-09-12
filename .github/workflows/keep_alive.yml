@@ -30,36 +30,52 @@ jobs:
       - name: Open the app in a real browser
         run: |
           python - <<'EOF'
-          import re, sys
+          import re, sys, time
           from playwright.sync_api import sync_playwright
 
           URL = "https://stockapp-sky.streamlit.app/"
-          MARKER = "가치평가"   # 앱 본문이 실제로 그려졌는지 확인할 문구
+          MARKER = "가치평가"                                  # 앱 본문이 그려졌는지 확인할 문구
+          WAKE = re.compile("get this app back up", re.I)     # 잠든 앱의 깨우기 버튼
+
+          def in_any_frame(page, fn):
+              """앱은 루트 문서가 아니라 iframe(/~/+/) 안에 있다 — 프레임을 가리지 않고 찾는다."""
+              for f in page.frames:
+                  try:
+                      hit = fn(f)
+                      if hit:
+                          return hit
+                  except Exception:
+                      pass
+              return None
 
           with sync_playwright() as pw:
               browser = pw.chromium.launch()
               page = browser.new_page()
               page.goto(URL, wait_until="domcontentloaded", timeout=60_000)
 
-              # 잠들어 있으면 "Yes, get this app back up!" 버튼이 나온다.
-              try:
-                  btn = page.get_by_role("button", name=re.compile("get this app back up", re.I))
-                  btn.wait_for(timeout=8_000)
-                  btn.click()
-                  print("::notice::앱이 잠들어 있어 깨우기 버튼을 눌렀습니다")
-              except Exception:
-                  print("깨우기 버튼 없음 — 이미 깨어 있는 상태")
+              woke = ok = False
+              deadline = time.time() + 240
+              while time.time() < deadline:
+                  if in_any_frame(page, lambda f: f.locator(f"text={MARKER}").count() > 0):
+                      ok = True
+                      break
+                  if not woke:
+                      btn = in_any_frame(page, lambda f: (f.get_by_role("button", name=WAKE).first
+                                                          if f.get_by_role("button", name=WAKE).count() else None))
+                      if btn:
+                          btn.click()
+                          woke = True
+                          print("::notice::앱이 잠들어 있어 깨우기 버튼을 눌렀습니다")
+                  page.wait_for_timeout(3_000)
 
-              try:
-                  # 부팅에 시간이 걸린다. 이 문구가 보이면 WebSocket 세션까지 살아난 것.
-                  page.wait_for_selector(f"text={MARKER}", timeout=180_000)
-              except Exception:
-                  print(f"::error::{URL} 에서 앱 본문('{MARKER}')을 확인하지 못했습니다")
+              if not ok:
+                  print(f"::error::앱 본문('{MARKER}')을 확인하지 못했습니다 (깨우기 시도: {woke})")
                   page.screenshot(path="keep_alive_fail.png", full_page=True)
                   browser.close()
                   sys.exit(1)
 
-              print(f"::notice::앱 정상 — '{MARKER}' 렌더링 확인")
+              page.wait_for_timeout(5_000)   # WebSocket 세션을 잠깐 유지
+              print(f"::notice::앱 정상 — '{MARKER}' 확인" + (" (잠들어 있어 깨움)" if woke else ""))
               browser.close()
           EOF
 
