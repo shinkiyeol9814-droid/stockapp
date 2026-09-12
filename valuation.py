@@ -411,6 +411,11 @@ def extract_number(val):
     m = re.search(r'-?\d+\.?\d*', s)
     return float(m.group()) if m else 0.0
 
+def _uses_float_mult(val_type: str) -> bool:
+    # PBR·EV/EBITDA·PEG는 1 내외의 소수 배수를 쓴다 (PER/POR는 정수 배수).
+    return any(k in (val_type or "") for k in ("PBR", "EBITDA", "PEG"))
+
+
 def apply_search():
     # selectbox(index=None)는 선택 전 None을 준다 — .strip()에서 터진다.
     new_name = (st.session_state.get("ui_corp_name") or "").strip()
@@ -419,8 +424,8 @@ def apply_search():
     new_val_type = st.session_state.get("ui_val_type", "POR(영업익)")
     prev_val_type = st.session_state.get("active_val_type", "POR(영업익)")
     st.session_state.active_val_type = new_val_type
-    new_is_float = "PBR" in new_val_type or "EBITDA" in new_val_type
-    prev_is_float = "PBR" in prev_val_type or "EBITDA" in prev_val_type
+    new_is_float = _uses_float_mult(new_val_type)
+    prev_is_float = _uses_float_mult(prev_val_type)
     type_changed = new_is_float != prev_is_float
     if new_is_float:
         if type_changed: st.session_state.active_target_mult = 1.0
@@ -475,7 +480,7 @@ def render_valuation_menu():
                 if q_mult:
                     mult = float(q_mult)
                     st.session_state.active_target_mult = mult
-                    if q_val and ("PBR" in q_val or "EBITDA" in q_val):
+                    if q_val and _uses_float_mult(q_val):
                         st.session_state.ui_target_mult_float = mult
                         st.session_state.ui_target_mult_int   = 10
                     else:
@@ -486,9 +491,9 @@ def render_valuation_menu():
     if 'active_val_type'    not in st.session_state: st.session_state.active_val_type    = "POR(영업익)"
     if 'active_target_mult' not in st.session_state: st.session_state.active_target_mult = 10.0
 
-    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)", "EV/EBITDA"]
+    val_options = ["PER(순이익)", "POR(영업익)", "PBR(자본총계)", "EV/EBITDA", "PEG(순이익성장)"]
 
-    is_float_type = "PBR" in st.session_state.active_val_type or "EBITDA" in st.session_state.active_val_type
+    is_float_type = _uses_float_mult(st.session_state.active_val_type)
     prev_is_float = st.session_state.get('_prev_is_float', is_float_type)
     if is_float_type != prev_is_float:
         st.session_state.pop('ui_target_mult_float', None)
@@ -546,11 +551,14 @@ def render_valuation_menu():
 
     if "EBITDA" in st.session_state.active_val_type:
         st.caption("💡 **[EV/EBITDA 안내]** EV/EBITDA는 배수(ratio) 데이터만 수집 가능하므로 주가 밴드 차트 대신 **배수 추이 차트**를 표시합니다. 적자 연도(음수 배수)는 자동 제외됩니다.")
+    if "PEG" in st.session_state.active_val_type:
+        st.caption("💡 **[PEG 안내]** PEG = PER ÷ 당기순이익 성장률(%)이며, 성장률은 **전년 대비**입니다(28년은 27년 대비). "
+                   "적자이거나 전년이 적자인 해는 N/A입니다. 성장률이 그대로 배수가 되므로, 적자 탈출처럼 성장률이 튄 해는 목표가가 매우 크게 나옵니다.")
 
     corp_name    = st.session_state.active_corp_name
     val_type     = st.session_state.active_val_type
     target_mult  = float(st.session_state.active_target_mult)
-    display_mult_str = f"{target_mult:.1f}" if ("PBR" in val_type or "EBITDA" in val_type) else f"{int(target_mult)}"
+    display_mult_str = f"{target_mult:.1f}" if _uses_float_mult(val_type) else f"{int(target_mult)}"
     cols_to_edit = ['매출액', '영업이익', '당기순이익', '자본총계', 'EV/EBITDA']
 
     if corp_name:
@@ -644,11 +652,19 @@ def render_valuation_menu():
                         for col in cols_to_edit:
                             fin_df[col] = edited_df[col].apply(extract_number_or_nan).values
 
+                    # PEG = PER ÷ 성장률 → 목표가 = PEG × 성장률 × EPS. 지표를 '순이익 × 성장률(%)'로 두면
+                    # 기존 "주가 = 배수 × 지표 ÷ 주식수" 공식이 그대로 성립한다(별도 분기 불필요).
+                    _ni = pd.to_numeric(fin_df['당기순이익'], errors='coerce')
+                    _prev_ni = _ni.shift(1)
+                    fin_df['성장률']  = np.where((_ni > 0) & (_prev_ni > 0), (_ni / _prev_ni - 1) * 100, np.nan)
+                    fin_df['PEG지표'] = np.where(fin_df['성장률'] > 0, _ni * fin_df['성장률'], np.nan)
+
                     col_p     = '당기순이익'
                     band_name = "PER"
                     if "POR" in val_type:      col_p = '영업이익';  band_name = "POR"
                     elif "PBR" in val_type:    col_p = '자본총계';  band_name = "PBR"
                     elif "EBITDA" in val_type: col_p = 'EV/EBITDA'; band_name = "EV/EBITDA"
+                    elif "PEG" in val_type:    col_p = 'PEG지표';   band_name = "PEG"
 
                     def get_t(y):
                         row = fin_df[fin_df['Year'] == y]
@@ -822,7 +838,16 @@ def render_valuation_menu():
                         fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[today_m, today_m], mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
                         fig2.add_annotation(x=extended_dates[-1] + timedelta(days=2), y=today_m, text=f"현재: {today_m:.1f}x", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=11, color="white", weight="bold"), bgcolor="rgba(255,0,0,0.8)", bordercolor="red", borderpad=3, borderwidth=1)
 
-                    bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{_fmt_metric(row[col_p])}" for _, row in fin_df.iterrows()]
+                    if "PEG" in val_type:
+                        # PEG는 지표 금액(순이익×성장률)이 그 자체로는 안 읽히므로 구성 요소를 적는다.
+                        bottom_x_labels = []
+                        for _, row in fin_df.iterrows():
+                            n, g = pd.to_numeric(row['당기순이익'], errors='coerce'), row['성장률']
+                            per_y = (curr_marcap / n) if pd.notna(n) and n > 0 else np.nan
+                            body = "N/A" if (pd.isna(per_y) or pd.isna(g)) else f"PER {per_y:,.1f}<br>성장 {g:,.0f}%"
+                            bottom_x_labels.append(f"{str(row['Year'])[-2:]}년<br>{body}")
+                    else:
+                        bottom_x_labels = [f"{str(row['Year'])[-2:]}년<br>{_fmt_metric(row[col_p])}" for _, row in fin_df.iterrows()]
                     fig2.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=bottom_x_labels, showticklabels=True)
 
                     # EV/EBITDA 모드에서는 이게 유일한 차트 → 높이 키움
