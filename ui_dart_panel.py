@@ -459,15 +459,39 @@ def _render_breakdown(items, total):
             )
 
 
+_DIV_SUFFIX = re.compile(r"(사업본부|사업부문|사업부|본부|부문)$")
+
+
+def _division(label: str) -> str:
+    """'전장부품사업부 · 모터/센서 · 광주' -> '전장부품'.
+
+    공시는 사업부를 품목·공장까지 쪼개 적어서 그대로 쓰면 셀렉터가 수십 줄이 된다
+    (LG이노텍 19개, 현대차 25개). 접미사를 떼야 '전장부품사업부'와 '전장부품'이 합쳐진다.
+    """
+    head = re.sub(r"\s+", "", (label or "").split("·")[0])
+    return _DIV_SUFFIX.sub("", head) or head
+
+
+def _by_division(periods):
+    """가동률을 사업부 단위로 묶는다. 하위 품목·공장 값은 단순평균(생산능력 가중치는 공시에 없다)."""
+    out = []
+    for p in periods:
+        groups = {}
+        for r in (p.get("rows") or []):
+            groups.setdefault(_division(r.get("부문")), []).append(r["가동률"])
+        out.append({**p, "rows": [{"부문": k, "가동률": sum(v) / len(v)} for k, v in groups.items()]})
+    return out
+
+
 def _render_utilization(data, code):
-    """부문별 가동률 추이. 재고/수주잔고와 같은 꺾은선으로 그린다."""
-    periods = data.get("util") or []
+    """사업부별 가동률 추이. 재고/수주잔고와 같은 꺾은선으로 그린다."""
+    periods = _by_division(data.get("util") or [])
     if not periods:
         st.caption("이 종목은 가동률을 공시하지 않습니다. "
                    "(제조업이 아니거나 공시 양식이 다른 경우입니다)")
         return
 
-    seg, names, seg_label = _pick_segment(periods, "rows", "가동률 부문", code)
+    seg, names, seg_label = _pick_segment(periods, "rows", "가동률 사업부", code)
 
     def value_of(p):
         if seg is None:
@@ -493,7 +517,7 @@ def _render_utilization(data, code):
     prev = shown[-2] if len(shown) > 1 else None
     base = yoy or prev
     note = (f"{html.escape(str(last.get('보고서', '-')))}"
-            f" · {'전사 평균' if last.get('total') is not None else '부문 단순평균'}"
+            f" · {'전사 평균' if last.get('total') is not None else '사업부 단순평균'}"
             if seg is None else html.escape(str(last.get("보고서", "-"))))
     _header(f"가동률{'' if seg is None else ' · ' + html.escape(seg_label)}",
             f"{last_v:.1f}%",
@@ -514,8 +538,9 @@ def _render_utilization(data, code):
                     config={"displayModeBar": False, "scrollZoom": False})
 
     if len(names) > 1 and seg is None:
-        st.caption(f"부문 {len(names)}개의 평균입니다. 위 선택 상자로 개별 "
-                   f"부문만 볼 수 있습니다. 점선은 100%(만가동) 기준선입니다.")
+        st.caption(f"사업부 {len(names)}개의 평균입니다. 공시의 품목·공장별 값을 사업부로 묶어 "
+                   f"단순평균했습니다. 위 선택 상자로 개별 사업부만 볼 수 있습니다. "
+                   f"점선은 100%(만가동) 기준선입니다.")
 
 
 def _section(what, code, render, section, err):
