@@ -80,8 +80,3 @@ jobs:
           done
           echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
 
-      - name: Ping Streamlit App (keep awake)
-        if: always()
-        run: |
-          curl -s -o /dev/null -w "%{http_code}\n" "https://stockapp-sky.streamlit.app/" || true
-          curl -s -o /dev/null -w "%{http_code}\n" "https://stockapp-sky-dev.streamlit.app/" || true
