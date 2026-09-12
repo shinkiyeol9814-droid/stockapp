@@ -38,6 +38,24 @@ jobs:
       - name: Install Dependencies
         run: pip install requests
 
+      # 💡 corp_map.json은 .gitignore돼 있어 매 실행이 체크아웃 직후엔 캐시가 없다.
+      # 그러면 매번 corpCode.xml(3.6MB)을 새로 받아야 하고, 앱 요청 1건(원래 수십 초)이
+      # 이 다운로드 하나 때문에 4분 넘게 걸린 적이 있었다(다운로드 자체에 벽시계 예산은
+      # 걸어뒀지만, 매번 새로 받는 비용은 그대로 남는다). 종목 구성은 상장/폐지 때만
+      # 바뀌므로(dart_fin의 TTL도 7일) 주 단위 키로 캐시해 대부분의 실행이 다운로드를
+      # 아예 건너뛰게 한다.
+      - name: Compute corp map cache key
+        id: corpmap_key
+        run: echo "value=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache DART corp map
+        uses: actions/cache@v4
+        with:
+          path: data/dart/corp_map.json
+          key: dart-corp-map-${{ steps.corpmap_key.outputs.value }}
+          restore-keys: |
+            dart-corp-map-
+
       - name: Collect DART data
         timeout-minutes: 50
         env:

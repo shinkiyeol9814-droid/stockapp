@@ -43,6 +43,12 @@ _INV_BUDGET = 30      # 재고자산 병렬 조회 전체 예산(초)
 _REPORT_BUDGET = 150  # 정기보고서 원문 병렬 조회 예산(초) — 못 받은 원문은 pending으로 남아 다음 실행이 이어받는다
 # corp_code 목록은 신규 상장/사명변경 때만 바뀐다. 매번 3.6MB를 받을 이유가 없다.
 _CORP_MAP_TTL_DAYS = 7
+# 💡 requests의 read timeout은 "바이트 간격"만 잰다 — DART가 끊기지 않고 느리게
+# 트리클하면 read timeout이 안 걸리고 몇 분이고 계속 기다린다(다른 엔드포인트에서
+# 이미 겪은 문제와 같은 종류). 이 호출은 종목별 시간 예산이 시작되기 전(main()의
+# 맨 앞)에 실행돼 앱 요청 1건 처리(수십 초)가 실제로는 corp_map 하나 때문에
+# 4분 넘게 걸린 사고가 있었다 — 벽시계 예산으로 감싸 상한을 둔다.
+_CORPMAP_BUDGET = 30
 
 
 def _api_key() -> str:
@@ -149,7 +155,10 @@ def get_corp_map(force: bool = False) -> dict:
             except Exception:
                 pass
     try:
-        return _download_corp_map()
+        results, pending = _map_until(lambda _: _download_corp_map(), [None], 1, _CORPMAP_BUDGET)
+        if pending:
+            raise DartTimeout(f"corpCode.xml 다운로드가 {_CORPMAP_BUDGET}초 내에 끝나지 않았습니다")
+        return results[0]
     except Exception:
         # 갱신에 실패해도 오래된 캐시가 있으면 그걸 쓴다 — 종목코드 매핑은
         # 하루이틀 묵어도 거의 문제가 없다.

@@ -172,21 +172,32 @@ def _q_label(period: str) -> str:
         return period
 
 
-def _area_trace(xs, scaled, raw, label, hover_x="%{x}", fmt=None):
+_UP_FILL, _DOWN_FILL = "rgba(239,83,80,0.10)", "rgba(21,101,192,0.10)"
+
+
+def _area_trace(xs, scaled, raw, label, hover_x="%{x}", fmt=None, fixed_color=None):
     """
     재고자산·수주잔고가 같은 모양으로 보이도록 만든 공용 면적 꺾은선.
 
     두 차트가 나란히 놓이는데 하나는 막대, 하나는 선이면 비교가 안 된다.
     한 곳에서만 만들어야 나중에 한쪽만 바뀌는 일이 없다.
+
+    fixed_color: 주면 오르내림과 무관하게 그 색으로 고정한다. 재고자산은 '쌓여 있는 양' 자체를
+    보여주는 지표라 방향과 상관없이 항상 빨강으로 표시한다(매출·회전율과 구분되는 항목 색).
+    안 주면 기존처럼 첫/마지막 값 비교로 상승(빨강)/하락(파랑)을 정한다(수주잔고가 이 방식을 쓴다).
     """
-    # 💡 결측(None)을 건너뛰고 첫/마지막 실측값으로 방향을 정한다.
-    # 부문을 골라 보면 그 부문이 없던 분기가 None으로 남는데, 예전 코드는
-    # scaled[0]을 그대로 비교해서 첫 분기가 비어 있으면 TypeError로 죽었다
-    # (HD현대중공업에서 '조 선'을 고르면 바로 재현됐다).
-    real = [v for v in scaled if v is not None]
-    rising = len(real) > 1 and real[-1] >= real[0]
-    color = _UP if rising else _DOWN
-    fill = "rgba(239,83,80,0.10)" if rising else "rgba(21,101,192,0.10)"
+    if fixed_color:
+        color = fixed_color
+        fill = _UP_FILL if fixed_color == _UP else _DOWN_FILL if fixed_color == _DOWN else "rgba(150,150,150,0.10)"
+    else:
+        # 💡 결측(None)을 건너뛰고 첫/마지막 실측값으로 방향을 정한다.
+        # 부문을 골라 보면 그 부문이 없던 분기가 None으로 남는데, 예전 코드는
+        # scaled[0]을 그대로 비교해서 첫 분기가 비어 있으면 TypeError로 죽었다
+        # (HD현대중공업에서 '조 선'을 고르면 바로 재현됐다).
+        real = [v for v in scaled if v is not None]
+        rising = len(real) > 1 and real[-1] >= real[0]
+        color = _UP if rising else _DOWN
+        fill = _UP_FILL if rising else _DOWN_FILL
     _fmt = fmt or _jo
     return go.Scatter(
         x=xs, y=scaled, mode="lines+markers", name=label,
@@ -281,7 +292,7 @@ def _render_inventory(data, quarterly: bool, code: str):
     # 💡 원 단위 그대로 그리면 Plotly가 축을 "200B, 400B"로 붙인다. 억 단위로
     # 변환해서 그리고 축에 '억'을 달아야 한국 사용자가 바로 읽는다.
     fig.add_trace(_area_trace(xs, [None if v is None else v / 1e8 for v in inv], inv, "재고자산",
-                              "%{x}" if quarterly else "%{x}년"))
+                              "%{x}" if quarterly else "%{x}년", fixed_color=_UP))
     fig.data[0].connectgaps = False
     fig.add_trace(go.Scatter(
         x=xs, y=[None if v is None else v / 1e8 for v in rev], name="매출", mode="lines+markers",
