@@ -27,6 +27,28 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
+      # 💡 절전(잠듦)과 인증 리디렉션 루프(ERR_TOO_MANY_REDIRECTS)는 증상이 달라 따로 본다.
+      # Streamlit Cloud는 앱 도메인 → share.streamlit.io/-/auth/app → 앱 도메인 순으로 쿠키를
+      # 심는데, 이 사슬이 깨지면 쿠키를 허용해도 무한 반복이 돼 앱이 아예 안 열린다.
+      # 쿠키를 막으면 루프가 나는 건 정상 동작이라(인증에 쿠키가 필요함) 쿠키를 켜고 확인한다.
+      # 정상이면 리디렉션 3회 안쪽에 200으로 끝난다.
+      - name: Check the auth redirect chain
+        run: |
+          JAR="$RUNNER_TEMP/keepalive_cookies.txt"
+          OUT=$(curl -s -o /dev/null -m 60 -L --max-redirs 10 -c "$JAR" -b "$JAR" \
+                 -w '%{http_code}|%{num_redirects}|%{url_effective}' \
+                 https://stockapp-sky.streamlit.app/) || OUT="curl-error|0|-"
+          CODE=${OUT%%|*}; REST=${OUT#*|}; HOPS=${REST%%|*}; FINAL=${REST#*|}
+          echo "HTTP $CODE · 리디렉션 ${HOPS}회 · 최종 $FINAL"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::인증 리디렉션이 끝나지 않았습니다 (HTTP $CODE, ${HOPS}회, 최종 $FINAL) — 브라우저에는 ERR_TOO_MANY_REDIRECTS로 보입니다"
+            exit 1
+          fi
+          if [ "$HOPS" -ge 6 ]; then
+            echo "::warning::리디렉션이 ${HOPS}회로 늘었습니다 (평소 3회) — 인증 흐름이 바뀌었을 수 있습니다"
+          fi
+          echo "::notice::인증 리디렉션 정상 (${HOPS}회 후 200)"
+
       - name: Open the app in a real browser
         run: |
           python - <<'EOF'
