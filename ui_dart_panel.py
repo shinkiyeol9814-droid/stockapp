@@ -201,7 +201,11 @@ def _area_trace(xs, scaled, raw, label, hover_x="%{x}", fmt=None, fixed_color=No
     _fmt = fmt or _jo
     return go.Scatter(
         x=xs, y=scaled, mode="lines+markers", name=label,
-        line=dict(color=color, width=2), marker=dict(size=5),
+        line=dict(color=color, width=2),
+        # 💡 수주잔고·가동률은 선과 점이 같은 빨강 하나뿐이라 점이 선 위에 묻혀 거의 안
+        # 보였다(재고자산·매출·회전율처럼 색이 여러 개 섞인 차트에서는 안 보이던 문제).
+        # 매크로 탭 스파크라인과 같은 방식으로 흰 테두리를 둘러 선과 점을 분리한다.
+        marker=dict(size=5, line=dict(color="#fff", width=1)),
         fill="tozeroy", fillcolor=fill,
         customdata=[("-" if v is None else _fmt(v)) for v in raw],
         hovertemplate=f"{hover_x}<br>{label} %{{customdata}}<extra></extra>",
@@ -296,7 +300,7 @@ def _render_inventory(data, quarterly: bool, code: str):
     fig.data[0].connectgaps = False
     fig.add_trace(go.Scatter(
         x=xs, y=[None if v is None else v / 1e8 for v in rev], name="매출", mode="lines+markers",
-        line=dict(color="#1565C0", width=1.6), marker=dict(size=5), connectgaps=False,
+        line=dict(color="#1565C0", width=1.6), marker=dict(size=5, line=dict(color="#fff", width=1)), connectgaps=False,
         customdata=[("-" if v is None else _jo(v)) for v in rev],
         hovertemplate="매출 %{customdata}<extra></extra>",
     ))
@@ -307,7 +311,8 @@ def _render_inventory(data, quarterly: bool, code: str):
         unit = "회/분기" if quarterly else "회/년"
         fig.add_trace(go.Scatter(
             x=xs, y=turn, name="회전율", yaxis="y2", mode="lines+markers",
-            line=dict(color="#8a8a8a", width=1.3, dash="dot"), marker=dict(size=4), connectgaps=False,
+            line=dict(color="#8a8a8a", width=1.3, dash="dot"),
+            marker=dict(size=4, line=dict(color="#fff", width=1)), connectgaps=False,
             hovertemplate="회전율 %{y:.2f}" + unit + "<extra></extra>",
         ))
         fig.update_layout(yaxis2=dict(overlaying="y", side="right",
