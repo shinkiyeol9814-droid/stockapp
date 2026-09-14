@@ -114,6 +114,7 @@ def _merged_quotes():
         print(f"[ui_sector] 시세/업종 조회 실패: {type(e).__name__}: {e}")
         return None
     df = q.copy()
+    df.attrs["as_of"] = q.attrs.get("as_of", "")
     df["업종명"] = df["Code"].map(ind)
     df = df.dropna(subset=["업종명"])
     # 스팩은 업종이 '금융 지원 서비스업'으로 묶이는데 거의 움직이지 않아
@@ -152,9 +153,11 @@ def get_sector_performance():
             })
         if not rows:
             return None
-        return (pd.DataFrame(rows)
-                .sort_values("등락률_num", ascending=False)
-                .reset_index(drop=True))
+        out = (pd.DataFrame(rows)
+               .sort_values("등락률_num", ascending=False)
+               .reset_index(drop=True))
+        out.attrs["as_of"] = df.attrs.get("as_of", "")
+        return out
     except Exception as e:
         print(f"[ui_sector] 업종 집계 실패: {type(e).__name__}: {e}")
         return None
@@ -233,7 +236,11 @@ def get_sector_snapshot():
     바꾸지 않고, 화면용 래퍼를 따로 둔다.
     """
     df = get_sector_performance()
-    now_txt = datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
+    # 💡 기준일은 '조회 시각'이 아니라 시세가 실제로 찍힌 거래일이다.
+    # 소스가 일별 종가 파일이라 휴장일·장중에는 직전 거래일 값을 쓰는데,
+    # 조회 시각을 적으면 금요일 종가가 월요일 값처럼 보인다.
+    trade_day = (df.attrs.get("as_of") if df is not None else "") or ""
+    now_txt = trade_day or datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
 
     if df is None or df.empty:
         snap, saved = _load_snapshot()

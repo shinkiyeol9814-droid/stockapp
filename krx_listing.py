@@ -90,11 +90,32 @@ def _from_fdr() -> pd.DataFrame | None:
         return None
 
 
+def _has_prices(df: pd.DataFrame) -> bool:
+    """
+    시세가 실제로 채워져 있는지.
+
+    💡 캐시 리포지토리는 주말·휴일에도 CSV를 올리는데, 그 파일은 종목 구성만
+    있고 Close/Marcap/등락률이 전부 '-'다. 종목명 검색에는 문제가 없지만
+    시세가 필요한 쪽(섹터 집계·신고가)에서는 '조회는 성공했는데 값이 전부
+    NaN'이 되어, 조인 결과가 0행이 되고도 아무도 실패라고 말하지 않는다.
+    실제로 섹터 탭이 주말 내내 3일 전 스냅샷을 '장 시작 전'이라는 엉뚱한
+    라벨로 보여주고 있었다.
+    """
+    if df is None or "Close" not in df.columns:
+        return False
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    return bool(close.notna().sum() >= max(100, len(df) * 0.5))
+
+
 # ── 소스 ②: fdr가 쓰는 캐시 리포지토리를 직접, 날짜를 되짚어가며 ───────────────
-def _from_cache_repo(max_back_days: int = 10) -> pd.DataFrame | None:
+def _from_cache_repo(max_back_days: int = 10,
+                     require_prices: bool = False) -> pd.DataFrame | None:
     """
     fdr이 하지 않는 '이전 날짜 되짚기'를 대신 한다. 장 마감 직후 당일 CSV가
     아직 안 올라온 구간을 이 소스가 메운다(전날 종목 구성으로도 검색은 충분).
+
+    require_prices=True면 시세가 빈 파일(휴장일·장 마감 전)을 건너뛰고 계속
+    되짚어, 값이 실제로 있는 가장 최근 거래일을 찾는다.
     """
     today = datetime.now()
     for i in range(max_back_days):
@@ -102,9 +123,16 @@ def _from_cache_repo(max_back_days: int = 10) -> pd.DataFrame | None:
         try:
             df = pd.read_csv(_FDR_CACHE_REPO.format(date=date_str), dtype={"Code": str})
             norm = _normalize(df)
-            if norm is not None:
-                print(f"[krx_listing] 캐시 리포지토리 {date_str} 사용 ({len(norm)}종목)")
-                return norm
+            if norm is None:
+                continue
+            if require_prices and not _has_prices(norm):
+                print(f"[krx_listing] 캐시 리포지토리 {date_str}: 시세가 비어 있음(휴장일/마감 전) — 이전 날짜로")
+                continue
+            print(f"[krx_listing] 캐시 리포지토리 {date_str} 사용 ({len(norm)}종목)")
+            # 어느 거래일 값인지 함께 들려보낸다 — 화면이 '조회 시각'을
+            # 기준일로 표시하면 휴장일에 사흘 전 종가를 오늘 값처럼 보여준다.
+            norm.attrs["as_of"] = date_str
+            return norm
         except Exception:
             continue
     print(f"[krx_listing] 캐시 리포지토리 {max_back_days}일치 모두 실패")
@@ -220,13 +248,19 @@ def fetch_krx_marcap() -> pd.DataFrame:
     그래서 그 컬럼을 주는 소스(① fdr, ② 캐시 리포지토리)까지만 쓰고,
     없으면 조용히 빈손으로 넘어가지 않고 예외를 던진다.
     """
-    for label, fn in (("fdr", _from_fdr), ("캐시 리포지토리", _from_cache_repo)):
+    sources = (("fdr", _from_fdr),
+               ("캐시 리포지토리", lambda: _from_cache_repo(require_prices=True)))
+    for label, fn in sources:
         df = fn()
         if df is None:
             continue
         missing = [c for c in _PRICE_COLS if c not in df.columns]
         if missing:
             print(f"[krx_listing] {label}: 시세 컬럼 누락 {missing} — 다음 소스로")
+            continue
+        # 컬럼이 있어도 값이 비어 있으면 쓸 수 없다 (위 _has_prices 주석 참고).
+        if not _has_prices(df):
+            print(f"[krx_listing] {label}: 시세 값이 비어 있음 — 다음 소스로")
             continue
         return df
     raise RuntimeError(
