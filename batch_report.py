@@ -133,14 +133,20 @@ async def get_all_reports_from_telegram(client, start_time, end_time):
                     pdf_path = await client.download_media(message.document, file=f"temp_pdfs/{file_name}")
                     
                     try:
+                        # 💡 예전엔 유효한 페이지를 '하나' 찾으면 break 했다.
+                        # 그러면 사실상 1페이지만 읽는데, 1페이지에는 목표주가와
+                        # 요약 코멘트만 있고 밸류에이션 근거("2026년 EPS 2,988원에
+                        # Target Multiple 17.1배 적용")는 보통 2~3페이지 Valuation
+                        # 절에 있다. 그래서 목표주가·투자의견은 잘 나오는데
+                        # 평가방식만 87%가 null이었다. 앞 3페이지를 모두 이어붙인다.
                         doc = fitz.open(pdf_path)
-                        valid_text = ""
+                        pages = []
                         for page_num in range(min(3, doc.page_count)):
                             page_text = doc[page_num].get_text()
                             if len(page_text) > 200:
-                                valid_text = page_text
-                                break 
+                                pages.append(page_text)
                         doc.close()
+                        valid_text = "\n".join(pages)
                         
                         if not valid_text:
                             print(f"  ⏩ [제외] {file_name} (사유: 3페이지 내 유효 텍스트 없음/통이미지)")
@@ -186,7 +192,9 @@ def analyze_chunk_with_gemini(chunk_docs):
     if not chunk_docs: return []
     prompt_text = ""
     for d in chunk_docs:
-        safe_text = d['text'][:2500] 
+        # 2,500자로 자르면 Valuation 절이 그대로 잘려나간다(위 PDF 추출 주석 참고).
+        # 3페이지분을 담을 수 있게 늘린다.
+        safe_text = d['text'][:6000]
         prompt_text += f"\n\n[문서 ID: {d['id']}]\n{safe_text}"
         
     prompt = f"""너는 증권사 레포트 전문 분석가야.

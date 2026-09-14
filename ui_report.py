@@ -142,7 +142,9 @@ def render_report_summary():
                         f"<b style='color: #0056b3;'>💡 핵심 투자 포인트</b>"
                         f"<ul style='margin-top: 6px; padding-left: 20px;'>{points_html}</ul>"
                         f"<div style='margin-top: 10px; font-size: 12px; color: #888; background-color: #f9f9f9; padding: 8px; border-radius: 4px;'>"
-                        f"<b>평가 방식:</b> {_e(row.get('평가방식', 'N/A'))}"
+                        # 💡 .get(k, 'N/A')는 키가 있고 값이 None이면 기본값을 쓰지 않는다.
+                        # 배치가 "없으면 null"로 저장하므로 화면에 그대로 'None'이 찍혔다.
+                        f"<b>평가 방식:</b> {_e(row.get('평가방식') or '레포트에 명시되지 않음')}"
                         f"</div>"
                         f"</div>"
                         f"</details>"
