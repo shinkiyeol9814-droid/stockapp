@@ -79,6 +79,11 @@ def increment_api_usage():
 async def get_all_reports_from_telegram(client, start_time, end_time):
     print(f"\n📥 텔레그램 레포트 수집 시작")
     print(f"  ⏱️ 수집 타겟 구간: {start_time.strftime('%Y-%m-%d %H:%M')} ~ {end_time.strftime('%Y-%m-%d %H:%M')}")
+    # 💡 조회 개수를 100으로 고정하면 주말처럼 구간이 길어졌을 때 start_time에
+    # 닿기 전에 목록이 끝나 앞부분이 조용히 잘린다. 구간 하루당 100건으로 잡는다.
+    span_days = max(1.0, (end_time - start_time).total_seconds() / 86400)
+    scan_limit = min(500, int(100 * span_days))
+    print(f"  🔎 채널당 최근 {scan_limit}건까지 훑습니다 (구간 {span_days:.1f}일)")
     
     docs_to_process = []
     doc_id_counter = 1
@@ -87,7 +92,7 @@ async def get_all_reports_from_telegram(client, start_time, end_time):
     # [A] 버틀러 요약 텍스트
     for channel in TARGET_CHANNELS_TEXT:
         try:
-            async for message in client.iter_messages(channel, limit=100):
+            async for message in client.iter_messages(channel, limit=scan_limit):
                 # 💡 텔레그램의 UTC 시간을 한국 시간(KST)으로 변환
                 msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
                 
@@ -111,7 +116,7 @@ async def get_all_reports_from_telegram(client, start_time, end_time):
     os.makedirs('temp_pdfs', exist_ok=True)
     for channel in TARGET_CHANNELS_PDF:
         try:
-            async for message in client.iter_messages(channel, limit=100):
+            async for message in client.iter_messages(channel, limit=scan_limit):
                 msg_time_kst = message.date.replace(tzinfo=None) + timedelta(hours=9)
                 
                 if msg_time_kst < start_time: break 
@@ -422,9 +427,17 @@ async def main():
         file_name = f"data/broker_report/previous_day_report_{today_str}.json"
         
         if hour <= 8:
-            # 아침에 도는 경우 (어제 20:00 ~ 오늘 07:00)
-            yesterday_20 = today_20 - timedelta(days=1)
-            fetch_start = yesterday_20
+            # 아침에 도는 경우 (직전 영업일 20:00 ~ 오늘 07:00)
+            #
+            # 💡 예전엔 무조건 '어제 20:00'이었다. 그러면 월요일 아침이 일요일
+            # 밤 11시간만 보게 되어, 금요일 저녁부터 일요일까지 올라온 레포트가
+            # 통째로 빠진다. 실제로 2026-09-07(월)은 수집 결과가 없어
+            # previous_day_report 파일 자체가 만들어지지 않았다.
+            # 토·일을 건너뛰어 직전 영업일 저녁까지 거슬러 올라간다.
+            prev = now - timedelta(days=1)
+            while prev.weekday() >= 5:      # 5=토, 6=일
+                prev -= timedelta(days=1)
+            fetch_start = prev.replace(hour=20, minute=0, second=0, microsecond=0)
             fetch_end = today_07
         else:
             # 밤(22, 23시)에 도는 경우 (오늘 20:00 ~ 내일 07:00)
