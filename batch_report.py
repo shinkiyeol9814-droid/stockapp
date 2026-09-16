@@ -75,6 +75,59 @@ def increment_api_usage():
         
     return current_count
 
+# 💡 밸류에이션 근거가 실린 페이지를 찾아내기 위한 신호어.
+# "2026년 EPS 2,988원에 Target Multiple 17.1배 적용" 같은 문장이 있는 쪽을 고른다.
+_VAL_KW = re.compile(
+    r"목표주가\s*산출|산출\s*근거|밸류에이션|Valuation|적용\s*배수|"
+    r"Target\s*(?:Multiple|P/?E\s*R?|Price)|목표\s*P\s*E\s*R|목표\s*PER|"
+    r"PER\s*\d|P/E\s*\d|EV/EBITDA|EV/EBIT|P/B\s*\d|PBR\s*\d|"
+    r"SOTP|DCF|DDM|RIM|WACC|배당할인|잔여이익|"
+    r"배를?\s*적용|배\s*적용|할증|할인\s*적용|Peer\s*그룹|피어\s*그룹",
+    re.I)
+
+
+def _extract_report_text(pdf_path, max_pages=8, budget=6000):
+    """
+    레포트 PDF에서 AI에 넘길 텍스트를 고른다: 1페이지(요약) + 밸류에이션 근거 페이지.
+
+    💡 왜 '앞 N페이지'가 아닌가 — 1페이지에는 목표주가와 요약 코멘트만 있고
+    근거는 뒤쪽 Valuation 절에 있는 레포트가 많다. 앞에서부터 기계적으로
+    자르면 그 절을 못 보고, 실제로 평가방식이 366건 중 319건(87%) 비었다.
+    그렇다고 PDF 전체를 넘기면 토큰이 감당이 안 된다.
+    그래서 페이지마다 밸류에이션 신호어 개수를 세어 높은 쪽을 우선 담는다.
+
+    1페이지는 종목명·증권사·목표주가가 있어 무조건 포함한다.
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        pages = []
+        for i in range(min(max_pages, doc.page_count)):
+            t = doc[i].get_text()
+            if len(t) > 200:
+                pages.append((i, t))
+        doc.close()
+    except Exception as e:
+        print(f"  ⚠️ PDF 열기 실패: {type(e).__name__}: {e}")
+        return ""
+    if not pages:
+        return ""
+
+    chosen = [pages[0]]
+    rest = [p for p in pages[1:] if _VAL_KW.search(p[1])]
+    rest.sort(key=lambda p: -len(_VAL_KW.findall(p[1])))
+    chosen += rest[:2]
+    chosen.sort(key=lambda p: p[0])          # 원래 페이지 순서로 되돌린다
+
+    out, used = [], 0
+    for idx, text in chosen:
+        room = budget - used
+        if room <= 0:
+            break
+        out.append(f"[p.{idx + 1}]\n{text[:room]}")
+        used += min(len(text), room)
+    return "\n".join(out)
+
+
 # 💡 데이터 수집 함수 (Fix된 시간 구간 적용)
 async def get_all_reports_from_telegram(client, start_time, end_time):
     print(f"\n📥 텔레그램 레포트 수집 시작")
@@ -133,23 +186,10 @@ async def get_all_reports_from_telegram(client, start_time, end_time):
                     pdf_path = await client.download_media(message.document, file=f"temp_pdfs/{file_name}")
                     
                     try:
-                        # 💡 예전엔 유효한 페이지를 '하나' 찾으면 break 했다.
-                        # 그러면 사실상 1페이지만 읽는데, 1페이지에는 목표주가와
-                        # 요약 코멘트만 있고 밸류에이션 근거("2026년 EPS 2,988원에
-                        # Target Multiple 17.1배 적용")는 보통 2~3페이지 Valuation
-                        # 절에 있다. 그래서 목표주가·투자의견은 잘 나오는데
-                        # 평가방식만 87%가 null이었다. 앞 3페이지를 모두 이어붙인다.
-                        doc = fitz.open(pdf_path)
-                        pages = []
-                        for page_num in range(min(3, doc.page_count)):
-                            page_text = doc[page_num].get_text()
-                            if len(page_text) > 200:
-                                pages.append(page_text)
-                        doc.close()
-                        valid_text = "\n".join(pages)
-                        
+                        valid_text = _extract_report_text(pdf_path)
+
                         if not valid_text:
-                            print(f"  ⏩ [제외] {file_name} (사유: 3페이지 내 유효 텍스트 없음/통이미지)")
+                            print(f"  ⏩ [제외] {file_name} (사유: 유효 텍스트 없음/통이미지)")
                         else:
                             file_name_lower = file_name.lower()
                             text_lower = valid_text.lower()
