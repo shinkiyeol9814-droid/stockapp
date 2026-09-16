@@ -28,6 +28,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 💡 상태 파일은 배포 브랜치(main)가 아니라 batch-state 브랜치에 둔다.
+      # 이 파일은 앱이 읽지 않는 '배치 전용 중복방지 목록'인데, main에 5분마다
+      # 커밋되면서 Streamlit Cloud가 그때마다 앱을 재시작했다 — 장중 하루
+      # 70회 이상이고, 재시작 순간에 접속하면 인증 리디렉션이 꼬여
+      # ERR_TOO_MANY_REDIRECTS로 앱이 아예 안 열린다.
+      - name: Restore alert state
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data/surge_alert
+          if curl -fsSL -H "Authorization: token $GH_TOKEN"                   -H "Accept: application/vnd.github.raw"                   "https://api.github.com/repos/${{ github.repository }}/contents/data/surge_alert/alerted_today.json?ref=batch-state"                   -o data/surge_alert/alerted_today.json; then
+            echo "batch-state에서 상태 복원 ($(wc -c < data/surge_alert/alerted_today.json) bytes)"
+          else
+            # 브랜치나 파일이 없으면 빈 상태로 시작한다. 그날 알림이 한 번
+            # 중복될 수 있을 뿐, 배치가 멈추지는 않는다.
+            echo '{}' > data/surge_alert/alerted_today.json
+            echo "::warning::batch-state에 상태가 없어 빈 상태로 시작합니다"
+          fi
+
       - name: Run Script
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -38,24 +57,23 @@ jobs:
           SURGE_ALERT_CHAT: ${{ secrets.SURGE_ALERT_CHAT }}
         run: python batch_surge_alert.py
 
-      - name: Commit and Push
+      - name: Save alert state (off the deploy branch)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          # 💡 예전엔 `git add data/` 로 data 폴더 전체를 담았다. 그러면 이 배치가
-          # 만들지도 않은 다른 배치의 상태 파일(급등알림 alerted_today.json 등)까지
-          # 커밋에 끌려들어와, 5분마다 도는 급등 배치와 불필요하게 충돌했다.
-          # 이 배치가 실제로 쓰는 경로만 스테이징한다.
-          git add data/surge_alert/
-          git commit -m "Auto-update: Surge alert state" || { echo "No changes to commit"; exit 0; }
-          # 💡 다른 배치가 그 사이 push 했으면 rebase 후 재시도한다.
-          # 급등 배치가 5분 간격이라 몇 분 걸리는 배치는 경합이 흔하다.
-          BR="${{ github.ref_name }}"
-          for i in 1 2 3 4 5; do
-            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
-              echo "push 성공 (시도 $i)"; exit 0
-            fi
-            git rebase --abort 2>/dev/null || true
-            sleep $((i * 5))
-          done
-          echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
+          URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
+          WORK="$RUNNER_TEMP/state"
+          rm -rf "$WORK"
+          git clone --depth 1 --branch batch-state "$URL" "$WORK" 2>/dev/null || {
+            git clone --depth 1 "$URL" "$WORK"
+            git -C "$WORK" checkout --orphan batch-state
+            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
+          }
+          mkdir -p "$WORK/data/surge_alert"
+          cp data/surge_alert/alerted_today.json "$WORK/data/surge_alert/alerted_today.json"
+          git -C "$WORK" add data/surge_alert/alerted_today.json
+          git -C "$WORK" commit -m "Surge alert state" || { echo "변경 없음"; exit 0; }
+          # batch-state는 이 배치만 쓰므로 경합이 없다 — main처럼 rebase 재시도가 필요 없다.
+          git -C "$WORK" push origin batch-state

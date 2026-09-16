@@ -29,3 +29,7 @@ data/sector/last_snapshot.json
 # 커밋해도 되지만 주기적으로 통째로 바뀌어 diff만 키운다.
 data/dart/corp_map.json
 data/dart/*.tmp
+
+# 급등알림 배치 상태 — batch-state 브랜치에서 관리한다.
+# main에 커밋되면 Streamlit Cloud가 5분마다 앱을 재시작한다.
+data/surge_alert/
