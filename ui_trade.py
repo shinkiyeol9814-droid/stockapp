@@ -21,7 +21,8 @@ from datetime import datetime
 
 # 세부품목 카탈로그(HS코드 ↔ 관련 상장종목)는 trade_items.py 에 분리했다 —
 # 70여 개라 여기 두면 화면 로직이 안 보인다.
-from trade_items import TRADE_ITEMS, themes, lookup, item_count
+from trade_items import TRADE_ITEMS, themes, lookup, item_count
+from ui_mobile import disable_keyboard
 
 _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 # 국가 차원이 필요할 때 쓰는 엔드포인트 (품목 × 국가).
@@ -378,6 +379,10 @@ def render_trade():
     with c2:
         picked_country = st.selectbox("수출 대상국", labels,
                                       key=f"trade_country_{theme}")
+    # 💡 이 두 셀렉터는 옵션이 10여 개뿐이라 타이핑할 이유가 없는데, 모바일에서
+    # 탭하면 키패드가 올라와 목록을 덮는다. 키패드만 막는다(목록은 그대로 열림).
+    disable_keyboard("trade_theme", "trade_country_")
+
     country = code_by_label.get(picked_country)
     where = "전체" if not country else picked_country.split(" (")[0]
 
