@@ -21,7 +21,8 @@ from datetime import datetime
 
 # 세부품목 카탈로그(HS코드 ↔ 관련 상장종목)는 trade_items.py 에 분리했다 —
 # 70여 개라 여기 두면 화면 로직이 안 보인다.
-from trade_items import TRADE_ITEMS, themes, lookup, item_count
+from trade_items import TRADE_ITEMS, themes, lookup, item_count
+
 from ui_mobile import disable_keyboard
 
 _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
