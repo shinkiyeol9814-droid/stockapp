@@ -438,51 +438,63 @@ def apply_search():
         if type_changed: st.session_state.active_target_mult = 10.0
         else: st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
 
-def _render_broker_targets(corp_name, curr_p):
-    """증권사 레포트 목표주가 취합 — 접힌 상태로 두고 필요할 때만 편다."""
+@st.dialog("증권사 목표주가", width="large")
+def _broker_dialog(corp_name, rows, summ, curr_p):
+    """카드를 눌렀을 때만 뜨는 상세 리스트."""
+    st.caption(f"{corp_name} · 최근 3개월({summ['oldest']} ~ {summ['latest']}) · "
+               f"{summ['count']}개사 · 평균 {summ['avg']:,}원 "
+               f"(최고 {summ['max']:,} / 최저 {summ['min']:,}) · 증권사별 최신 1건")
+    body = []
+    for r in rows:
+        up = ((r["목표주가"] / curr_p) - 1) * 100 if curr_p else 0
+        # 한국 관례: 상승 빨강 / 하락 파랑
+        c = "#ef5350" if up > 0 else "#1565C0" if up < 0 else "#888"
+        # 증권사명·레포트 제목은 외부에서 긁어온 값이라 이스케이프한다.
+        body.append(
+            "<tr style='border-bottom:1px solid #f0f0f0;'>"
+            f"<td style='padding:7px 8px;'>"
+            f"<b style='font-size:13px;'>{html.escape(r['증권사'])}</b><br>"
+            f"<span style='font-size:12px;color:#777;'>{html.escape(r['제목'])}</span></td>"
+            f"<td style='padding:7px 8px;color:#888;font-size:12px;white-space:nowrap;'>"
+            f"{html.escape(r['발행일자'])}</td>"
+            f"<td style='padding:7px 8px;text-align:right;white-space:nowrap;'>"
+            f"<b style='font-size:13px;'>{r['목표주가']:,}원</b><br>"
+            f"<span style='font-size:12px;color:{c};'>{up:+.1f}%</span></td>"
+            "</tr>")
+    st.markdown(
+        "<div style='overflow-x:auto;'>"
+        "<table style='width:100%;border-collapse:collapse;'>"
+        "<thead><tr style='border-bottom:1px solid #ddd;color:#666;font-size:12px;'>"
+        "<th style='padding:6px 8px;text-align:left;'>증권사 / 레포트</th>"
+        "<th style='padding:6px 8px;text-align:left;'>발행일</th>"
+        "<th style='padding:6px 8px;text-align:right;'>목표주가 (현재가 대비)</th>"
+        "</tr></thead><tbody>" + "".join(body) + "</tbody></table></div>",
+        unsafe_allow_html=True)
+
+
+def _render_broker_card(corp_name, curr_p, stocks_count):
+    """
+    증권사 평균 목표가를 위쪽 목표가 카드와 같은 모양으로 한 칸 붙인다.
+    카드 자체는 HTML이라 클릭을 못 받으므로, 바로 아래 버튼이 팝업을 연다.
+    """
     try:
         rows = get_broker_targets(corp_name)
     except Exception as e:
         print(f"[valuation] 증권사 목표가 취합 실패: {type(e).__name__}: {e}")
-        return
+        rows = []
     if not rows:
-        st.caption("🏦 수집된 증권사 레포트에 이 종목의 목표주가가 없습니다.")
+        st.markdown(make_card_ui("증권사 평균", "N/A", "-", "최근 3개월 레포트 없음", False, is_zero=True),
+                    unsafe_allow_html=True)
         return
 
     summ = summarize_targets(rows)
-    gap = ((summ["median"] / curr_p) - 1) * 100 if curr_p else 0
-
-    title = (f"🏦 증권사 목표주가 컨센서스 {summ['median']:,}원 "
-             f"({gap:+.1f}%) · {summ['count']}개사 · 최근 {summ['latest']}")
-    with st.expander(title, expanded=False):
-        st.caption(f"최고 {summ['max']:,}원 · 최저 {summ['min']:,}원 · "
-                   f"중앙값 기준(증권사별 최신 1건, 최근 12개월)")
-        body = []
-        for r in rows:
-            up = ((r["목표주가"] / curr_p) - 1) * 100 if curr_p else 0
-            # 한국 관례: 상승 빨강 / 하락 파랑
-            c = "#ef5350" if up > 0 else "#1565C0" if up < 0 else "#888"
-            # 레포트 제목·증권사명은 외부에서 긁어온 값이라 이스케이프한다.
-            body.append(
-                "<tr>"
-                f"<td style='padding:6px 8px;white-space:nowrap;'>{html.escape(r['증권사'])}</td>"
-                f"<td style='padding:6px 8px;text-align:right;font-weight:600;white-space:nowrap;'>{r['목표주가']:,}원</td>"
-                f"<td style='padding:6px 8px;text-align:right;color:{c};white-space:nowrap;'>{up:+.1f}%</td>"
-                f"<td style='padding:6px 8px;color:#888;white-space:nowrap;'>{html.escape(r['발행일자'])}</td>"
-                f"<td style='padding:6px 8px;color:#555;'>{html.escape(r['제목'])}</td>"
-                "</tr>"
-            )
-        st.markdown(
-            "<div style='overflow-x:auto;'>"
-            "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
-            "<thead><tr style='border-bottom:1px solid #ddd;color:#666;font-size:12px;'>"
-            "<th style='padding:6px 8px;text-align:left;'>증권사</th>"
-            "<th style='padding:6px 8px;text-align:right;'>목표주가</th>"
-            "<th style='padding:6px 8px;text-align:right;'>현재가 대비</th>"
-            "<th style='padding:6px 8px;text-align:left;'>발행일</th>"
-            "<th style='padding:6px 8px;text-align:left;'>레포트</th>"
-            "</tr></thead><tbody>" + "".join(body) + "</tbody></table></div>",
-            unsafe_allow_html=True)
+    up = ((summ["avg"] / curr_p) - 1) * 100 if curr_p else 0
+    tm = (summ["avg"] * stocks_count) / UNIT if stocks_count else 0
+    st.markdown(make_card_ui(f"증권사 평균 ({summ['count']}개사)", f"{summ['avg']:,}원",
+                             f"{tm:,.0f}억", f"목표대비 {up:+.1f}%", up > 0),
+                unsafe_allow_html=True)
+    if st.button(f"📋 레포트 {summ['count']}건 보기", key="broker_list_btn", use_container_width=True):
+        _broker_dialog(corp_name, rows, summ, curr_p)
 
 
 def render_valuation_menu():
@@ -739,22 +751,21 @@ def render_valuation_menu():
                     last_date_str = df_price.index[-1].strftime('%m.%d')
 
                     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                    card_cols = st.columns(4)
+                    # 마지막 칸은 증권사 레포트 평균 목표가 — 내 목표가와 바로 비교되게 같은 줄에 둔다.
+                    card_cols = st.columns(5)
                     with card_cols[0]:
                         rate_str = f"{updown:+.2f}%"
                         st.markdown(make_card_ui(f"현재가 ({last_date_str})", f"{curr_p:,.0f}원", f"{curr_marcap:,.0f}억", rate_str, updown > 0, is_zero=(updown == 0)), unsafe_allow_html=True)
                     # 목표가 카드는 차트 연도 범위(_target_years)와 같게 올해~+2년
-                    for col, y in zip(card_cols[1:], range(this_year, this_year + 3)):
+                    for col, y in zip(card_cols[1:4], range(this_year, this_year + 3)):
                         tp, up, tm = get_t(y)
                         title = f"목표가 ({str(y)[-2:]}년)"
                         with col:
                             if tp > 0: st.markdown(make_card_ui(title, f"{tp:,.0f}원", f"{tm:,.0f}억", f"목표대비 {up:+.1f}%", up > 0), unsafe_allow_html=True)
                             elif tp <= 0 and up == -100.0: st.markdown(make_card_ui(title, "0원", f"{tm:,.0f}억", "과차입(가치없음)", False, is_zero=False), unsafe_allow_html=True)
                             else: st.markdown(make_card_ui(title, "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
-
-                    # 내가 세운 목표가 옆에 "시장(증권사)은 얼마로 보나"를 붙인다.
-                    # data/broker_report/*.json 전수 스캔이지만 0.1초대라 체감이 없다.
-                    _render_broker_targets(corp_name, curr_p)
+                    with card_cols[4]:
+                        _render_broker_card(corp_name, curr_p, stocks_count)
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=4, horizontal=True, label_visibility="collapsed", key="chart_period_radio")

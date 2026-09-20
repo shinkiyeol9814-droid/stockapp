@@ -49,6 +49,17 @@ st.markdown("""
         .main .block-container > div {
             animation: none !important;
         }
+
+        /* 6. 높이 0짜리 요소가 만드는 빈 줄 제거.
+           Streamlit의 세로 블록은 flex(gap:16px)라, 화면에 안 보이는
+           components.html(height=0)과 <style> 전용 markdown도 간격을 한 칸씩
+           차지한다. 가치평가 탭은 그런 요소가 많아 제목이 80px나 밀려 있었다. */
+        [data-testid="stElementContainer"][height="0px"] {
+            display: none !important;
+        }
+        [data-testid="stElementContainer"]:has(> .stMarkdown [data-testid="stMarkdownContainer"] > style:only-child) {
+            display: none !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 

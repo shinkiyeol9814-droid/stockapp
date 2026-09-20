@@ -1,59 +1,72 @@
 """
 version_history.py — 앱 변경 이력.
 
-화면 좌상단의 숨김 버튼(ⓘ)에서만 펼쳐 본다. 최신 버전이 맨 위.
-규칙: x.y.z — x는 화면 구조가 바뀔 때, y는 기능 추가, z는 버그 수정.
-새 기능을 넣으면 여기 맨 앞에 한 줄 추가하는 것을 잊지 말 것.
+화면 좌상단의 작은 버전 버튼을 누르면 팝업(모달)으로 열린다.
+
+버전 규칙 (x.y.z, 통상적인 유의적 버전)
+  x  전면 개편 — 메뉴 구성이나 화면 구조가 통째로 바뀐 릴리스
+  y  기능 추가 — 새 탭/지표/차트처럼 없던 기능이 생겼을 때
+  z  버그 수정 — 동작 교정, 성능/가독성 개선 등 소소한 변경
+새 배포를 할 때는 VERSIONS 맨 앞에 (버전, 날짜, 한 줄 요약) 한 건만 추가한다.
 """
 import streamlit as st
 
-# (버전, 날짜, [변경 내용]) — 최신순
+# (버전, 날짜, 한 줄 요약) — 최신순
 VERSIONS = [
-    ("4.5.0", "2026-09-20", [
-        "가치평가에 증권사 목표주가 컨센서스 취합 추가 (중앙값·최고·최저·증권사별)",
-        "레포트·섹터별·신고가·실적·워치리스트·DART 선택창에도 모바일 키패드 억제 적용",
-        "좌상단 숨김 버튼으로 버전 기록 확인",
-        "requirements에 numpy·requests 명시 (상위 패키지 의존성에 기대던 부분 정리)",
-    ]),
-    ("4.4.0", "2026-09-18", [
-        "수출입 탭에 개별 전력반도체 품목 추가",
-        "수출입 선택창에서 모바일 키패드가 목록을 가리지 않도록 억제",
-    ]),
-    ("4.3.0", "2026-09-16", [
-        "급등 알림 상태를 별도 브랜치로 분리 — 배치 커밋 때문에 앱이 재시작되던 문제 해결",
-        "레포트 PDF에서 평가방식 위치를 찾아 읽도록 개선 (앞쪽 몇 장만 읽던 방식 폐기)",
-    ]),
-    ("4.2.0", "2026-09-14", [
-        "실제 브라우저로 3시간마다 접속해 앱이 잠들지 않게 유지 (12시간 sleep 대응)",
-        "인증 리다이렉트 체인 점검을 sleep 체크와 함께 수행",
-        "차트 마커에 흰색 테두리 — 같은 색 점이 선에 묻히던 문제 해결",
-        "느린 종목 하나가 DART 배치 전체를 무너뜨리지 않도록 종목별 격리·재시도",
-    ]),
-    ("4.1.0", "2026-09-12", [
-        "가치평가 평가방식에 PEG 추가 (연도별 이익성장률 기반)",
-        "재고자산 래깅 선택(1~3분기)과 매출·재고자산회전율 꺾은선 차트",
-        "가동률을 사업부 섹터 단위로 묶어 표기",
-        "DART 수집을 Streamlit Cloud에서 GitHub Actions로 이전 (접속 차단 회피)",
-        "가치평가 목표가 카드를 +2년(2028년)까지 확장",
-    ]),
-    ("4.0.0", "2026-09-10", [
-        "수출입 동향을 매크로에서 분리해 독립 메뉴로",
-        "섹터별 탭을 이슈 중심으로 개편, KIND 접속 실패 시에도 동작하도록 폴백 추가",
-        "가치평가 하단에 DART 기반 재고자산·수주잔고 추이 패널 추가",
-        "미국 연방부채 지표 추가, 매크로 탭 크래시 수정",
-    ]),
+    ("4.7.1", "2026-09-20", "증권사 목표가를 3개월 평균 카드로 · 버전 기록 팝업화 · 상단 빈 줄 제거"),
+    ("4.7.0", "2026-09-20", "증권사 레포트 목표주가 취합, 모바일 키패드 억제 전 탭 확대"),
+    ("4.6.1", "2026-09-18", "수출입 선택창에서 모바일 키패드가 목록을 가리던 문제 해결"),
+    ("4.6.0", "2026-09-18", "수출입 탭에 개별 전력반도체 품목 추가"),
+    ("4.5.2", "2026-09-16", "배치 커밋 때문에 앱이 수시로 재시작되던 문제 해결"),
+    ("4.5.1", "2026-09-14", "차트 마커 가독성 개선, 레포트 평가방식 추출 정확도 향상"),
+    ("4.5.0", "2026-09-14", "자동 접속으로 앱이 잠들지 않도록 유지"),
+    ("4.4.1", "2026-09-12", "DART 배치 안정화 및 조회가 수 분씩 걸리던 지연 해소"),
+    ("4.4.0", "2026-09-12", "PEG 평가방식과 재고자산 래깅 차트 추가"),
+    ("4.3.0", "2026-09-11", "DART 수집을 GitHub Actions로 이전해 접속 차단 회피"),
+    ("4.2.1", "2026-09-11", "섹터 탭 접속 실패 폴백, 사업부 선택 시 발생하던 오류 수정"),
+    ("4.2.0", "2026-09-11", "가치평가 목표가 +2년 확장, 사업부별 가동률, 종목명 자동완성"),
+    ("4.1.0", "2026-09-10", "가치평가에 DART 기반 재고자산·수주잔고 패널 추가"),
+    ("4.0.0", "2026-09-09", "수출입 탭 분리, 섹터 탭 이슈 중심 개편 (전면 개편)"),
 ]
 
 APP_VERSION = VERSIONS[0][0]
 
+# 버전 버튼은 화면 주인공이 아니다 — 메뉴보다 작고 흐리게 둬서 눈에 안 띄게 한다.
+# (가치평가 탭이 .stButton 색을 덮어쓰므로 키 기반 선택자로 되돌린다.)
+_BADGE_CSS = """
+<style>
+.st-key-ver_btn { width: max-content; }
+.st-key-ver_btn button {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 2px !important;
+    min-height: 0 !important;
+    height: 18px !important;
+}
+.st-key-ver_btn button p {
+    font-size: 11px !important;
+    color: #b0b0b0 !important;
+    font-weight: 400 !important;
+}
+.st-key-ver_btn button:hover p { color: #666 !important; }
+</style>
+"""
+
+
+@st.dialog("버전 기록", width="small")
+def _version_dialog():
+    st.caption("x 전면 개편 · y 기능 추가 · z 버그 수정")
+    for ver, date, note in VERSIONS:
+        st.markdown(
+            f"<div style='margin-bottom:10px;line-height:1.45;'>"
+            f"<b style='font-size:13px;'>v{ver}</b>"
+            f"<span style='color:#aaa;font-size:11px;margin-left:6px;'>{date}</span><br>"
+            f"<span style='font-size:13px;color:#444;'>{note}</span></div>",
+            unsafe_allow_html=True)
+
 
 def render_version_badge():
-    """좌상단 숨김 버튼. 누를 때만 이력이 펼쳐진다."""
-    with st.popover(f"ⓘ v{APP_VERSION}"):
-        st.markdown("##### 📋 버전 기록")
-        for ver, date, items in VERSIONS:
-            lines = "\n".join(f"- {it}" for it in items)
-            st.markdown(f"**v{ver}**  <span style='color:#888;font-size:12px;'>{date}</span>\n\n{lines}",
-                        unsafe_allow_html=True)
-            st.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #eee;'>",
-                        unsafe_allow_html=True)
+    """좌상단 숨김 버튼. 누를 때만 팝업으로 이력이 뜬다."""
+    st.markdown(_BADGE_CSS, unsafe_allow_html=True)
+    if st.button(f"v{APP_VERSION}", key="ver_btn", help="버전 기록 보기"):
+        _version_dialog()

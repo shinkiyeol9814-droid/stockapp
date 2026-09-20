@@ -68,10 +68,14 @@ def _target_index() -> dict:
     return index
 
 
-def get_broker_targets(corp_name: str, months: int = 12) -> list:
+def get_broker_targets(corp_name: str, months: int = 3) -> list:
     """
-    한 종목의 증권사별 최신 목표주가. 같은 증권사가 여러 번 냈으면 최신 1건만
-    남긴다 — 안 그러면 레포트를 자주 내는 대형사가 컨센서스를 끌고 간다.
+    한 종목의 증권사별 최신 목표주가 — 기본은 발행일 기준 최근 3개월.
+
+    같은 증권사가 여러 번 냈으면 최신 1건만 남긴다. 안 그러면 레포트를 자주
+    내는 대형사가 평균을 혼자 끌고 간다.
+    오래된 레포트까지 섞으면 "지금 시장이 보는 값"이 아니게 되므로,
+    기간 밖 레포트로 대체하지 않고 그냥 없는 것으로 본다.
     """
     name = _clean_name(corp_name)
     if not name:
@@ -82,22 +86,25 @@ def get_broker_targets(corp_name: str, months: int = 12) -> list:
 
     if months:
         cutoff = (datetime.today() - timedelta(days=31 * months)).strftime("%Y-%m-%d")
-        recent = [r for r in rows if r["발행일자"] >= cutoff]
-        rows = recent or rows  # 전부 오래됐으면 차라리 옛 자료라도 보여준다
+        rows = [r for r in rows if r["발행일자"] >= cutoff]
+    if not rows:
+        return []
 
-    latest: dict[str, dict] = {}
+    latest: dict = {}
     for r in sorted(rows, key=lambda x: x["발행일자"]):
         latest[r["증권사"]] = r  # 날짜 오름차순이라 마지막에 남는 게 최신
-    return sorted(latest.values(), key=lambda x: x["목표주가"], reverse=True)
+    return sorted(latest.values(), key=lambda x: x["발행일자"], reverse=True)
 
 
 def summarize(rows: list) -> dict:
-    """컨센서스(중앙값)·최고·최저. 중앙값을 쓰는 건 이상치 1건에 안 흔들리라고."""
+    """평균·최고·최저. 화면 카드에 쓰는 대표값은 평균이다."""
     prices = [r["목표주가"] for r in rows]
+    dates = [r["발행일자"] for r in rows if r["발행일자"]]
     return {
         "count": len(rows),
-        "median": int(statistics.median(prices)) if prices else 0,
+        "avg": int(round(statistics.fmean(prices))) if prices else 0,
         "max": max(prices) if prices else 0,
         "min": min(prices) if prices else 0,
-        "latest": max((r["발행일자"] for r in rows), default=""),
+        "latest": max(dates, default=""),
+        "oldest": min(dates, default=""),
     }
