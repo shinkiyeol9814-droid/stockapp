@@ -22,9 +22,11 @@ st.markdown("""
             opacity: 0 !important;
         }
 
-        /* 2. 상단 여백 넉넉하게 확보 (메뉴 잘림 현상 해결!) */
+        /* 2. 상단 여백. 툴바 아이콘은 y=44까지, x=247부터만 차지하므로
+           2.5rem(40px)이면 왼쪽 버전 배지도 메뉴도 가려지지 않는다.
+           (예전 3.5rem은 아래 autorefresh 빈 칸까지 겹쳐 과하게 밀려 있었다) */
         .block-container {
-            padding-top: 3.5rem !important;
+            padding-top: 2.5rem !important;
             padding-bottom: 1rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
@@ -59,6 +61,16 @@ st.markdown("""
         }
         [data-testid="stElementContainer"]:has(> .stMarkdown [data-testid="stMarkdownContainer"] > style:only-child) {
             display: none !important;
+        }
+
+        /* 7. 전역 autorefresh 타이머는 아무것도 그리지 않으면서 26px + gap 16px를
+           먹어 메뉴 위에 빈 줄을 만들었다. display:none은 숨긴 iframe의 타이머가
+           throttle될 수 있어 쓰지 않고, 흐름에서만 빼낸다(렌더링은 계속된다). */
+        .st-key-global_auto_refresh {
+            position: absolute !important;
+            height: 0 !important;
+            overflow: hidden !important;
+            pointer-events: none !important;
         }
     </style>
 """, unsafe_allow_html=True)
