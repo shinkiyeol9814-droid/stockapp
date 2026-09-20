@@ -5,6 +5,8 @@ import os
 import requests
 import base64
 
+from ui_mobile import disable_keyboard
+
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
 
@@ -82,10 +84,12 @@ def render_new_high_menu():
     # 기간을 또 나눌 실익이 적었다. 돌파기간 값은 아래 표에 컬럼으로 남는다.
     with fc1:
         selected_file = st.selectbox("📅 분석 일자 선택", report_files,
-                                     format_func=format_filename)
+                                     format_func=format_filename, key="nh_date")
     with fc2:
         marcap_filters = ["500억 ~ 5,000억 미만 (중소형)", "5,000억 이상 (대형)", "전체"]
-        selected_marcap = st.selectbox("💰 시가총액", marcap_filters, index=0)
+        selected_marcap = st.selectbox("💰 시가총액", marcap_filters, index=0, key="nh_marcap")
+    # 둘 다 고르기만 하는 셀렉터라 모바일 키패드가 목록을 가리지 않게 막는다.
+    disable_keyboard("nh_date", "nh_marcap")
 
     # ✅ 수정 후
     with open(f"data/new_high/{selected_file}", "r", encoding="utf-8") as f:

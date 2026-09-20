@@ -62,6 +62,7 @@ from ui_macro import render_macro
 from ui_trade import render_trade
 from ui_sector import render_sector_menu
 from streamlit_option_menu import option_menu
+from version_history import render_version_badge
 
 # 세션 상태 초기화 (전역)
 if 'last_ticker' not in st.session_state: st.session_state.last_ticker = ""
@@ -78,6 +79,12 @@ if query_stock_code:
     if not matched.empty:
         st.session_state.search_corp_name = matched['Name'].values[0]
     default_menu_idx = 0 
+
+# 버전 기록 — 평소엔 좌상단의 작은 배지만 보이고, 눌러야 내용이 펼쳐진다.
+# 메뉴보다 위에 둬야 어느 탭에 있든 같은 자리에 있다.
+# st.columns로 감싸면 모바일에서 세로로 쌓이며 전체 폭을 먹으므로 그냥 둔다.
+render_version_badge()
+
 # ==========================================
 # 🚀 상단 가로형 메뉴 생성 (모바일 최적화 & 아이콘 색상 동적 전환)
 # ==========================================

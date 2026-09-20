@@ -6,6 +6,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import io
 import re
+import html
 import requests
 import json
 import os
@@ -16,6 +17,8 @@ import plotly.graph_objects as go
 
 from krx_listing import fetch_krx_listing
 from ui_dart_panel import render_dart_panel
+from ui_mobile import disable_keyboard
+from broker_targets import get_broker_targets, summarize as summarize_targets
 
 # --- 설정 및 상수 ---
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
@@ -192,10 +195,11 @@ def get_stock_price_data(ticker, start_date, end_date):
 # ────────────────────────────────────────────────────────────────────────────────
 # 파서 / 헬퍼 함수
 # ────────────────────────────────────────────────────────────────────────────────
-def parse_fin_table(html):
+def parse_fin_table(html_text):
     """IFRS 포함 재무제표 테이블 파싱 (cF1001 손익계산서, cF2001 재무상태표)"""
+    # 인자명이 html이면 모듈 html(escape용)을 가린다 — 이름을 바꿔 둔다.
     try:  # 실패는 호출부에서 None으로 처리 (소스가 구조를 바꾸면 여기가 먼저 깨진다)
-        dfs = pd.read_html(io.StringIO(html))
+        dfs = pd.read_html(io.StringIO(html_text))
         for df in dfs:
             if 'IFRS' in " ".join([str(c) for c in df.columns]):
                 df = df.copy()
@@ -434,6 +438,53 @@ def apply_search():
         if type_changed: st.session_state.active_target_mult = 10.0
         else: st.session_state.active_target_mult = float(int(st.session_state.get("ui_target_mult_int", 10)))
 
+def _render_broker_targets(corp_name, curr_p):
+    """증권사 레포트 목표주가 취합 — 접힌 상태로 두고 필요할 때만 편다."""
+    try:
+        rows = get_broker_targets(corp_name)
+    except Exception as e:
+        print(f"[valuation] 증권사 목표가 취합 실패: {type(e).__name__}: {e}")
+        return
+    if not rows:
+        st.caption("🏦 수집된 증권사 레포트에 이 종목의 목표주가가 없습니다.")
+        return
+
+    summ = summarize_targets(rows)
+    gap = ((summ["median"] / curr_p) - 1) * 100 if curr_p else 0
+
+    title = (f"🏦 증권사 목표주가 컨센서스 {summ['median']:,}원 "
+             f"({gap:+.1f}%) · {summ['count']}개사 · 최근 {summ['latest']}")
+    with st.expander(title, expanded=False):
+        st.caption(f"최고 {summ['max']:,}원 · 최저 {summ['min']:,}원 · "
+                   f"중앙값 기준(증권사별 최신 1건, 최근 12개월)")
+        body = []
+        for r in rows:
+            up = ((r["목표주가"] / curr_p) - 1) * 100 if curr_p else 0
+            # 한국 관례: 상승 빨강 / 하락 파랑
+            c = "#ef5350" if up > 0 else "#1565C0" if up < 0 else "#888"
+            # 레포트 제목·증권사명은 외부에서 긁어온 값이라 이스케이프한다.
+            body.append(
+                "<tr>"
+                f"<td style='padding:6px 8px;white-space:nowrap;'>{html.escape(r['증권사'])}</td>"
+                f"<td style='padding:6px 8px;text-align:right;font-weight:600;white-space:nowrap;'>{r['목표주가']:,}원</td>"
+                f"<td style='padding:6px 8px;text-align:right;color:{c};white-space:nowrap;'>{up:+.1f}%</td>"
+                f"<td style='padding:6px 8px;color:#888;white-space:nowrap;'>{html.escape(r['발행일자'])}</td>"
+                f"<td style='padding:6px 8px;color:#555;'>{html.escape(r['제목'])}</td>"
+                "</tr>"
+            )
+        st.markdown(
+            "<div style='overflow-x:auto;'>"
+            "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+            "<thead><tr style='border-bottom:1px solid #ddd;color:#666;font-size:12px;'>"
+            "<th style='padding:6px 8px;text-align:left;'>증권사</th>"
+            "<th style='padding:6px 8px;text-align:right;'>목표주가</th>"
+            "<th style='padding:6px 8px;text-align:right;'>현재가 대비</th>"
+            "<th style='padding:6px 8px;text-align:left;'>발행일</th>"
+            "<th style='padding:6px 8px;text-align:left;'>레포트</th>"
+            "</tr></thead><tbody>" + "".join(body) + "</tbody></table></div>",
+            unsafe_allow_html=True)
+
+
 def render_valuation_menu():
     # 모바일에서 자리 비움 후 복귀 시 자동 리로드 (2분 이상 부재 → 새 데이터로 갱신)
     components.html("""
@@ -538,6 +589,9 @@ def render_valuation_menu():
                 st.text_input("종목명", key="ui_corp_name", placeholder="예: 삼성전자")
         with col2:
             st.selectbox("평가방식", val_options, key="ui_val_type")
+            # 평가방식은 4개 중 고르기만 한다 — 종목명 자동완성(ui_corp_name)은
+            # 타이핑이 핵심이라 절대 포함하면 안 된다.
+            disable_keyboard("ui_val_type")
         with col3:
             if is_float_type: st.number_input("목표배수", step=0.1, format="%.1f", key="ui_target_mult_float")
             else: st.number_input("목표배수", step=1, format="%d", key="ui_target_mult_int")
@@ -697,6 +751,10 @@ def render_valuation_menu():
                             if tp > 0: st.markdown(make_card_ui(title, f"{tp:,.0f}원", f"{tm:,.0f}억", f"목표대비 {up:+.1f}%", up > 0), unsafe_allow_html=True)
                             elif tp <= 0 and up == -100.0: st.markdown(make_card_ui(title, "0원", f"{tm:,.0f}억", "과차입(가치없음)", False, is_zero=False), unsafe_allow_html=True)
                             else: st.markdown(make_card_ui(title, "N/A", "-", "데이터 없음", False, is_zero=True), unsafe_allow_html=True)
+
+                    # 내가 세운 목표가 옆에 "시장(증권사)은 얼마로 보나"를 붙인다.
+                    # data/broker_report/*.json 전수 스캔이지만 0.1초대라 체감이 없다.
+                    _render_broker_targets(corp_name, curr_p)
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
                     chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=4, horizontal=True, label_visibility="collapsed", key="chart_period_radio")

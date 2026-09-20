@@ -7,6 +7,7 @@ from pathlib import Path
 from github import Github
 
 from earnings_store import available_quarters, load_quarter
+from ui_mobile import disable_keyboard
 
 BASE_DIR = Path(__file__).parent
 FAVORITES_FILE = "data/earnings/favorites.json"
@@ -197,7 +198,9 @@ def render_earnings_menu():
         f_col1, f_col2, f_col3 = st.columns([2.5, 4, 1.5])
         with f_col1:
             idx = quarters.index(st.session_state.ea_quarter)
-            ui_quarter = st.selectbox("📌 분기 필터", quarters, index=idx)
+            ui_quarter = st.selectbox("📌 분기 필터", quarters, index=idx, key="ea_quarter_pick")
+            # 분기는 고르기만 한다 — 옆의 종목 검색(text_input)은 건드리지 않는다.
+            disable_keyboard("ea_quarter_pick")
         with f_col2:
             ui_keyword = st.text_input("🔍 종목 검색", value=st.session_state.ea_keyword, placeholder="종목명/코드")
         with f_col3:

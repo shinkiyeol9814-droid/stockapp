@@ -17,6 +17,8 @@ import os
 import json
 from datetime import datetime, timezone, timedelta
 
+from ui_mobile import disable_keyboard
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
@@ -422,6 +424,8 @@ def render_sector_menu():
     st.divider()
     with st.expander("🔍 특정 업종의 소속 종목 보기", expanded=False):
         sel_name = st.selectbox("업종 선택", df["업종명"].tolist(), key="sector_pick")
+        # 목록에서 고르기만 하므로 모바일 키패드를 막는다.
+        disable_keyboard("sector_pick")
         sel_no = df[df["업종명"] == sel_name].iloc[0]["업종코드"]
 
         if not sel_no or (isinstance(sel_no, float) and pd.isna(sel_no)):

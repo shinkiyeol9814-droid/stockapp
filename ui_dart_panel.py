@@ -25,6 +25,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from ui_mobile import disable_keyboard
+
 # 한국 시장 관행: 증가/양수는 빨강, 감소/음수는 파랑.
 _UP, _DOWN = "#ef5350", "#1565C0"
 _DART_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
@@ -589,6 +591,9 @@ def render_dart_panel(stock_code: str):
     ts = _updated_at(data) if data else None
 
     st.markdown("---")
+    # 래깅·사업부 선택은 목록에서 고르기만 하므로 모바일 키패드를 막는다.
+    # 키가 종목코드로 동적 생성되어(f"inv_lag_{code}") 접두사로 지정한다.
+    disable_keyboard("inv_lag_", "seg_")
     # 💡 기간 선택을 왼쪽 칼럼 안에 두면 그 칼럼만 아래로 밀려서 두 차트가
     # 세로로 어긋난다. 칼럼 밖(헤더 줄)에 둬야 좌우 높이가 맞는다.
     hc1, hc2 = st.columns([3, 1])

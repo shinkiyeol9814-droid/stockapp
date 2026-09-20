@@ -6,6 +6,8 @@ import glob
 import re
 import html
 
+from ui_mobile import disable_keyboard
+
 # 💡 하이브리드 포맷 리더: 신규/구형 파일 모두 호환하여 예쁜 옵션 리스트 생성
 @st.cache_data(ttl=60)
 def get_report_options():
@@ -63,7 +65,9 @@ def render_report_summary():
     report_options = get_report_options()
     
     if report_options:
-        selected_name = st.selectbox("분석 데이터 선택", list(report_options.keys()))
+        selected_name = st.selectbox("분석 데이터 선택", list(report_options.keys()),
+                                     key="report_pick")
+        disable_keyboard("report_pick")
         selected_file = report_options[selected_name]
         
         with open(selected_file, "r", encoding="utf-8") as f:

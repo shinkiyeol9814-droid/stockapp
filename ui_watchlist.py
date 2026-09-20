@@ -11,6 +11,8 @@ from datetime import datetime
 
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode, DataReturnMode
 
+from ui_mobile import disable_keyboard
+
 from valuation import (
     get_hybrid_financials, get_ticker_listing, get_stocks_count,
     load_user_estimates, UNIT, API_HEADERS, GITHUB_REPO, GITHUB_BRANCH,
@@ -328,6 +330,8 @@ def render_watchlist():
             elif not _existing:
                 _existing = ["기타"]
             sector_pick = st.selectbox("섹터", _existing + ["✏️ 직접 입력..."], key="wl_sector_pick")
+            # 종목 선택(wl_pick)은 검색이 핵심이라 제외한다.
+            disable_keyboard("wl_sector_pick")
         with c4:
             st.write("")
             add_clicked = st.button("추가", type="primary", use_container_width=True, key="wl_add")
