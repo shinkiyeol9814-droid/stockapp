@@ -13,6 +13,7 @@ import streamlit as st
 
 # (버전, 날짜, 한 줄 요약) — 최신순
 VERSIONS = [
+    ("4.7.4", "2026-09-20", "버전 배지를 상단 메뉴 아래로 이동"),
     ("4.7.3", "2026-09-20", "버전 배지가 상단 툴바에 가려 보이지 않던 문제 수정"),
     ("4.7.2", "2026-09-20", "화면 상단 여백 축소 — 메뉴 위 빈 공간 58px 제거"),
     ("4.7.1", "2026-09-20", "증권사 목표가를 3개월 평균 카드로 · 버전 기록 팝업화 · 상단 빈 줄 제거"),
@@ -37,14 +38,9 @@ APP_VERSION = VERSIONS[0][0]
 # (가치평가 탭이 .stButton 색을 덮어쓰므로 키 기반 선택자로 되돌린다.)
 _BADGE_CSS = """
 <style>
-/* 상단 여백을 줄이면서 배지가 Streamlit 툴바(z-index 999990, 전체 폭 y 0~60)
-   밑으로 깔려 보이지도 눌리지도 않았다. 툴바 아이콘은 x=247부터라 겹치지
-   않으므로 배지만 그 위로 올린다. */
-.st-key-ver_btn {
-    width: max-content;
-    position: relative !important;
-    z-index: 1000000 !important;
-}
+/* 메뉴 아래에 있으므로 툴바(y 0~60)와 겹치지 않는다 — z-index를 올릴 필요가
+   없고, 올리면 탭 전환 로딩 오버레이를 뚫고 나온다. */
+.st-key-ver_btn { width: max-content; }
 .st-key-ver_btn button {
     background: transparent !important;
     border: none !important;
