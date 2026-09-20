@@ -22,11 +22,12 @@ st.markdown("""
             opacity: 0 !important;
         }
 
-        /* 2. 상단 여백. 툴바 아이콘은 y=44까지, x=247부터만 차지하므로
-           2.5rem(40px)이면 왼쪽 버전 배지도 메뉴도 가려지지 않는다.
-           (예전 3.5rem은 아래 autorefresh 빈 칸까지 겹쳐 과하게 밀려 있었다) */
+        /* 2. 상단 여백. Streamlit 툴바는 전체 폭 y 0~60을 덮는 오버레이라
+           (z-index 999990) 그 아래로 들어간 메뉴는 윗부분이 안 눌린다.
+           3.75rem(60px)이 메뉴가 툴바를 벗어나는 최소값이다.
+           예전 3.5rem은 아래 autorefresh 빈 칸까지 겹쳐 과하게 밀려 있었다. */
         .block-container {
-            padding-top: 2.5rem !important;
+            padding-top: 3.75rem !important;
             padding-bottom: 1rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
