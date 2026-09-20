@@ -13,6 +13,7 @@ import streamlit as st
 
 # (버전, 날짜, 한 줄 요약) — 최신순
 VERSIONS = [
+    ("4.7.5", "2026-09-20", "버전 배지를 넓은 화면에서는 매크로 옆, 모바일에서는 매크로 아래로"),
     ("4.7.4", "2026-09-20", "버전 배지를 상단 메뉴 아래로 이동, 메뉴가 툴바에 가리던 문제 수정"),
     ("4.7.3", "2026-09-20", "버전 배지가 상단 툴바에 가려 보이지 않던 문제 수정"),
     ("4.7.2", "2026-09-20", "화면 상단 여백 축소 — 메뉴 위 빈 공간 58px 제거"),
@@ -42,9 +43,21 @@ _BADGE_CSS = """
    없고, 올리면 탭 전환 로딩 오버레이를 뚫고 나온다. */
 .st-key-ver_btn {
     width: max-content;
+    /* 매크로(메뉴 우측 끝) 쪽에 붙인다. */
+    margin-left: auto !important;
     /* 메뉴가 자체 하단 여백을 갖고 있어 그만큼 당겨 붙인다 (제목 위치 유지). */
     margin-top: -14px !important;
     margin-bottom: -6px !important;
+}
+/* option_menu는 내부가 1320px로 중앙 정렬돼, 화면이 넓어지면 메뉴 오른쪽에
+   여백이 생긴다. 그 여백이 배지보다 넓어지는 1440px부터는 매크로 옆줄로
+   올린다(-56px). 그만큼 아래를 +36px 채워 제목 위치는 그대로 둔다.
+   1440px 미만에서는 여백이 좁아 메뉴를 덮으므로 매크로 아래에 그대로 둔다. */
+@media (min-width: 1440px) {
+    .st-key-ver_btn {
+        margin-top: -56px !important;
+        margin-bottom: 36px !important;
+    }
 }
 .st-key-ver_btn button {
     background: transparent !important;
