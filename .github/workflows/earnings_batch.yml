@@ -46,6 +46,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 수집 재개 지점(last_sync.txt)은 batch-state에 있다 — 아래 저장 단계 주석 참고.
+      - name: Restore sync marker
+        if: steps.check_flag.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data/earnings
+          if curl -fsSL -H "Authorization: token $GH_TOKEN"                   -H "Accept: application/vnd.github.raw"                   "https://api.github.com/repos/${{ github.repository }}/contents/data/earnings/last_sync.txt?ref=batch-state"                   -o data/earnings/last_sync.txt; then
+            echo "재개 지점 복원: $(cat data/earnings/last_sync.txt)"
+          else
+            rm -f data/earnings/last_sync.txt
+            echo "::warning::batch-state에 재개 지점이 없어 배치 기본값으로 시작합니다"
+          fi
+
       - name: Run Script
         if: steps.check_flag.outputs.skip != 'true'
         env:
@@ -56,7 +70,34 @@ jobs:
           TELEGRAM_SESSION_BATCH: ${{ secrets.TELEGRAM_SESSION_BATCH }}
           EARNINGS_CHANNEL: ${{ secrets.EARNINGS_CHANNEL }}
         run: python batch_earnings.py
-        
+
+      # 💡 last_sync.txt는 '언제까지 읽었나'를 기억하는 배치 전용 메모다 —
+      # 앱은 읽지 않는다. 그런데 main에 있으면 30분마다 타임스탬프 한 줄이
+      # 바뀌며 커밋이 생기고, 그 push가 Streamlit Cloud 재배포를 일으킨다.
+      # 실적 데이터는 그대로인데 앱만 하루 20~30번 재시작했다.
+      # 급등알림 상태와 같은 방식으로 batch-state 브랜치에 둔다.
+      - name: Save sync marker (off the deploy branch)
+        if: steps.check_flag.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          [ -f data/earnings/last_sync.txt ] || { echo "마커 없음 — 건너뜀"; exit 0; }
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
+          WORK="$RUNNER_TEMP/state"
+          rm -rf "$WORK"
+          git clone --depth 1 --branch batch-state "$URL" "$WORK" 2>/dev/null || {
+            git clone --depth 1 "$URL" "$WORK"
+            git -C "$WORK" checkout --orphan batch-state
+            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
+          }
+          mkdir -p "$WORK/data/earnings"
+          cp data/earnings/last_sync.txt "$WORK/data/earnings/last_sync.txt"
+          git -C "$WORK" add data/earnings/last_sync.txt
+          git -C "$WORK" commit -m "Earnings sync marker" || { echo "변경 없음"; exit 0; }
+          git -C "$WORK" push origin batch-state
+
       - name: Commit and Push
         if: steps.check_flag.outputs.skip != 'true'
         run: |
@@ -66,7 +107,9 @@ jobs:
           # 만들지도 않은 다른 배치의 상태 파일(급등알림 alerted_today.json 등)까지
           # 커밋에 끌려들어와, 5분마다 도는 급등 배치와 불필요하게 충돌했다.
           # 이 배치가 실제로 쓰는 경로만 스테이징한다.
+          # last_sync.txt는 위에서 batch-state로 보냈으므로 main에는 담지 않는다.
           git add data/earnings/
+          git reset -q data/earnings/last_sync.txt 2>/dev/null || true
           git commit -m "Auto-update: AWAKE Earnings data" || { echo "No changes to commit"; exit 0; }
           # 💡 다른 배치가 그 사이 push 했으면 rebase 후 재시도한다.
           # 급등 배치가 5분 간격이라 몇 분 걸리는 배치는 경합이 흔하다.

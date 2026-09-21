@@ -33,3 +33,7 @@ data/dart/*.tmp
 # 급등알림 배치 상태 — batch-state 브랜치에서 관리한다.
 # main에 커밋되면 Streamlit Cloud가 5분마다 앱을 재시작한다.
 data/surge_alert/
+
+# 실적 배치 수집 재개 지점 — batch-state 브랜치에서 관리한다.
+# main에 있으면 30분마다 타임스탬프가 바뀌며 앱이 재배포된다.
+data/earnings/last_sync.txt

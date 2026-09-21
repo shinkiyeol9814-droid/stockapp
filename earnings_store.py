@@ -143,10 +143,16 @@ def save_all(rows: list[dict]) -> dict:
         if os.path.exists(path):
             os.remove(path)
 
+    # 💡 counts도 quarters와 같은 순서로 쓴다. keep이 집합이라 그냥 순회하면
+    # 실행마다 키 순서가 뒤바뀌어, 값이 전혀 안 변해도 파일이 달라진 것처럼
+    # 보인다. 이 배치는 30분마다 도는데 그때마다 index.json이 diff로 잡혀
+    # main에 커밋이 쌓였고, 그 push가 Streamlit Cloud 재배포를 일으켰다
+    # (실적 데이터는 그대로인데 앱만 하루 20~30번 재시작).
+    ordered = sorted(keep, key=_quarter_sort_key, reverse=True)
     _write_json(INDEX_FILE, {
-        "quarters": sorted(keep, key=_quarter_sort_key, reverse=True),
-        "counts": {q: len(buckets[q]) for q in keep},
-        "total": sum(len(buckets[q]) for q in keep),
+        "quarters": ordered,
+        "counts": {q: len(buckets[q]) for q in ordered},
+        "total": sum(len(buckets[q]) for q in ordered),
     })
 
     # 마이그레이션 완료 후 레거시 단일 파일 제거 — 남겨두면 4MB가 계속
