@@ -489,13 +489,26 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
 
 # ── 스파크라인 헬퍼 ─────────────────────────────────────────────────────────
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
-                    note: tuple | None = None) -> go.Figure:
+                    note: tuple | None = None, chg: float | None = None) -> go.Figure:
+    """
+    chg: 전일대비 등락률(%). 선 색을 이걸로 정한다.
+
+    💡 예전엔 '표시 기간의 첫 값 대비 현재'로 색을 정했다(last >= first).
+    그러면 같은 카드 안에서 기준이 둘이 된다 — 숫자 배지는 전일대비인데
+    선 색은 기간 전체 방향이라, 어제 내렸는데 선은 빨강인 카드가 생기고
+    기간(1년/3개월)을 바꾸면 선 색만 뒤집혔다. 배지와 같은 기준으로 맞춘다.
+    """
     prices = hist["price"]
     last  = float(prices.iloc[-1])
-    first = float(prices.iloc[0])
-    is_up = last >= first
-    color  = "#ef5350" if is_up else "#1565C0"
-    fill_c = "rgba(239,83,80,0.12)" if is_up else "rgba(21,101,192,0.12)"
+    if chg is None:      # 호출부가 전일대비를 못 넘긴 경우의 보수적 기본값
+        chg = last - float(prices.iloc[-2]) if len(prices) > 1 else 0.0
+    if chg > 0:
+        color, fill_c = "#ef5350", "rgba(239,83,80,0.12)"
+    elif chg < 0:
+        color, fill_c = "#1565C0", "rgba(21,101,192,0.12)"
+    else:
+        # 보합은 배지(─)와 같은 회색. 빨강/파랑 중 하나로 찍으면 없는 방향을 만든다.
+        color, fill_c = "#9e9e9e", "rgba(158,158,158,0.12)"
 
     min_val = float(prices.min())
     max_val = float(prices.max())
@@ -749,7 +762,7 @@ def render_macro():
                     unsafe_allow_html=True,
                 )
                 st.plotly_chart(
-                    _make_sparkline(hist, unit, fmt, period, note),
+                    _make_sparkline(hist, unit, fmt, period, note, chg_p),
                     use_container_width=True,
                     # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
