@@ -591,9 +591,6 @@ def render_dart_panel(stock_code: str):
     ts = _updated_at(data) if data else None
 
     st.markdown("---")
-    # 래깅·사업부 선택은 목록에서 고르기만 하므로 모바일 키패드를 막는다.
-    # 키가 종목코드로 동적 생성되어(f"inv_lag_{code}") 접두사로 지정한다.
-    disable_keyboard("inv_lag_", "seg_")
     # 💡 기간 선택을 왼쪽 칼럼 안에 두면 그 칼럼만 아래로 밀려서 두 차트가
     # 세로로 어긋난다. 칼럼 밖(헤더 줄)에 둬야 좌우 높이가 맞는다.
     hc1, hc2 = st.columns([3, 1])
@@ -660,6 +657,15 @@ def render_dart_panel(stock_code: str):
     with uc1:
         _section("가동률", code, lambda s: _render_utilization(s, code),
                  reports, errors.get("reports"))
+
+    # 💡 래깅·사업부 선택은 목록에서 고르기만 하므로 모바일 키패드를 막는다.
+    # 키가 종목코드로 동적 생성되어(f"inv_lag_{code}") 접두사로 지정한다.
+    #
+    # 셀렉터들이 다 그려진 **뒤에** 호출한다. 앞에서 부르면 그 시점엔 DOM에
+    # 아무것도 없어 MutationObserver가 나중에 잡아주기만을 기대하게 되는데,
+    # 느린 회선에서 컴포넌트 iframe이 늦게 뜨면 그 사이에 탭한 한 번은 키패드가
+    # 올라온다. 뒤에서 부르면 즉시 패치가 바로 먹고 관찰자는 보조가 된다.
+    disable_keyboard("inv_lag_", "seg_")
 
     if _missing_docs(data):
         st.caption(f"ℹ️ 정기보고서 원문 {_missing_docs(data)}건은 아직 수집되지 않아 수주잔고·가동률 "
