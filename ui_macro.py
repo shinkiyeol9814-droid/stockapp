@@ -19,6 +19,7 @@ _LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
 _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
 _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
+_MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 
 _USDEBT_API = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -84,6 +85,35 @@ def _weekday_gap(then: datetime, now: datetime) -> int:
 _PERIOD_DAYS = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "max": 100000}
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _market_cache() -> dict:
+    """
+    batch_macro가 남긴 야후 시세 스냅샷. Streamlit Cloud에서 야후 호출이
+    통째로 실패해 환율·금리·원자재 카드가 전부 N/A로 떨어진 적이 있어,
+    DART와 같은 방식으로 러너가 받아둔 값을 폴백으로 쓴다.
+    """
+    try:
+        with open(_MARKET_CACHE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _market_cache_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
+    """스냅샷 파일에서 한 티커의 시계열을 꺼내 화면 포맷(DataFrame)으로."""
+    raw = _market_cache().get(ticker) or []
+    if not raw:
+        return None
+    df = pd.DataFrame(raw, columns=["ts", "price"])
+    df["date"] = pd.to_datetime(df["ts"], unit="ms")
+    df = df.set_index("date").drop(columns=["ts"]).sort_index()
+    cutoff_days = _PERIOD_DAYS.get(period, 365)
+    if cutoff_days < 100000:
+        df = df[df.index >= pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)]
+    return df if not df.empty else None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
     """
@@ -92,11 +122,13 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
     버리면 차트가 앞부분이 잘린 것처럼 보인다. 반환된 구간이 요청 기간의
     절반에도 못 미치면 불완전한 응답으로 간주하고 재시도한다.
     """
-    import yfinance as yf
     expected_days = _PERIOD_DAYS.get(period, 365)
     last_df = None
     for attempt in range(3):
         try:
+            # import까지 try 안에 둔다 — 밖에 두면 yfinance가 없거나 깨졌을 때
+            # 예외가 그대로 올라가 매크로 탭 전체가 죽는다(폴백도 못 탄다).
+            import yfinance as yf
             hist = yf.Ticker(ticker).history(period=period)
             if hist.empty:
                 continue
@@ -109,6 +141,11 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
                 return df
         except Exception:
             continue
+
+    # 라이브가 실패했거나 토막난 응답만 왔으면 배치 스냅샷으로 폴백한다.
+    cached = _market_cache_history(ticker, period)
+    if cached is not None and (last_df is None or len(cached) > len(last_df)):
+        return cached
     return last_df
 
 
@@ -165,7 +202,8 @@ def _get_full_history(ticker: str) -> pd.DataFrame | None:
         return df if not df.empty else None
     except Exception as e:
         print(f"[ui_macro] {ticker} 전체 이력 조회 실패: {type(e).__name__}: {e}")
-        return None
+        # 마일스톤 배지는 없어도 되지만, 스냅샷이 있으면 그거라도 쓴다.
+        return _market_cache_history(ticker, "max")
 
 
 def _milestone_note(full: pd.DataFrame | None, last: float):
@@ -678,6 +716,9 @@ def render_macro():
                 prev  = float(hist["price"].iloc[-2]) if len(hist) > 1 else last
                 last_update = None
                 is_cache_based = ticker.startswith("_")
+                # 라이브 시세가 안 잡히면(=배치 스냅샷으로 그린 차트) 언제 기준
+                # 값인지 반드시 알려준다. 그냥 두면 멈춘 값이 현재가로 읽힌다.
+                is_stale_snapshot = False
                 if not is_cache_based:
                     # 야후 실시간 필드가 있으면 그걸 우선 사용 (더 안정적인 전일종가 기준)
                     # 이미 위에서 병렬로 가져와둔 값을 그대로 조회만 한다 (재요청 없음)
@@ -696,6 +737,8 @@ def render_macro():
                                 {"price": [last]}, index=[pd.Timestamp(last_update.date())]
                             )
                             hist = pd.concat([hist, new_row])
+                    else:
+                        is_stale_snapshot = True
                 else:
                     # 캐시 파일 기반(리튬/DDR5/DDR4) — 방금 확인한 값이므로 age 경고 없이 시각만 표시
                     last_update = hist.index[-1].to_pydatetime()
@@ -707,7 +750,12 @@ def render_macro():
                 clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
                 arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
                 update_html = ""
-                if is_cache_based and last_update:
+                if is_stale_snapshot:
+                    update_html = (
+                        f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
+                        f"{hist.index[-1]:%m/%d} 종가 기준 (실시간 시세 지연)</div>"
+                    )
+                elif is_cache_based and last_update:
                     if prev == last and len(hist) > 1:
                         prev_date = hist.index[-2].to_pydatetime()
                         update_html = (

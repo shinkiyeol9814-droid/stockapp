@@ -20,6 +20,7 @@ _LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
 _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
 _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
+_MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 
 # 미국 연방부채는 스크래핑이 아니라 재무부 공식 API로 받는다 — 키가 필요 없고
 # 1993년부터 일별 전체 이력이 나온다. 그래서 리튬/DRAM처럼 "오늘 값만 긁어
@@ -177,6 +178,75 @@ def fetch_us_debt_series() -> list | None:
         return None
 
 
+# ── 야후 시세(환율·금리·원자재) 스냅샷 ──────────────────────────────────────
+# 앱(ui_macro)은 야후를 직접 부르지만 Streamlit Cloud에서는 그 호출이 통째로
+# 실패해 카드가 전부 N/A로 떨어진 적이 있다(공유 IP 대역이 레이트리밋에 걸린
+# 것으로 보인다). DART와 같은 처방: 러너가 대신 받아 파일로 남기고, 앱은
+# 라이브가 실패했을 때 이 파일로 폴백한다. 장이 쉬는 날에도 마지막 값이
+# 남아 있으므로 화면이 비지 않는다.
+_MARKET_TICKERS = ["USDKRW=X", "JPY=X", "^TNX", "CL=F", "GC=F", "HG=F"]
+_MARKET_KEEP_DAYS = 400   # 화면 차트가 최대 1년치 — 여유분만 남긴다
+
+
+def fetch_market_series() -> dict:
+    """티커 → [[epoch_ms(UTC 자정), 종가], ...]. 실패한 티커는 빼고 돌려준다."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("[market] yfinance 미설치 — 건너뜀")
+        return {}
+
+    out = {}
+    for tk in _MARKET_TICKERS:
+        try:
+            hist = yf.Ticker(tk).history(period="2y")
+            if hist.empty:
+                print(f"[market] {tk}: 빈 응답")
+                continue
+            rows = []
+            for ts, close in hist["Close"].dropna().items():
+                d = ts.date()
+                rows.append([_date_to_ms(d), round(float(close), 6)])
+            if rows:
+                out[tk] = rows
+                print(f"[market] {tk}: {len(rows)}건 (최신 {rows[-1][1]})")
+        except Exception as e:
+            print(f"[market] {tk} 실패: {type(e).__name__}: {e}")
+    return out
+
+
+def _merge_market(path: str, fresh: dict) -> bool:
+    """
+    기존 파일과 병합해 저장. 일부 티커만 실패해도 나머지 이력은 지키고,
+    받아온 날짜는 덮어쓴다(장중에 받은 값이 종가로 정정될 수 있다).
+    """
+    if not fresh:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cur = json.load(f)
+        if not isinstance(cur, dict):
+            cur = {}
+    except Exception:
+        cur = {}
+
+    cutoff = _date_to_ms(datetime.now(KST).date() - timedelta(days=_MARKET_KEEP_DAYS))
+    merged = dict(cur)
+    for tk, rows in fresh.items():
+        by_ts = {int(ts): v for ts, v in cur.get(tk, []) if isinstance(ts, (int, float))}
+        by_ts.update({int(ts): v for ts, v in rows})
+        merged[tk] = [[ts, by_ts[ts]] for ts in sorted(by_ts) if ts >= cutoff]
+
+    if merged == cur:
+        return False
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(merged, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp, path)
+    return True
+
+
 def _replace_if_changed(path: str, series: list | None) -> bool:
     """
     시계열 전체를 덮어쓴다. 내용이 같으면 파일을 건드리지 않는다 —
@@ -216,5 +286,6 @@ if __name__ == "__main__":
         updated["lithium"] = _append_if_new(_LITHIUM_CACHE, fetch_lithium_price())
         updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
         updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
+        updated["market"] = _merge_market(_MARKET_CACHE, fetch_market_series())
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

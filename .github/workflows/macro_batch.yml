@@ -35,7 +35,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # requests: 스팟 가격 스크래핑 / 나머지: 종목목록 시드 갱신(krx_listing.py)
-          pip install requests pandas finance-datareader lxml html5lib
+          # yfinance: 환율·금리·원자재 스냅샷 — Streamlit Cloud에서는 야후가
+          # 막혀 앱이 직접 못 받으므로 러너가 대신 받아 파일로 남긴다.
+          pip install requests pandas finance-datareader lxml html5lib yfinance
 
       - name: Run Script
         env:
