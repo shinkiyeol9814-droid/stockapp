@@ -219,8 +219,15 @@ components.html("""
 <script>
 (function() {
     try {
-        var docs = [document];
-        if (window.parent && window.parent.document) docs.push(window.parent.document);
+        // 컴포넌트 iframe에서 window.parent는 '앱 문서'까지만이다. 브라우저가
+        // 반전 여부를 판단하는 건 최상위 문서이므로 window.top까지 거슬러
+        // 올라가며 전부 선언한다(교차 출처면 접근에서 예외 → 건너뜀).
+        var docs = [], w = window;
+        for (var i = 0; i < 5 && w; i++) {
+            try { if (w.document) docs.push(w.document); } catch (e) { break; }
+            if (w === w.parent) break;
+            w = w.parent;
+        }
         docs.forEach(function(d) {
             d.documentElement.style.colorScheme = 'only light';
             if (!d.getElementById('__cs_only_light__')) {
