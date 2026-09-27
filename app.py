@@ -16,6 +16,15 @@ st.session_state.auto_refresh_count = st_autorefresh(
 # ==========================================
 st.markdown("""
     <style>
+        /* 0. 브라우저의 '강제 다크모드'(크롬 Auto Dark Theme, 삼성인터넷 다크모드)
+           옵트아웃. 이건 Streamlit 테마와 다른 층위다 — config.toml의
+           base="light"는 Streamlit이 칠하는 색만 정하고, 강제 다크모드는 그
+           결과물을 브라우저가 한 번 더 뒤집는다. 그래서 하드코딩한 #ffe6e6
+           버튼까지 적갈색으로 바뀌어 보였다. only light를 선언하면 브라우저가
+           "이 페이지는 라이트 전용"으로 보고 반전을 걸지 않는다. */
+        :root {
+            color-scheme: only light !important;
+        }
         /* 1. 촌스러운 회색 로딩 박스 아예 안 보이게 투명 처리! (깜빡임 완벽 해결) */
         div[data-testid="stSkeleton"] {
             display: none !important;
@@ -198,6 +207,30 @@ components.html("""
         var iv = setInterval(function() {
             if (tryInject()) clearInterval(iv);
         }, 300);
+    } catch (e) {}
+})();
+</script>
+""", height=0)
+
+# 강제 다크모드 옵트아웃을 바깥 문서(앱을 감싼 프레임)에도 건다.
+# 위 CSS는 앱 iframe 안에만 닿는데, 브라우저는 최상위 문서 기준으로 반전 여부를
+# 판단하므로 거기에도 선언이 있어야 한다.
+components.html("""
+<script>
+(function() {
+    try {
+        var docs = [document];
+        if (window.parent && window.parent.document) docs.push(window.parent.document);
+        docs.forEach(function(d) {
+            d.documentElement.style.colorScheme = 'only light';
+            if (!d.getElementById('__cs_only_light__')) {
+                var m = d.createElement('meta');
+                m.id = '__cs_only_light__';
+                m.name = 'color-scheme';
+                m.content = 'only light';
+                (d.head || d.documentElement).appendChild(m);
+            }
+        });
     } catch (e) {}
 })();
 </script>
