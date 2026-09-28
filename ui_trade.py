@@ -29,6 +29,15 @@ _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 # 국가 차원이 필요할 때 쓰는 엔드포인트 (품목 × 국가).
 _NITEM_BASE = "https://apis.data.go.kr/1220000/nitemtrade/getNitemtradeList"
 
+_EMPTY = (0.0, 0.0, 0.0)          # [수출M, 수입M, 수출kg] 기본값
+
+# 카드가 그리는 지표. 금액은 0을 바닥으로 채워 그리고, 단가는 변동 폭이
+# 좁아(예: $60~$98) 0부터 그리면 선이 뭉개지므로 자동 범위에 면도 채우지 않는다.
+_METRICS = {
+    "수출금액": dict(col="total", unit="M", fill=True),
+    "수출단가 ($/kg)": dict(col="price", unit="/kg", fill=False),
+}
+
 
 def _month_list(n_months: int) -> list[str]:
     """최근 n_months개월의 YYYYMM 문자열 (오래된 순)."""
@@ -54,8 +63,11 @@ def _year_windows(months: list[str]) -> list[tuple[str, str]]:
 
 def _fetch_code_range(api_key: str, code: str, a: str, b: str, country):
     """
-    HS코드 하나의 [a, b] 구간 월별 실적 -> {"YYYYMM": [수출M, 수입M]}.
+    HS코드 하나의 [a, b] 구간 월별 실적 -> {"YYYYMM": [수출M, 수입M, 수출kg]}.
     country를 주면 국가 차원이 있는 엔드포인트(nitemtrade)로 간다.
+
+    중량(expWgt, kg)을 같이 받는 이유는 수출단가($/kg)를 내기 위해서다 —
+    금액만 보면 물량이 는 건지 값이 오른 건지 구분이 안 된다.
 
     ⚠️ 응답에 섞여오는 집계 행을 반드시 걸러야 한다:
       · hsCode/hsCd 가 "-" 인 행 (10자리가 아니다)
@@ -85,9 +97,11 @@ def _fetch_code_range(api_key: str, code: str, a: str, b: str, country):
             ym = ym_raw.replace(".", "")     # "2026.07" -> "202607"
             e = float((item.findtext("expDlr", "0") or "0").replace(",", ""))
             m = float((item.findtext("impDlr", "0") or "0").replace(",", ""))
-            row = out.setdefault(ym, [0.0, 0.0])
+            w = float((item.findtext("expWgt", "0") or "0").replace(",", ""))
+            row = out.setdefault(ym, [0.0, 0.0, 0.0])
             row[0] += e / 1_000_000
             row[1] += m / 1_000_000
+            row[2] += w
     except Exception as e:
         # 조용히 넘기면 빈 그래프가 "데이터 없음"처럼 보인다 —
         # 실제로 이 except가 NameError를 삼켜 국가 옵션이 통째로
@@ -121,19 +135,25 @@ def get_theme_trends(theme: str, n_months: int = 36, country=None):
                 for c, a, b in jobs}
         for f in concurrent.futures.as_completed(futs):
             c = futs[f]
-            for ym, (e, m) in f.result().items():
-                row = per_code[c].setdefault(ym, [0.0, 0.0])
+            for ym, (e, m, w) in f.result().items():
+                row = per_code[c].setdefault(ym, [0.0, 0.0, 0.0])
                 row[0] += e
                 row[1] += m
+                row[2] += w
 
     out = {}
     for name, (item_codes, _stocks) in items.items():
         rows = []
         for ym in months:
-            e = sum(per_code.get(c, {}).get(ym, [0.0, 0.0])[0] for c in item_codes)
-            m = sum(per_code.get(c, {}).get(ym, [0.0, 0.0])[1] for c in item_codes)
+            vals = [per_code.get(c, {}).get(ym, _EMPTY) for c in item_codes]
+            e = sum(v[0] for v in vals)
+            m = sum(v[1] for v in vals)
+            w = sum(v[2] for v in vals)
+            # ⚠️ 코드 여러 개를 묶은 품목의 단가는 "금액 합 ÷ 중량 합"이다.
+            # 코드별 단가의 평균을 내면 물량이 적은 코드가 과대 반영된다.
             rows.append(dict(ym=ym, label=f"{ym[2:4]}년{ym[4:]}월",
-                             total=e, imports=m, balance=e - m))
+                             total=e, imports=m, balance=e - m, weight=w,
+                             price=(e * 1_000_000 / w) if w > 0 else None))
         # 확정 통계는 1~2개월 지연 공표된다 — 아직 안 나온 꼬리 달을 자른다.
         # 그대로 두면 선이 0으로 떨어져 "수출이 끊긴" 것처럼 보인다.
         while rows and rows[-1]["total"] == 0 and rows[-1]["imports"] == 0:
@@ -202,7 +222,7 @@ def get_country_options(theme: str, ref_months: int = 3):
 
 
 # ── 차트 ─────────────────────────────────────────────────────────────────────
-def _make_card_sparkline(df, note=None):
+def _make_card_sparkline(df, metric="수출금액", chg=None, note=None):
     """
     카드용 소형 스파크라인. 매크로 탭 카드와 같은 형식으로 맞췄다 —
     여러 품목을 한 화면에 늘어놓고 "무엇이 튀는지" 훑는 게 목적이라,
@@ -210,29 +230,51 @@ def _make_card_sparkline(df, note=None):
 
     축은 fixedrange로 잠그고 hovermode는 남긴다(월별 수치는 마우스오버로).
     """
-    y = list(df["total"])
+    spec = _METRICS[metric]
+    y = [None if v is None or (isinstance(v, float) and v != v) else float(v)
+         for v in df[spec["col"]]]
     x = list(df["label"])
-    up = len(y) > 1 and y[-1] >= y[0]
-    color = "#ef5350" if up else "#1565C0"
-    fill_c = "rgba(239,83,80,0.12)" if up else "rgba(21,101,192,0.12)"
 
-    cust = list(zip(df["imports"], df["balance"]))
+    # 선 색은 카드가 앞세우는 증감률(전년비)과 같은 기준으로 칠한다 —
+    # 예전엔 36개월 첫값↔끝값으로 정해서, "전년 ▲29.8%"라고 써놓고 선은
+    # 파란색인 카드가 나왔다(반도체 증착장비). 매크로 탭 카드와 같은 규칙이다.
+    # ⚠️ 단가는 중량이 0인 달이 None으로 비어 있을 수 있어, 폴백으로 쓰는
+    # 첫값↔끝값 비교도 실제 값만 골라서 해야 TypeError가 안 난다.
+    if chg is None:
+        real = [v for v in y if v is not None]
+        chg = (real[-1] - real[0]) if len(real) > 1 else 0
+    if chg > 0:
+        color, fill_c = "#ef5350", "rgba(239,83,80,0.12)"
+    elif chg < 0:
+        color, fill_c = "#1565C0", "rgba(21,101,192,0.12)"
+    else:
+        color, fill_c = "#9e9e9e", "rgba(158,158,158,0.12)"
+
+    if spec["col"] == "price":
+        cust = list(zip(df["total"], [(w or 0) / 1000 for w in df["weight"]]))
+        hover = ("<b>%{x}</b><br>단가 <b>$%{y:,.1f}/kg</b>"
+                 "<br>수출 $%{customdata[0]:,.1f}M"
+                 "<br>중량 %{customdata[1]:,.1f}t<extra></extra>")
+    else:
+        cust = list(zip(df["imports"], df["balance"]))
+        hover = ("<b>%{x}</b><br>수출 <b>$%{y:,.1f}M</b>"
+                 "<br>수입 $%{customdata[0]:,.1f}M"
+                 "<br>수지 $%{customdata[1]:,.1f}M<extra></extra>")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=x, y=y, mode="lines",
+        x=x, y=y, mode="lines", connectgaps=True,
         line=dict(color=color, width=1.6),
-        fill="tozeroy", fillcolor=fill_c,
-        customdata=cust, showlegend=False,
-        hovertemplate=("<b>%{x}</b><br>수출 <b>$%{y:,.1f}M</b>"
-                       "<br>수입 $%{customdata[0]:,.1f}M"
-                       "<br>수지 $%{customdata[1]:,.1f}M<extra></extra>"),
+        fill="tozeroy" if spec["fill"] else None, fillcolor=fill_c,
+        customdata=cust, showlegend=False, hovertemplate=hover,
     ))
-    fig.add_trace(go.Scatter(
-        x=[x[-1]], y=[y[-1]], mode="markers",
-        marker=dict(color=color, size=6, line=dict(color="#fff", width=1)),
-        showlegend=False, hoverinfo="skip",
-    ))
+    last_i = max((i for i, v in enumerate(y) if v is not None), default=None)
+    if last_i is not None:
+        fig.add_trace(go.Scatter(
+            x=[x[last_i]], y=[y[last_i]], mode="markers",
+            marker=dict(color=color, size=6, line=dict(color="#fff", width=1)),
+            showlegend=False, hoverinfo="skip",
+        ))
 
     # 연 경계에만 눈금 — 카드가 작아서 월 라벨을 다 찍으면 뭉갠다
     tickvals = [lb for lb in x if lb.endswith("01월")] or x[::12]
@@ -245,7 +287,8 @@ def _make_card_sparkline(df, note=None):
                    tickfont=dict(size=7, color="#aaa"), ticklen=0,
                    showgrid=False, zeroline=False, fixedrange=True),
         yaxis=dict(showticklabels=False, showgrid=False, zeroline=False,
-                   rangemode="tozero", fixedrange=True),
+                   rangemode="tozero" if spec["fill"] else "normal",
+                   fixedrange=True),
     )
     # 💡 특이사항 배지는 차트 안에 넣지 않는다 — 최근이 고점이면 선이 바로
     # 우상단으로 올라와 배지와 겹친다. 카드 헤더(HTML)에서 그린다.
@@ -263,7 +306,7 @@ def _trend_note(series):
 
     ⚠️ 조회 구간이 곧 판정 범위다 — "역대"라고 쓰지 않고 기간을 문구에 담는다.
     """
-    vals = [v for v in series if v is not None]
+    vals = [v for v in series if v is not None and v == v]
     if len(vals) < 4:
         return None
     last = vals[-1]
@@ -285,14 +328,20 @@ def _trend_note(series):
     return None
 
 
-def _mom(df):
-    """전월 대비 증감률(%). 직전 달이 0이면 None."""
-    if len(df) < 2:
+def _chg(df, col="total", back=1):
+    """
+    back개월 전 대비 증감률(%). 비교 대상이 없거나 0이면 None.
+
+    💡 월별 수출은 계절성이 커서 증권사 리포트는 전년동월비(back=12)로 읽는다.
+    전월비는 선적 시점 하나에 흔들린다. 행은 달마다 빠짐없이 채워져 있어
+    (get_theme_trends가 months 전체를 도니까) 위치로 12칸 뒤를 봐도 안전하다.
+    """
+    if len(df) <= back:
         return None
-    prev = float(df.iloc[-2]["total"])
-    if prev <= 0:
+    cur, prev = df.iloc[-1][col], df.iloc[-1 - back][col]
+    if cur is None or prev is None or float(prev) <= 0:
         return None
-    return (float(df.iloc[-1]["total"]) / prev - 1) * 100
+    return (float(cur) / float(prev) - 1) * 100
 
 
 def _coverage(df, window: int = 12) -> int:
@@ -311,7 +360,7 @@ def _coverage(df, window: int = 12) -> int:
     return sum(1 for v in vals if v >= thr)
 
 
-def _spike(df):
+def _spike(df, col="total"):
     """
     "튀는 정도" — 최신값을 직전 12개월 중위값과 비교한 배수.
 
@@ -319,7 +368,7 @@ def _spike(df):
     값으로 상단을 독점한다(실제로 반도체 레이저장비가 그랬다: 최근 6개월이
     0,0,0,15,0,80). 중위값 기준은 그런 한 달짜리 잡음에 흔들리지 않는다.
     """
-    vals = list(df["total"])
+    vals = [v for v in df[col] if v is not None and v == v]
     if len(vals) < 4:
         return None
     hist = [v for v in vals[:-1][-12:] if v > 0]
@@ -331,15 +380,28 @@ def _spike(df):
     return vals[-1] / med - 1
 
 
-def _fmt_pct(v):
+def _fmt_pct(v, label="전월"):
     """증감률 표기. 세 자릿수를 넘어가면 숫자보다 잡음이라 잘라 보여준다."""
     if v is None:
-        return "전월비 -"
+        return f"{label} -"
     arrow = "▲" if v > 0 else "▼" if v < 0 else "─"
     a = abs(v)
-    if a >= 999:
-        return f"{arrow} 999%+ 전월"
-    return f"{arrow} {a:.1f}% 전월"
+    return f"{label} {arrow} 999%+" if a >= 999 else f"{label} {arrow} {a:.1f}%"
+
+
+def _last_val(df, col):
+    """마지막 유효값. 단가는 중량이 0인 달이 비어 있을 수 있어 끝에서 되짚는다."""
+    for v in reversed(list(df[col])):
+        if v is not None and v == v:
+            return float(v)
+    return None
+
+
+def _fmt_val(v, col):
+    """카드에 찍는 값 표기 — 금액은 백만달러, 단가는 달러/kg."""
+    if v is None:
+        return "-"
+    return f"${v:,.1f}/kg" if col == "price" else f"${v:,.1f}M"
 
 
 # 화면 고정값 — 요청에 따라 선택 UI를 두지 않는다.
@@ -356,7 +418,7 @@ def render_trade():
     )
     st.caption(
         f"관세청 품목별 수출입실적 · 세부품목 {item_count()}개 · "
-        f"월별 수출 {_MONTHS}개월 · 전월비 큰 순 · 1시간 캐시"
+        f"월별 {_MONTHS}개월 · 12개월 중위 대비 급등 순 · 1시간 캐시"
     )
 
     if not st.secrets.get("DATA_GO_KR_KEY", ""):
@@ -368,9 +430,9 @@ def render_trade():
         )
         st.stop()
 
-    # ── 테마 · 국가 선택 ──────────────────────────────────────────────────────
+    # ── 테마 · 국가 · 지표 선택 ───────────────────────────────────────────────
     # 💡 버튼 11개로 깔아봤더니 화면 위쪽을 두 줄이나 차지했다 — 셀렉터로 되돌린다.
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         theme = st.selectbox("테마", themes(), key="trade_theme")
 
@@ -380,9 +442,17 @@ def render_trade():
     with c2:
         picked_country = st.selectbox("수출 대상국", labels,
                                       key=f"trade_country_{theme}")
-    # 💡 이 두 셀렉터는 옵션이 10여 개뿐이라 타이핑할 이유가 없는데, 모바일에서
+    with c3:
+        # 💡 금액과 단가를 나란히 두 장씩 그리면 카드가 73개라 화면이 무너진다.
+        # 증권사 리포트가 CCL을 "수출금액 + 중량 기준 단가" 두 장으로 보여주는
+        # 것과 같은 정보를, 그리드 전체를 바꿔 끼우는 방식으로 제공한다.
+        metric = st.selectbox("지표", list(_METRICS), key="trade_metric")
+    # 💡 이 셀렉터들은 옵션이 10여 개뿐이라 타이핑할 이유가 없는데, 모바일에서
     # 탭하면 키패드가 올라와 목록을 덮는다. 키패드만 막는다(목록은 그대로 열림).
-    disable_keyboard("trade_theme", "trade_country_")
+    disable_keyboard("trade_theme", "trade_country_", "trade_metric")
+
+    col = _METRICS[metric]["col"]
+    other = "price" if col == "total" else "total"
 
     country = code_by_label.get(picked_country)
     where = "전체" if not country else picked_country.split(" (")[0]
@@ -420,15 +490,34 @@ def render_trade():
         cols = st.columns(_COLS)
         for ci, (name, df) in enumerate(ranked[row_start:row_start + _COLS]):
             _, stocks = lookup(theme, name)
-            last = df.iloc[-1]
-            mom = _mom(df)
-            note = _trend_note(list(df["total"]))
-            clr = "#ef5350" if (mom or 0) > 0 else "#1565C0" if (mom or 0) < 0 else "#888"
-            arrow = "▲" if (mom or 0) > 0 else "▼" if (mom or 0) < 0 else "─"
-            mom_txt = _fmt_pct(mom)
-            sp = _spike(df)
+            cur = _last_val(df, col)
+            yoy = _chg(df, col, 12)
+            mom = _chg(df, col, 1)
+            note = _trend_note(list(df[col]))
+            # 전년비를 기준색으로 쓴다 — 월별 수출은 계절성이 커서 전월비만
+            # 보면 방향이 뒤집힌다(추석·선적 시점 하나로 ±30%가 난다).
+            lead = yoy if yoy is not None else mom
+            clr = "#ef5350" if (lead or 0) > 0 else "#1565C0" if (lead or 0) < 0 else "#888"
+            chg_txt = f"{_fmt_pct(yoy, '전년')}  ·  {_fmt_pct(mom, '전월')}"
+            sp = _spike(df, col)
             if sp is not None and sp >= 0.3:
-                mom_txt += f"  ·  중위대비 +{sp * 100:.0f}%"
+                chg_txt += f"  ·  중위 +{sp * 100:.0f}%"
+
+            # 보조 줄에는 지금 안 그리고 있는 쪽을 숫자로 남긴다 — 금액이 는 게
+            # 물량 때문인지 단가 때문인지는 둘을 같이 봐야 갈린다.
+            sub_v = _last_val(df, other)
+            sub_yoy = _chg(df, other, 12)
+            if sub_v is None:
+                sub_html = ""
+            else:
+                sub_lbl = "단가" if other == "price" else "수출"
+                sub_clr = ("#ef5350" if (sub_yoy or 0) > 0
+                           else "#1565C0" if (sub_yoy or 0) < 0 else "#888")
+                sub_html = (
+                    f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
+                    f"{sub_lbl} {_fmt_val(sub_v, other)} &nbsp;"
+                    f"<span style='color:{sub_clr};'>{_fmt_pct(sub_yoy, '전년')}</span></div>"
+                )
 
             with cols[ci]:
                 badge_html = ""
@@ -443,15 +532,16 @@ def render_trade():
                     f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>"
                     f"{html.escape(name)}{badge_html}</div>"
                     f"<div style='font-size:17px;font-weight:700;line-height:1.2;'>"
-                    f"${last['total']:,.1f}M</div>"
-                    f"<div style='font-size:11.5px;color:{clr};font-weight:600;'>{mom_txt}</div>"
+                    f"{_fmt_val(cur, col)}</div>"
+                    f"<div style='font-size:11.5px;color:{clr};font-weight:600;'>{chg_txt}</div>"
+                    f"{sub_html}"
                     f"<div style='font-size:10.5px;color:#7d8a97;margin-top:1px;"
                     f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'"
                     f" title='{html.escape(stocks)}'>{html.escape(stocks)}</div>",
                     unsafe_allow_html=True,
                 )
                 st.plotly_chart(
-                    _make_card_sparkline(df, note),
+                    _make_card_sparkline(df, metric, lead, note),
                     use_container_width=True,
                     # staticPlot은 두지 않는다 — 마우스오버 툴팁까지 죽는다.
                     config={"displayModeBar": False, "scrollZoom": False,
@@ -470,7 +560,8 @@ def render_trade():
                 st.markdown(
                     f"<div style='font-size:12.5px;margin:2px 0;'>"
                     f"<b>{html.escape(name)}</b> &nbsp; "
-                    f"<span style='color:#555;'>{last['label']} ${last['total']:,.1f}M</span> &nbsp; "
+                    f"<span style='color:#555;'>{last['label']} "
+                    f"{_fmt_val(_last_val(df, col), col)}</span> &nbsp; "
                     f"<span style='color:#8b98a5;font-size:11px;'>{html.escape(stocks)}</span></div>",
                     unsafe_allow_html=True,
                 )
