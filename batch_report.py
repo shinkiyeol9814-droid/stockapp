@@ -1,7 +1,8 @@
 import os
 import io
 import re
-import json
+import json
+import glob
 import asyncio
 import time
 import requests
@@ -85,6 +86,43 @@ _VAL_KW = re.compile(
     r"SOTP|DCF|DDM|RIM|WACC|배당할인|잔여이익|"
     r"배를?\s*적용|배\s*적용|할증|할인\s*적용|Peer\s*그룹|피어\s*그룹",
     re.I)
+
+
+_REPORT_DIR = "data/broker_report"
+# 실행이 며칠 걸러졌을 때 한 번에 너무 멀리 거슬러 올라가지 않도록 하는 상한.
+_MAX_BACKFILL_DAYS = 4
+
+
+def _last_collected_end(now):
+    """
+    직전 수집이 '어디까지 읽고 끝났는지'. 기록이 없으면 None.
+
+    💡 왜 요일 규칙을 안 쓰나 — 토·일을 건너뛰어 '직전 영업일 20:00'부터
+    읽게 했더니 일요일 실행과 월요일 실행이 **둘 다 금요일 저녁부터** 시작해,
+    월요일이 일요일치를 통째로 다시 읽었다(09-27 21건 중 15건이 09-28에
+    재수집 — 같은 PDF를 Gemini로 두 번 분석한 셈이다).
+
+    대신 이미 남아 있는 결과 파일에서 직전 구간의 끝을 읽는다. 파일 자체가
+    기록이라 따로 상태를 둘 필요가 없고, 실행이 걸러지거나 휴일이 끼어도
+    빈틈과 겹침이 함께 사라진다. 수집 결과가 없으면 파일도 안 생기므로
+    다음 실행이 자연히 그 구간까지 이어서 읽는다.
+
+        previous_day_report_YYYYMMDD -> 그날 07:00까지 읽음
+        regular_report_YYYYMMDD      -> 그날 20:00까지 읽음
+    """
+    ends = []
+    for path in glob.glob(os.path.join(_REPORT_DIR, "*report_*.json")):
+        m = re.search(r"(previous_day|regular)_report_(\d{8})\.json$",
+                      path.replace("\\", "/"))
+        if not m:
+            continue
+        try:
+            day = datetime.strptime(m.group(2), "%Y%m%d")
+        except ValueError:
+            continue
+        ends.append(day.replace(hour=7 if m.group(1) == "previous_day" else 20))
+    past = [e for e in ends if e < now]
+    return max(past) if past else None
 
 
 def _extract_report_text(pdf_path, max_pages=8, budget=6000):
@@ -470,7 +508,10 @@ async def main():
         # 낮/저녁에 도는 정규 레포트 (당일 07:00 ~ 당일 20:00)
         report_type_name = "Regular Report"
         file_name = f"data/broker_report/regular_report_{today_str}.json"
-        fetch_start = today_07
+        # 아침 실행이 걸러졌으면 그 구간까지 이어서 읽는다.
+        resume = _last_collected_end(now)
+        floor = today_20 - timedelta(days=_MAX_BACKFILL_DAYS)
+        fetch_start = max(resume, floor) if resume else today_07
         fetch_end = today_20
     else: 
         # 아침/밤에 도는 전일 레포트
@@ -484,11 +525,10 @@ async def main():
             # 밤 11시간만 보게 되어, 금요일 저녁부터 일요일까지 올라온 레포트가
             # 통째로 빠진다. 실제로 2026-09-07(월)은 수집 결과가 없어
             # previous_day_report 파일 자체가 만들어지지 않았다.
-            # 토·일을 건너뛰어 직전 영업일 저녁까지 거슬러 올라간다.
-            prev = now - timedelta(days=1)
-            while prev.weekday() >= 5:      # 5=토, 6=일
-                prev -= timedelta(days=1)
-            fetch_start = prev.replace(hour=20, minute=0, second=0, microsecond=0)
+            # 직전 수집이 끝난 지점부터 이어 읽는다(_last_collected_end 주석 참고).
+            resume = _last_collected_end(now)
+            floor = today_07 - timedelta(days=_MAX_BACKFILL_DAYS)
+            fetch_start = max(resume, floor) if resume else today_20 - timedelta(days=1)
             fetch_end = today_07
         else:
             # 밤(22, 23시)에 도는 경우 (오늘 20:00 ~ 내일 07:00)
