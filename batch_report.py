@@ -13,7 +13,8 @@ from telethon.sessions import StringSession
 from google import genai
 import FinanceDataReader as fdr
 
-from krx_listing import fetch_krx_listing, fetch_krx_marcap
+from krx_listing import fetch_krx_listing, fetch_krx_marcap
+from report_dedupe import dedupe
 
 # 환경 변수 설정
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
@@ -434,7 +435,9 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
     report = {
         "analysis_time": analysis_time,
         "report_type": report_type_name,
-        "results": final_list
+        # 같은 레포트가 여러 채널에서 들어온 건 저장 단계에서도 합친다
+        # (화면에서도 한 번 더 거르지만, 파일 자체를 깨끗하게 남긴다).
+        "results": dedupe(final_list)
     }
     
     with open(file_name, "w", encoding="utf-8") as f:

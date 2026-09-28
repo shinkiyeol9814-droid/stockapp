@@ -6,7 +6,8 @@ import glob
 import re
 import html
 
-from ui_mobile import disable_keyboard
+from ui_mobile import disable_keyboard
+from report_dedupe import dedupe
 
 # 💡 하이브리드 포맷 리더: 신규/구형 파일 모두 호환하여 예쁜 옵션 리스트 생성
 @st.cache_data(ttl=60)
@@ -81,7 +82,14 @@ def render_report_summary():
                 results = data if isinstance(data, list) else []
                 analysis_time = "과거 데이터 (파일명 참조)"
             
-            st.caption(f"📅 레포트 추출 및 분석 시점: {analysis_time} | 📊 총 {len(results)}개의 레포트가 분석되었습니다.")
+            # 💡 같은 레포트가 여러 채널에서 들어와 카드가 두 장씩 뜨는 것을 합친다.
+            # 화면에서 거르므로 이미 저장된 과거 파일에도 바로 적용된다.
+            raw_n = len(results)
+            results = dedupe(results)
+            merged = raw_n - len(results)
+            dup_note = f" | 🔁 중복 {merged}건 제외" if merged else ""
+            st.caption(f"📅 레포트 추출 및 분석 시점: {analysis_time} | "
+                       f"📊 총 {len(results)}개의 레포트가 분석되었습니다.{dup_note}")
             
             if results:
                 df = pd.DataFrame(results)
