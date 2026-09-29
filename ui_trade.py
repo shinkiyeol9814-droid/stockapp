@@ -33,7 +33,11 @@ _EMPTY = (0.0, 0.0, 0.0)          # [수출M, 수입M, 수출kg] 기본값
 
 # 카드가 그리는 지표. 금액은 0을 바닥으로 채워 그리고, 단가는 변동 폭이
 # 좁아(예: $60~$98) 0부터 그리면 선이 뭉개지므로 자동 범위에 면도 채우지 않는다.
+# dual=True면 한 장에 금액(좌축 면적) + 단가(우축 점선)를 겹쳐 그린다.
+# 카드가 73개라 두 장씩 늘어놓을 수는 없고, 금액이 물량 때문에 는 건지
+# 단가 때문인지는 두 계열을 같은 x축 위에 놓아야 눈으로 갈린다.
 _METRICS = {
+    "수출금액 + 단가": dict(col="total", unit="M", fill=True, dual=True),
     "수출금액": dict(col="total", unit="M", fill=True),
     "수출단가 ($/kg)": dict(col="price", unit="/kg", fill=False),
 }
@@ -276,19 +280,36 @@ def _make_card_sparkline(df, metric="수출금액", chg=None, note=None):
             showlegend=False, hoverinfo="skip",
         ))
 
+    # 단가를 보조축에 겹친다. 색은 회색 점선 — 빨강/파랑은 이 앱에서
+    # 상승/하락을 뜻하므로 두 번째 계열에 쓰면 방향으로 오해된다
+    # (DART 패널이 회전율을 같은 방식으로 그린다).
+    if spec.get("dual"):
+        y2 = [None if v is None or (isinstance(v, float) and v != v) else float(v)
+              for v in df["price"]]
+        if any(v is not None for v in y2):
+            fig.add_trace(go.Scatter(
+                x=x, y=y2, mode="lines", connectgaps=True, yaxis="y2",
+                line=dict(color="#8a8a8a", width=1.3, dash="dot"),
+                showlegend=False,
+                hovertemplate="단가 <b>$%{y:,.1f}/kg</b><extra></extra>",
+            ))
+
     # 연 경계에만 눈금 — 카드가 작아서 월 라벨을 다 찍으면 뭉갠다
     tickvals = [lb for lb in x if lb.endswith("01월")] or x[::12]
 
     fig.update_layout(
         height=110, margin=dict(l=0, r=4, t=4, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        dragmode=False, hovermode="x",
+        dragmode=False, hovermode="x unified" if spec.get("dual") else "x",
         xaxis=dict(showticklabels=True, tickmode="array", tickvals=tickvals,
                    tickfont=dict(size=7, color="#aaa"), ticklen=0,
                    showgrid=False, zeroline=False, fixedrange=True),
         yaxis=dict(showticklabels=False, showgrid=False, zeroline=False,
                    rangemode="tozero" if spec["fill"] else "normal",
                    fixedrange=True),
+        # 보조축도 반드시 fixedrange — 안 걸면 휠/드래그로 단가만 따로 움직인다.
+        yaxis2=dict(overlaying="y", side="right", showticklabels=False,
+                    showgrid=False, zeroline=False, fixedrange=True),
     )
     # 💡 특이사항 배지는 차트 안에 넣지 않는다 — 최근이 고점이면 선이 바로
     # 우상단으로 올라와 배지와 겹친다. 카드 헤더(HTML)에서 그린다.
@@ -443,9 +464,10 @@ def render_trade():
         picked_country = st.selectbox("수출 대상국", labels,
                                       key=f"trade_country_{theme}")
     with c3:
-        # 💡 금액과 단가를 나란히 두 장씩 그리면 카드가 73개라 화면이 무너진다.
-        # 증권사 리포트가 CCL을 "수출금액 + 중량 기준 단가" 두 장으로 보여주는
-        # 것과 같은 정보를, 그리드 전체를 바꿔 끼우는 방식으로 제공한다.
+        # 💡 증권사 리포트가 CCL을 "수출금액 + 중량 기준 단가" 두 장으로 보여주는
+        # 것과 같은 정보를 준다. 다만 카드가 73개라 두 장씩 늘어놓으면 화면이
+        # 무너지므로, 기본값은 한 장에 보조축으로 겹쳐 그리는 쪽이다.
+        # 한쪽만 크게 보고 싶으면 나머지 두 옵션으로 그리드를 바꿔 낀다.
         metric = st.selectbox("지표", list(_METRICS), key="trade_metric")
     # 💡 이 셀렉터들은 옵션이 10여 개뿐이라 타이핑할 이유가 없는데, 모바일에서
     # 탭하면 키패드가 올라와 목록을 덮는다. 키패드만 막는다(목록은 그대로 열림).
