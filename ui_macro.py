@@ -7,7 +7,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import concurrent.futures
 import xml.etree.ElementTree as ET
+import difflib
 from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 import json
 import os
 import re
@@ -47,6 +49,61 @@ MARKET_ITEMS = [
 _NEWS_QUERY = {
     "CL=F": "WTI 유가",
 }
+
+# ⚠️ 구글 뉴스 RSS는 최신순이 아니라 **관련도순**으로 준다. 그래서 큰 매체의
+# 자극적인 제목 하나가 1위를 계속 지키며 며칠씩 안 바뀌었다 — 카드가
+# "▲+4.34%"인데 바로 밑에 "3.5% 급락…1개월來 최저"가 붙어 서로 모순됐다.
+# 관련도 순서는 품질이 괜찮으니 그대로 두고, 오래된 것만 걷어낸다.
+# (순수 최신순으로 바꾸면 기계번역 매체 같은 게 1위로 올라온다.)
+_NEWS_POOL      = 40    # 관련도 상위 몇 건까지 볼지
+_NEWS_MAX_AGE_H = 36    # 1차 컷
+_NEWS_WIDEN_H   = 96    # 1차로 못 채우면 넓힌다 (주말·한산한 날)
+# 같은 사건을 여러 매체가 받아쓴 걸 묶는 기준. 실제 수집분으로 잰 분리선:
+#   같은 사건   "국제유가, 미·이란 협상 교착에 반등⋯WTI 90달러"
+#               ↔ "국제유가 다시 상승…美·이란 협상 교착에 WTI 90달러"   0.82
+#               ↔ "미·이란 협상 교착에 국제유가 상승…WTI 90달러 돌파"   0.68
+#   다른 사건   "오늘 연료 가격…" ↔ "WTI 90달러선 붕괴"                 0.04
+# 0.12와 0.61 사이가 비어 있어 0.6으로 둔다.
+_NEWS_SIM = 0.6
+
+# 끝에 붙는 매체명(" - 연합뉴스")과 말머리("[뉴욕유가]")는 같은 사건 판정에
+# 방해만 된다.
+_NEWS_OUTLET_RE = re.compile(r"\s*[-–]\s*[^-–]{1,20}$")
+_NEWS_PREFIX_RE = re.compile(r"\[[^\]]*\]")
+_NEWS_NONWORD_RE = re.compile(r"[^\w가-힣]+")
+
+
+def _news_key(title: str) -> str:
+    """같은 사건의 다른 매체 기사를 묶기 위한 비교용 제목."""
+    t = _NEWS_OUTLET_RE.sub("", str(title or ""))
+    t = _NEWS_PREFIX_RE.sub(" ", t)
+    return _NEWS_NONWORD_RE.sub("", t).lower()
+
+
+def _news_age(dt, now) -> str:
+    """'3시간' / '2일' 같은 짧은 경과 표기 — 헤드라인이 언제 것인지 보이게."""
+    h = (now - dt).total_seconds() / 3600
+    if h < 1:
+        return "방금"
+    if h < 24:
+        return f"{int(h)}시간"
+    return f"{int(h // 24)}일"
+
+
+def _news_pick(pool, n, max_age_h, now):
+    """관련도 순서를 유지한 채 오래된 것과 같은 사건을 걷어내고 n건."""
+    out = []
+    for dt, title, link in pool:
+        if max_age_h is not None and (now - dt).total_seconds() / 3600 > max_age_h:
+            continue
+        k = _news_key(title)
+        if any(difflib.SequenceMatcher(None, k, _news_key(t)).ratio() >= _NEWS_SIM
+               for _, t, _ in out):
+            continue
+        out.append((dt, title, link))
+        if len(out) >= n:
+            break
+    return out
 
 
 def _today_ms_utc_midnight() -> int:
@@ -300,24 +357,43 @@ def _get_naver_bond_quote(reuters_code: str):
 @st.cache_data(ttl=1800, show_spinner=False)
 def _get_commodity_news(query: str, n: int = 2):
     """
-    구글 뉴스 RSS에서 관련 헤드라인 상위 n개를 (제목, 링크) 리스트로 반환.
+    구글 뉴스 RSS에서 관련 헤드라인 n개를 (제목, 링크, 경과) 리스트로 반환.
     batch_analysis.py의 get_google_news()와 같은 방식 — 금융 뉴스 헤드라인은
     보통 등락 사유가 제목에 그대로 들어있어(예: "WTI, OPEC+ 감산 소식에 급등")
     AI 요약 없이 헤드라인만 보여줘도 충분하고, API 키도 필요 없다.
     30분 캐시 — 뉴스는 시세만큼 자주 안 바뀌어도 됨.
+
+    관련도 순서는 그대로 두고 오래된 것·중복 사건만 걷어낸다(위 상수 주석 참고).
     """
     try:
         encoded = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, timeout=5)
         root = ET.fromstring(res.text)
-        items = []
-        for item in root.findall(".//item")[:n]:
-            title_el = item.find("title")
-            link_el = item.find("link")
-            if title_el is not None and link_el is not None and title_el.text and link_el.text:
-                items.append((title_el.text, link_el.text))
-        return items
+        now = datetime.now(timezone.utc)
+        pool = []
+        for item in root.findall(".//item")[:_NEWS_POOL]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub = item.findtext("pubDate")
+            if not title or not link or not pub:
+                continue
+            try:
+                dt = parsedate_to_datetime(pub)
+            except Exception:
+                continue
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            pool.append((dt, title, link))
+
+        # 최신 창부터 시도하고, n건을 못 채우면 넓힌다. 마지막 None은 제한 없음 —
+        # 한산한 날에 아무것도 안 뜨는 것보다는 오래된 거라도 경과를 달아 보여준다.
+        picked = []
+        for cutoff in (_NEWS_MAX_AGE_H, _NEWS_WIDEN_H, None):
+            picked = _news_pick(pool, n, cutoff, now)
+            if len(picked) >= n:
+                break
+        return [(t, l, _news_age(d, now)) for d, t, l in picked]
     except Exception:
         return []
 
@@ -824,9 +900,10 @@ def render_macro():
                         news_html = "".join(
                             f"<div style='font-size:11px;color:#555;margin-top:2px;overflow:hidden;"
                             f"text-overflow:ellipsis;white-space:nowrap;'>"
-                            f"📰 <a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
+                            f"📰 <span style='color:#aaa;'>{html.escape(age)}</span> "
+                            f"<a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
                             f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>"
-                            for title, link in news_items
+                            for title, link, age in news_items
                         )
                         st.markdown(news_html, unsafe_allow_html=True)
 
