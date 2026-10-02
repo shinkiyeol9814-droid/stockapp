@@ -7,7 +7,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import concurrent.futures
 import xml.etree.ElementTree as ET
-import difflib
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 import json
@@ -45,39 +44,27 @@ MARKET_ITEMS = [
     ("미국 연방부채",   "_USDEBT_",  "조 달러", ",.3f", 1),
 ]
 
-# 카드 밑에 관련 뉴스 헤드라인을 붙일 티커 → 검색어. 지금은 WTI만 (요청 범위).
+# 카드 밑에 최신 뉴스 헤드라인 1건을 붙일 티커 → (검색어, 제목 필수 키워드).
+#
+# 💡 "최신 1건"을 고르는 규칙은 실측으로 정했다:
+#   · 구글 뉴스 RSS는 관련도순이라 그대로 1위를 쓰면 며칠 묵은 기사가 박혀
+#     안 바뀐다(카드는 ▲+4.34%인데 밑에 "3.5% 급락…1개월來 최저"가 붙었다).
+#   · 그렇다고 받은 100건 중 가장 새것을 고르면 WTI에서 베트남 기계번역
+#     기사("오늘 연료 가격: 세계 유가 급등…")가 올라온다.
+#   → 제목에 필수 키워드가 있는 것만 남기고 그중 가장 새것을 쓴다. 위 기계번역
+#     기사는 "WTI"가 제목에 없어 걸러진다.
+#   · 검색어에 when:7d를 붙인다. 안 붙이면 100건 풀이 관련도 위주로 채워져
+#     최근 기사가 덜 들어온다 — WTI가 31.6시간 전 기사 → 10.5시간 전 기사로 당겨졌다.
+#
+# 다른 카드도 여기 한 줄 넣으면 붙는다(뉴스는 시세와 같이 병렬로 받아 오므로
+# 늘려도 로딩은 거의 그대로다 — 10개 전부 병렬 0.23초, 순차였으면 5.8초).
+# 다만 실측상 DDR4(최신이 11일 전)·연방부채(4일 전, 칼럼류)는 붙일 만한
+# 기사가 꾸준히 안 나와서 넣지 않았다.
 _NEWS_QUERY = {
-    "CL=F": "WTI 유가",
+    "^TNX": ("미 국채금리 10년물", ("국채", "10년")),
+    "CL=F": ("WTI 유가", ("WTI",)),
 }
-
-# ⚠️ 구글 뉴스 RSS는 최신순이 아니라 **관련도순**으로 준다. 그래서 큰 매체의
-# 자극적인 제목 하나가 1위를 계속 지키며 며칠씩 안 바뀌었다 — 카드가
-# "▲+4.34%"인데 바로 밑에 "3.5% 급락…1개월來 최저"가 붙어 서로 모순됐다.
-# 관련도 순서는 품질이 괜찮으니 그대로 두고, 오래된 것만 걷어낸다.
-# (순수 최신순으로 바꾸면 기계번역 매체 같은 게 1위로 올라온다.)
-_NEWS_POOL      = 40    # 관련도 상위 몇 건까지 볼지
-_NEWS_MAX_AGE_H = 36    # 1차 컷
-_NEWS_WIDEN_H   = 96    # 1차로 못 채우면 넓힌다 (주말·한산한 날)
-# 같은 사건을 여러 매체가 받아쓴 걸 묶는 기준. 실제 수집분으로 잰 분리선:
-#   같은 사건   "국제유가, 미·이란 협상 교착에 반등⋯WTI 90달러"
-#               ↔ "국제유가 다시 상승…美·이란 협상 교착에 WTI 90달러"   0.82
-#               ↔ "미·이란 협상 교착에 국제유가 상승…WTI 90달러 돌파"   0.68
-#   다른 사건   "오늘 연료 가격…" ↔ "WTI 90달러선 붕괴"                 0.04
-# 0.12와 0.61 사이가 비어 있어 0.6으로 둔다.
-_NEWS_SIM = 0.6
-
-# 끝에 붙는 매체명(" - 연합뉴스")과 말머리("[뉴욕유가]")는 같은 사건 판정에
-# 방해만 된다.
-_NEWS_OUTLET_RE = re.compile(r"\s*[-–]\s*[^-–]{1,20}$")
-_NEWS_PREFIX_RE = re.compile(r"\[[^\]]*\]")
-_NEWS_NONWORD_RE = re.compile(r"[^\w가-힣]+")
-
-
-def _news_key(title: str) -> str:
-    """같은 사건의 다른 매체 기사를 묶기 위한 비교용 제목."""
-    t = _NEWS_OUTLET_RE.sub("", str(title or ""))
-    t = _NEWS_PREFIX_RE.sub(" ", t)
-    return _NEWS_NONWORD_RE.sub("", t).lower()
+_NEWS_RECENT = " when:7d"
 
 
 def _news_age(dt, now) -> str:
@@ -88,22 +75,6 @@ def _news_age(dt, now) -> str:
     if h < 24:
         return f"{int(h)}시간"
     return f"{int(h // 24)}일"
-
-
-def _news_pick(pool, n, max_age_h, now):
-    """관련도 순서를 유지한 채 오래된 것과 같은 사건을 걷어내고 n건."""
-    out = []
-    for dt, title, link in pool:
-        if max_age_h is not None and (now - dt).total_seconds() / 3600 > max_age_h:
-            continue
-        k = _news_key(title)
-        if any(difflib.SequenceMatcher(None, k, _news_key(t)).ratio() >= _NEWS_SIM
-               for _, t, _ in out):
-            continue
-        out.append((dt, title, link))
-        if len(out) >= n:
-            break
-    return out
 
 
 def _today_ms_utc_midnight() -> int:
@@ -354,48 +325,53 @@ def _get_naver_bond_quote(reuters_code: str):
         return None, None, None
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def _get_commodity_news(query: str, n: int = 2):
-    """
-    구글 뉴스 RSS에서 관련 헤드라인 n개를 (제목, 링크, 경과) 리스트로 반환.
-    batch_analysis.py의 get_google_news()와 같은 방식 — 금융 뉴스 헤드라인은
-    보통 등락 사유가 제목에 그대로 들어있어(예: "WTI, OPEC+ 감산 소식에 급등")
-    AI 요약 없이 헤드라인만 보여줘도 충분하고, API 키도 필요 없다.
-    30분 캐시 — 뉴스는 시세만큼 자주 안 바뀌어도 됨.
+def _news_rss(query: str):
+    """구글 뉴스 RSS -> [(발행시각, 제목, 링크)] (관련도순 그대로)."""
+    url = ("https://news.google.com/rss/search?q="
+           f"{urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko")
+    root = ET.fromstring(requests.get(url, timeout=5).text)
+    out = []
+    for item in root.findall(".//item"):
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        pub = item.findtext("pubDate")
+        if not title or not link or not pub:
+            continue
+        try:
+            dt = parsedate_to_datetime(pub)
+        except Exception:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        out.append((dt, title, link))
+    return out
 
-    관련도 순서는 그대로 두고 오래된 것·중복 사건만 걷어낸다(위 상수 주석 참고).
+
+# 시세 캐시(_get_price_history, 300초)와 같은 주기 — 매크로 화면이 갱신될 때
+# 뉴스도 같이 바뀌어야 한다(예전 30분 캐시는 시세만 움직이고 뉴스는 그대로였다).
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_commodity_news(query: str, must: tuple):
+    """
+    최신 헤드라인 1건 -> (제목, 링크, 경과) 또는 None.
+    금융 뉴스 헤드라인은 보통 등락 사유가 제목에 그대로 들어있어
+    (예: "WTI, OPEC+ 감산 소식에 급등") 요약 없이 헤드라인만으로 충분하다.
+    고르는 규칙은 _NEWS_QUERY 위 주석 참고.
     """
     try:
-        encoded = urllib.parse.quote(query)
-        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, timeout=5)
-        root = ET.fromstring(res.text)
         now = datetime.now(timezone.utc)
-        pool = []
-        for item in root.findall(".//item")[:_NEWS_POOL]:
-            title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            pub = item.findtext("pubDate")
-            if not title or not link or not pub:
-                continue
-            try:
-                dt = parsedate_to_datetime(pub)
-            except Exception:
-                continue
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            pool.append((dt, title, link))
-
-        # 최신 창부터 시도하고, n건을 못 채우면 넓힌다. 마지막 None은 제한 없음 —
-        # 한산한 날에 아무것도 안 뜨는 것보다는 오래된 거라도 경과를 달아 보여준다.
-        picked = []
-        for cutoff in (_NEWS_MAX_AGE_H, _NEWS_WIDEN_H, None):
-            picked = _news_pick(pool, n, cutoff, now)
-            if len(picked) >= n:
-                break
-        return [(t, l, _news_age(d, now)) for d, t, l in picked]
-    except Exception:
-        return []
+        pool = _news_rss(query + _NEWS_RECENT)
+        hits = [r for r in pool if any(k.lower() in r[1].lower() for k in must)]
+        if not hits:
+            # 최근 7일에 키워드 맞는 기사가 없으면(한산한 주) 기간 제한 없이 한 번 더.
+            pool = _news_rss(query)
+            hits = [r for r in pool if any(k.lower() in r[1].lower() for k in must)]
+        if not hits:
+            return None
+        dt, title, link = max(hits, key=lambda r: r[0])
+        return title, link, _news_age(dt, now)
+    except Exception as e:
+        print(f"[ui_macro] 뉴스({query}) 조회 실패: {type(e).__name__}: {e}")
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -761,6 +737,10 @@ def render_macro():
             hist_futures = [ex.submit(_fetch_hist, item) for item in MARKET_ITEMS]
             lp_futures = [ex.submit(_fetch_last_prev, item) for item in MARKET_ITEMS]
             full_futures = [ex.submit(_fetch_full, item) for item in MARKET_ITEMS]
+            # 뉴스도 같은 풀에서 — 카드 그리면서 하나씩 받으면 카드 수만큼 직렬로 쌓인다.
+            news_futures = {tk: ex.submit(_get_commodity_news, q, must)
+                            for tk, (q, must) in _NEWS_QUERY.items()}
+            news_map = {tk: f.result() for tk, f in news_futures.items()}
             for f in hist_futures:
                 nm, h = f.result()
                 hists[nm] = h
@@ -892,20 +872,18 @@ def render_macro():
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
                 )
 
-                news_query = _NEWS_QUERY.get(ticker)
-                if news_query:
-                    news_items = _get_commodity_news(news_query)
-                    if news_items:
-                        # 구글 뉴스는 외부 입력이므로 HTML 이스케이프 후 삽입 (XSS 방지)
-                        news_html = "".join(
-                            f"<div style='font-size:11px;color:#555;margin-top:2px;overflow:hidden;"
-                            f"text-overflow:ellipsis;white-space:nowrap;'>"
-                            f"📰 <span style='color:#aaa;'>{html.escape(age)}</span> "
-                            f"<a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
-                            f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>"
-                            for title, link, age in news_items
-                        )
-                        st.markdown(news_html, unsafe_allow_html=True)
+                news = news_map.get(ticker)
+                if news:
+                    title, link, age = news
+                    # 구글 뉴스는 외부 입력이므로 HTML 이스케이프 후 삽입 (XSS 방지)
+                    st.markdown(
+                        f"<div style='font-size:11px;color:#555;margin-top:2px;overflow:hidden;"
+                        f"text-overflow:ellipsis;white-space:nowrap;'>"
+                        f"📰 <span style='color:#aaa;'>{html.escape(age)}</span> "
+                        f"<a href='{html.escape(link)}' target='_blank' rel='noopener noreferrer' "
+                        f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>",
+                        unsafe_allow_html=True,
+                    )
 
     _, cr = st.columns([9, 1.5])
     with cr:
@@ -914,4 +892,5 @@ def render_macro():
             _get_lithium_price_history.clear()
             _get_dram_price_history.clear()
             _get_ddr4_price_history.clear()
+            _get_commodity_news.clear()
             st.rerun()
