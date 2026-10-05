@@ -291,7 +291,9 @@ st.plotly_chart(fig, config={
 실패할 기회가 생긴다. 쿠키 수명은 Streamlit 프록시가 정하는 것이라 앱 코드로 늘릴 수 없다.
 
 **어디서 실패하나:** 앱 매니페스트(`/-/build/manifest.json`)가 `display: standalone`이라
-홈화면 앱으로 **설치**되고, 그 앱의 범위는 `stockapp-sky.streamlit.app`뿐이다. 인증 첫 단계가
+홈화면 앱으로 **설치**되고, 그 앱의 범위는 `stockapp-sky.streamlit.app`뿐이다.
+매니페스트 이름이 `"Streamlit"`이라 설치된 앱은 휴대폰에 **"Streamlit"이라는 앱**으로 보인다 —
+공식 Streamlit 앱처럼 보이지만 이 사이트를 크롬이 설치한 것이다(사용자가 실제로 이렇게 쓰고 있었다). 인증 첫 단계가
 `share.streamlit.io`로 범위를 벗어나면 크롬이 그 페이지를 **X 버튼 + 제목·도메인 두 줄** 툴바가
 달린 별도 창에 띄우고, 사용자 제보 스크린샷은 전부 이 창에서 난 루프였다. 앱 링크를
 카카오톡·텔레그램 등에서 눌러 여는 경우도 같은 모양의 창이 뜬다. 서버 쪽 체인은 정상이고
