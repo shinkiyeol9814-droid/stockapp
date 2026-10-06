@@ -68,6 +68,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
+| `iphone_chain.py` | **아이폰 공급망 수집 (애플 iPhone 분기 매출 + 대만 3사 월매출, macro 배치가 호출)** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
 
 ---
@@ -117,6 +118,7 @@ data/
   listing/krx_listing.csv        # 종목목록 시드 (최후 폴백, 배치가 매일 갱신)
   macro/{dram,ddr4,lithium}_cache.json   # 스팟 가격 누적 (예전엔 리포지토리 루트)
   macro/us_debt_cache.json       # 미국 연방부채 (재무부 API, 3년치)
+  macro/iphone_cache.json        # 아이폰 공급망 (SEC EDGAR + 대만 MOPS, 증분 수집)
   earnings/index.json            # 보유 분기 목록
   earnings/q_2026_2Q.json        # 분기별 실적 (단일 4MB 파일에서 분리)
   broker_report/*.json           # 날짜별, 180일 보존

@@ -287,5 +287,13 @@ if __name__ == "__main__":
         updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
         updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
         updated["market"] = _merge_market(_MARKET_CACHE, fetch_market_series())
+        # 아이폰 공급망(애플 iPhone 분기 매출 + 대만 3사 월매출) — 증분 수집이라
+        # 평소엔 새 공시/새 달이 있을 때만 받는다. 실패해도 다른 지표는 그대로 커밋된다.
+        try:
+            import iphone_chain
+            updated["iphone"] = iphone_chain.update_cache()
+        except Exception as e:
+            print(f"  iphone 실패: {type(e).__name__}: {e}")
+            updated["iphone"] = False
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

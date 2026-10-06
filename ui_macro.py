@@ -21,6 +21,7 @@ _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
 _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
+_IPHONE_CACHE  = os.path.join(_MACRO_DIR, "iphone_cache.json")
 
 _USDEBT_API = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -578,6 +579,184 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
 
 
 # ── 스파크라인 헬퍼 ─────────────────────────────────────────────────────────
+# ── 아이폰 공급망 카드 ──────────────────────────────────────────────────────
+# 데이터는 batch_macro → iphone_chain.update_cache()가 매일 data/macro/iphone_cache.json에
+# 쌓는다(애플 공시 iPhone 분기 매출 + 대만 3사 월매출). 앱은 파일만 읽는다.
+#
+# 다른 카드와 달리 일별 시세가 아니라 분기·월 데이터라 시세 카드 루프에 태우지
+# 않고 따로 그린다. 네 계열을 한 장에 겹치려고 단위를 "전년비(%)"로 통일했다 —
+# 매출 규모가 수십 배씩 달라 금액 그대로는 한 축에 못 올린다.
+#
+# 계열 색은 빨강/파랑을 쓰지 않는다 — 이 앱에서 그 둘은 상승/하락을 뜻한다
+# (수출입 카드가 단가 계열을 회색으로 그린 것과 같은 이유). 방향은 숫자 쪽에서
+# 빨강/파랑으로 보여준다.
+_IPHONE_SERIES = [   # (키, 이름, 색, 굵기)
+    ("iphone", "iPhone 매출", "#263238", 2.4),
+    ("2317", "폭스콘", "#8e24aa", 1.3),
+    ("4938", "페가트론", "#f9a825", 1.3),
+    ("3008", "라간", "#00897b", 1.3),
+]
+_IPHONE_MONTHS = 36
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_iphone_chain():
+    try:
+        with open(_IPHONE_CACHE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _iphone_yoy_series(data: dict) -> dict:
+    """키 -> [(그 달 1일 Timestamp, 전년비%, 원값)] — 최근 _IPHONE_MONTHS개월만."""
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=_IPHONE_MONTHS)
+    out = {}
+
+    # iPhone: 분기말 기준. 1년 전 같은 분기(350~380일 전 분기말)와 비교.
+    q = {pd.Timestamp(k): v for k, v in (data.get("iphone") or {}).items()}
+    rows = []
+    for end, v in sorted(q.items()):
+        prev = next((pv for pe, pv in q.items() if 350 <= (end - pe).days <= 380), None)
+        if prev and end >= cutoff:
+            # x는 분기말이 속한 달의 1일로 — 대만 월 데이터와 같은 칸에 놓여야
+            # 마우스오버 한 번에 네 값이 같이 뜬다.
+            rows.append((end.replace(day=1), (v / prev - 1) * 100, v))
+    out["iphone"] = rows
+
+    # 대만: 공시 표에 전년동월비가 이미 있어 그대로 쓴다.
+    for code in ("2317", "4938", "3008"):
+        rows = []
+        for ym, comp in sorted((data.get("tw") or {}).items()):
+            row = comp.get(code)
+            x = pd.Timestamp(f"{ym}-01")
+            if row and row.get("yoy") is not None and x >= cutoff:
+                rows.append((x, row["yoy"], row.get("rev")))
+        out[code] = rows
+    return out
+
+
+def _make_iphone_chart(series: dict) -> go.Figure:
+    fig = go.Figure()
+    fig.add_hline(y=0, line=dict(color="#bbb", width=1, dash="dot"))
+    for key, name, color, width in _IPHONE_SERIES:
+        rows = series.get(key) or []
+        if not rows:
+            continue
+        xs, ys, raw = zip(*rows)
+        if key == "iphone":
+            hover = "iPhone 매출 <b>%{y:+.1f}%</b> ($%{customdata:,.1f}B)<extra></extra>"
+            custom = [v / 1e9 for v in raw]
+            mode, marker = "lines+markers", dict(size=6, color=color)
+        else:
+            hover = f"{name} <b>%{{y:+.1f}}%</b><extra></extra>"
+            custom = list(raw)
+            mode, marker = "lines", None
+        fig.add_trace(go.Scatter(
+            x=list(xs), y=list(ys), mode=mode, name=name,
+            line=dict(color=color, width=width), marker=marker,
+            customdata=custom, hovertemplate=hover, showlegend=False,
+        ))
+    fig.update_layout(
+        height=150, margin=dict(l=0, r=28, t=4, b=18),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x unified",
+        hoverlabel=dict(font_size=11),
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickformat="%y.%m", tickfont=dict(size=7, color="#aaa"),
+                   ticklen=0, hoverformat="%Y년 %m월"),
+        # 이 카드만 눈금을 남긴다 — 네 선이 0선 위아래로 엇갈리는 게 요점이라
+        # 몇 %인지 축이 있어야 읽힌다.
+        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, side="right",
+                   ticksuffix="%", tickfont=dict(size=7, color="#aaa"), nticks=4),
+    )
+    return fig
+
+
+def _signed(v: float) -> str:
+    """'▲21.7%'를 상승 빨강/하락 파랑으로 (색상 규칙)."""
+    clr = "#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888"
+    arrow = "▲" if v > 0 else "▼" if v < 0 else "─"
+    return f"<span style='color:{clr};font-weight:600;'>{arrow}{abs(v):.1f}%</span>"
+
+
+def _dot(color: str) -> str:
+    """계열 색 점 — 차트 범례를 겸한다."""
+    return f"<span style='color:{color};'>●</span>"
+
+
+def _render_iphone_card() -> None:
+    data = _get_iphone_chain()
+    series = _iphone_yoy_series(data) if data else {}
+    if not any(series.get(k) for k, *_ in _IPHONE_SERIES):
+        st.markdown(
+            "<div style='padding:4px 0 8px;'>"
+            "<div style='font-size:11px;color:#888;'>아이폰 공급망</div>"
+            "<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+    colors = {k: c for k, _, c, _ in _IPHONE_SERIES}
+
+    # 헤더: 애플 공시 최신 분기
+    head = ""
+    if series.get("iphone"):
+        x, yoy, v = series["iphone"][-1]
+        head = (
+            f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>"
+            f"{_dot(colors['iphone'])} ${v / 1e9:,.2f}B</div>"
+            f"<div style='font-size:12px;'>{_signed(yoy)} "
+            f"<span style='color:#888;'>전년 · iPhone 매출 {x:%y년 %m월} 분기</span></div>"
+        )
+
+    # 둘째 줄: 대만 3사 — 회사마다 공시일이 달라 각자 최신 달을 쓰고, 달이 다르면 표시한다.
+    parts, months = [], set()
+    for code, name, color, _ in _IPHONE_SERIES[1:]:
+        rows = series.get(code) or []
+        if rows:
+            x, yoy, _ = rows[-1]
+            months.add(x)
+            parts.append((x, f"{_dot(color)} {name} {_signed(yoy)}"))
+    tw_html = ""
+    if parts:
+        latest = max(months)
+        body = " &nbsp;".join(
+            txt + ("" if x == latest else f"<span style='color:#aaa;'>({x:%m}월)</span>")
+            for x, txt in parts
+        )
+        tw_html = (f"<div style='font-size:11.5px;margin-top:2px;'>"
+                   f"<span style='color:#888;'>대만 {latest:%m}월</span> &nbsp;{body}</div>")
+
+    st.markdown(
+        "<div style='font-size:11px;color:#888;'>아이폰 공급망 "
+        "<span style='font-size:9.5px;background:#eceff1;color:#607d8b;padding:1px 5px;"
+        "border-radius:3px;'>분기·월간 · 최근 3년</span></div>" + head + tw_html,
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(
+        _make_iphone_chart(series), use_container_width=True,
+        config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
+    )
+
+    # 폭스콘이 공시에 직접 적은 증감 사유 — 서버가 이유면 아이폰 신호로 읽으면 안 된다.
+    fox_note = ""
+    tw = (data or {}).get("tw") or {}
+    noted = [ym for ym in sorted(tw) if tw[ym].get("2317", {}).get("note")]
+    if noted and "伺服器" in tw[noted[-1]]["2317"]["note"]:
+        fox_note = (f" 실제로 폭스콘은 {int(noted[-1][5:])}월 공시에서 매출 증가 사유를 "
+                    f"<b>서버 출하 증가</b>로 적었습니다.")
+    st.markdown(
+        "<div style='font-size:10.5px;color:#7d8a97;line-height:1.45;margin-top:-4px;'>"
+        "애플은 2019년부터 판매 대수를 공개하지 않아, 대신 <b>공시된 iPhone 매출</b>(분기, "
+        "분기 종료 약 1개월 뒤 공개)과 <b>대만 공급망 3사 월매출</b>(매달 10일 전 공개)의 "
+        "전년비를 겹쳐 봅니다. 대만 쪽이 애플 실적보다 2~3개월 먼저 방향을 보여줍니다. "
+        "폭스콘·페가트론은 조립, 라간은 카메라 렌즈 업체입니다. 폭스콘은 AI 서버 매출 비중이 "
+        "커서 순수 아이폰 지표가 아니고, 렌즈만 만드는 <b>라간이 가장 깨끗한 아이폰 신호</b>입니다."
+        + fox_note + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                     note: tuple | None = None, chg: float | None = None) -> go.Figure:
     """
@@ -885,6 +1064,12 @@ def render_macro():
                         unsafe_allow_html=True,
                     )
 
+    # 아이폰 공급망 카드 — 시세 카드 그리드의 마지막 줄 빈 칸에 이어 붙인다
+    # (지금은 미국 연방부채 옆). 줄이 꽉 차 있으면 새 줄을 연다.
+    slot = len(MARKET_ITEMS) % 3
+    with (cols[slot] if slot else st.columns(3)[0]):
+        _render_iphone_card()
+
     _, cr = st.columns([9, 1.5])
     with cr:
         if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
@@ -893,4 +1078,5 @@ def render_macro():
             _get_dram_price_history.clear()
             _get_ddr4_price_history.clear()
             _get_commodity_news.clear()
+            _get_iphone_chain.clear()
             st.rerun()
