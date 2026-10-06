@@ -11,6 +11,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
+from requests.adapters import HTTPAdapter
 import html
 import concurrent.futures
 import statistics
@@ -30,6 +31,12 @@ _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 _NITEM_BASE = "https://apis.data.go.kr/1220000/nitemtrade/getNitemtradeList"
 
 _EMPTY = (0.0, 0.0, 0.0)          # [수출M, 수입M, 수출kg] 기본값
+
+# 관세청 호출용 공용 세션. 앱은 미국(Streamlit Cloud)에서 돌고 API는 한국이라,
+# 호출마다 새로 연결하면 66번 모두 태평양 너머 TCP·TLS 핸드셰이크를 다시 한다.
+# 연결을 재사용하면 핸드셰이크가 풀 크기(동시 12개)만큼으로 줄어든다.
+_HTTP = requests.Session()
+_HTTP.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=16))
 
 # 카드가 그리는 지표. 금액은 0을 바닥으로 채워 그리고, 단가는 변동 폭이
 # 좁아(예: $60~$98) 0부터 그리면 선이 뭉개지므로 자동 범위에 면도 채우지 않는다.
@@ -65,10 +72,12 @@ def _year_windows(months: list[str]) -> list[tuple[str, str]]:
             for i in range(0, len(months), 12)]
 
 
-def _fetch_code_range(api_key: str, code: str, a: str, b: str, country):
+def _fetch_code_range(api_key: str, code: str, a: str, b: str, keep=None):
     """
-    HS코드 하나의 [a, b] 구간 월별 실적 -> {"YYYYMM": [수출M, 수입M, 수출kg]}.
-    country를 주면 국가 차원이 있는 엔드포인트(nitemtrade)로 간다.
+    HS코드 하나의 [a, b] 구간 월별 실적 -> {키: [수출M, 수입M, 수출kg]}.
+
+      keep 없음   → 전체 합계(Itemtrade).            키 = "YYYYMM"
+      keep=국가들 → 국가별(nitemtrade), 그 국가만.   키 = (국가코드, "YYYYMM")
 
     중량(expWgt, kg)을 같이 받는 이유는 수출단가($/kg)를 내기 위해서다 —
     금액만 보면 물량이 는 건지 값이 오른 건지 구분이 안 된다.
@@ -78,10 +87,10 @@ def _fetch_code_range(api_key: str, code: str, a: str, b: str, country):
       · year 가 "총계" 인 행
     안 걸러내면 합계가 정확히 2배로 뛴다.
     """
-    url = _NITEM_BASE if country else _API_BASE
+    url = _NITEM_BASE if keep else _API_BASE
     out = {}
     try:
-        r = requests.get(
+        r = _HTTP.get(
             url,
             params={"serviceKey": api_key, "strtYymm": a, "endYymm": b,
                     "hsSgn": code, "numOfRows": 9999, "pageNo": 1},
@@ -96,13 +105,18 @@ def _fetch_code_range(api_key: str, code: str, a: str, b: str, country):
             hs = (item.findtext("hsCode", "") or item.findtext("hsCd", "") or "").strip()
             if len(hs) != 10:
                 continue
-            if country and (item.findtext("statCd", "") or "").strip() != country:
-                continue
             ym = ym_raw.replace(".", "")     # "2026.07" -> "202607"
+            if keep:
+                cc = (item.findtext("statCd", "") or "").strip()
+                if cc not in keep:
+                    continue
+                key = (cc, ym)
+            else:
+                key = ym
             e = float((item.findtext("expDlr", "0") or "0").replace(",", ""))
             m = float((item.findtext("impDlr", "0") or "0").replace(",", ""))
             w = float((item.findtext("expWgt", "0") or "0").replace(",", ""))
-            row = out.setdefault(ym, [0.0, 0.0, 0.0])
+            row = out.setdefault(key, [0.0, 0.0, 0.0])
             row[0] += e / 1_000_000
             row[1] += m / 1_000_000
             row[2] += w
@@ -112,6 +126,42 @@ def _fetch_code_range(api_key: str, code: str, a: str, b: str, country):
         # 비어 나온 사고가 있었다. 최소한 로그는 남긴다.
         print(f"[ui_trade] {code} {a}~{b} 조회 실패: {type(e).__name__}: {e}")
     return out
+
+
+def _fetch_theme(api_key, codes, months, keep=None):
+    """테마의 고유 코드 × 1년 창을 병렬로 받아 {코드: {키: [수출M, 수입M, kg]}}."""
+    per_code = {c: {} for c in codes}
+    jobs = [(c, a, b) for c in codes for a, b in _year_windows(months)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+        futs = {ex.submit(_fetch_code_range, api_key, c, a, b, keep): c
+                for c, a, b in jobs}
+        for f in concurrent.futures.as_completed(futs):
+            c = futs[f]
+            for key, (e, m, w) in f.result().items():
+                row = per_code[c].setdefault(key, [0.0, 0.0, 0.0])
+                row[0] += e
+                row[1] += m
+                row[2] += w
+    return per_code
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _theme_country_table(theme: str, n_months: int, countries: tuple):
+    """
+    테마 전체의 국가별 표 — 대상국 셀렉터에 있는 나라들만, 한 번에.
+
+    💡 대상국을 바꿀 때마다 테마 전체(반도체 66회)를 다시 받고 있었다. 그런데
+    국가별 엔드포인트는 원래 **모든 나라** 행을 한 응답에 같이 준다 — 예전 코드는
+    그중 한 나라만 남기고 버린 뒤, 다른 나라를 고르면 같은 걸 또 받았다.
+    여기서 셀렉터의 나라들을 한꺼번에 남겨 두면, 처음 고른 나라 이후로는
+    호출 없이 메모리에서 바로 바뀐다. 처음 한 번의 비용은 예전 한 번과 같다.
+    """
+    api_key = st.secrets.get("DATA_GO_KR_KEY", "")
+    items = TRADE_ITEMS.get(theme, {})
+    if not api_key or not items:
+        return {}
+    codes = sorted({c for codes, _ in items.values() for c in codes})
+    return _fetch_theme(api_key, codes, _month_list(n_months), keep=frozenset(countries))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -129,21 +179,20 @@ def get_theme_trends(theme: str, n_months: int = 36, country=None):
         return {}
 
     months = _month_list(n_months)
-    windows = _year_windows(months)
     codes = sorted({c for codes, _ in items.values() for c in codes})
 
-    per_code = {c: {} for c in codes}
-    jobs = [(c, a, b) for c in codes for a, b in windows]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
-        futs = {ex.submit(_fetch_code_range, api_key, c, a, b, country): c
-                for c, a, b in jobs}
-        for f in concurrent.futures.as_completed(futs):
-            c = futs[f]
-            for ym, (e, m, w) in f.result().items():
-                row = per_code[c].setdefault(ym, [0.0, 0.0, 0.0])
-                row[0] += e
-                row[1] += m
-                row[2] += w
+    if country:
+        # 국가별 표는 테마당 한 번만 받는다 — _theme_country_table 주석 참고.
+        countries = tuple(cc for cc, _ in get_country_options(theme))
+        if country not in countries:
+            countries += (country,)
+        table = _theme_country_table(theme, n_months, countries)
+        per_code = {c: {ym: v for (cc, ym), v in table.get(c, {}).items() if cc == country}
+                    for c in codes}
+    else:
+        # 전체는 합계 엔드포인트가 응답이 30~200배 작아서(코드당 3KB vs 80~560KB)
+        # 국가별 표를 합산하는 대신 따로 받는다. 첫 화면이 가장 자주 보는 화면이다.
+        per_code = _fetch_theme(api_key, codes, months)
 
     out = {}
     for name, (item_codes, _stocks) in items.items():
@@ -184,7 +233,7 @@ def get_country_options(theme: str, ref_months: int = 3):
     def _one(code):
         acc = {}
         try:
-            r = requests.get(
+            r = _HTTP.get(
                 _NITEM_BASE,
                 params={"serviceKey": api_key, "strtYymm": a, "endYymm": b,
                         "hsSgn": code, "numOfRows": 9999, "pageNo": 1},
