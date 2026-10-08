@@ -299,7 +299,12 @@ def analyze_chunk_with_gemini(chunk_docs):
     """
     
     current_usage = increment_api_usage()
-    current_model = 'gemini-2.5-flash'
+    # 💡 2.5 Flash는 2026-09부터 접근이 제한됐고 10월 종료가 예고돼 옮겼다.
+    # 3.5 Flash-Lite는 2.5 Flash와 같은 가격($0.30/$2.50)이고 생각 수준 기본값이
+    # minimal이라 출력(생각) 토큰도 크게 늘지 않는다. 평가방식 추출이 약해지면
+    # config=types.GenerateContentConfig(thinking_config=types.ThinkingConfig(
+    # thinking_level="low"))로 한 단계 올리면 된다.
+    current_model = 'gemini-3.5-flash-lite'
     max_retries = 3
     
     for attempt in range(max_retries):

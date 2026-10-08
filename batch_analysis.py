@@ -173,7 +173,7 @@ def summarize_batch_with_gemini(batch_data, max_retries=3):
     for attempt in range(max_retries):
         try:
             response = client_ai.models.generate_content(
-                model='gemini-2.5-flash', 
+                model='gemini-3.5-flash-lite',   # 2.5 Flash 종료 예고로 교체 (batch_report와 동일)
                 contents=prompt,
             )
             res_text = response.text.strip()
