@@ -1,7 +1,10 @@
 {
  "code": "011070",
  "corp_name": "LG이노텍",
- "errors": {},
+ "errors": {
+  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00105961&bsns_year=2024&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
+  "reports": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/list.json?crtfc_key=***&corp_code=00105961&bgn_de=20221009&end_de=20261008&pblntf_ty=A&page_count=100 (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, '"
+ },
  "inventory_q": {
   "corp_name": "LG이노텍",
   "rows": [
@@ -903,5 +906,5 @@
   },
   "pending": 1
  },
- "updated_at": "2026-10-06T04:09:51+09:00"
+ "updated_at": "2026-10-09T02:16:34+09:00"
 }

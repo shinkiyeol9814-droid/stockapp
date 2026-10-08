@@ -1,7 +1,10 @@
 {
  "code": "082740",
  "corp_name": "한화엔진",
- "errors": {},
+ "errors": {
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00361008&bsns_year=2026&reprt_code=11014&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
+  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00361008&bsns_year=2024&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+ },
  "inventory_q": {
   "corp_name": "한화엔진",
   "rows": [
@@ -874,5 +877,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-06T04:16:54+09:00"
+ "updated_at": "2026-10-09T02:21:50+09:00"
 }

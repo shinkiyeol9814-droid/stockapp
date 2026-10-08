@@ -1,7 +1,10 @@
 {
  "code": "080580",
  "corp_name": "오킨스전자",
- "errors": {},
+ "errors": {
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00543107&bsns_year=2026&reprt_code=11012&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
+  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00543107&bsns_year=2023&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+ },
  "inventory_q": {
   "corp_name": "오킨스전자",
   "rows": [
@@ -260,5 +263,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-06T04:25:49+09:00"
+ "updated_at": "2026-10-09T02:30:43+09:00"
 }

@@ -1,7 +1,9 @@
 {
  "code": "232140",
  "corp_name": "와이씨",
- "errors": {},
+ "errors": {
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=01109539&bsns_year=2026&reprt_code=11014&fs_div=OFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+ },
  "inventory_q": {
   "corp_name": "와이씨",
   "rows": [
@@ -464,5 +466,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-06T04:26:17+09:00"
+ "updated_at": "2026-10-09T02:31:17+09:00"
 }

@@ -1,7 +1,10 @@
 {
  "code": "006260",
  "corp_name": "LS",
- "errors": {},
+ "errors": {
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00105952&bsns_year=2026&reprt_code=11012&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
+  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00105952&bsns_year=2025&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+ },
  "inventory_q": {
   "corp_name": "LS",
   "rows": [
@@ -2695,5 +2698,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-06T04:21:15+09:00"
+ "updated_at": "2026-10-09T02:26:19+09:00"
 }
