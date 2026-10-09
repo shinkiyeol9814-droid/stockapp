@@ -2,7 +2,8 @@
  "code": "005490",
  "corp_name": "POSCO홀딩스",
  "errors": {
-  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00155319&bsns_year=2023&reprt_code=11013&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00155319&bsns_year=2026&reprt_code=11013&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
+  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00155319&bsns_year=2024&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
  },
  "inventory_q": {
   "corp_name": "POSCO홀딩스",
@@ -2988,5 +2989,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-09T02:24:18+09:00"
+ "updated_at": "2026-10-10T01:58:01+09:00"
 }

@@ -2,7 +2,8 @@
  "code": "131290",
  "corp_name": "티에스이",
  "errors": {
-  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00372226&bsns_year=2026&reprt_code=11012&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00372226&bsns_year=2026&reprt_code=11012&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
+  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00372226&bsns_year=2025&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
  },
  "inventory_q": {
   "corp_name": "티에스이",
@@ -262,5 +263,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-09T02:28:15+09:00"
+ "updated_at": "2026-10-10T02:02:01+09:00"
 }

@@ -2,6 +2,7 @@
  "code": "010060",
  "corp_name": "OCI홀딩스",
  "errors": {
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00148896&bsns_year=2026&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
   "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=00148896&bsns_year=2021&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
  },
  "inventory_q": {
@@ -675,5 +676,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-09T02:23:52+09:00"
+ "updated_at": "2026-10-10T01:57:41+09:00"
 }

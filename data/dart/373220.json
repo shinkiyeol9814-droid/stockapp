@@ -2,8 +2,7 @@
  "code": "373220",
  "corp_name": "LG에너지솔루션",
  "errors": {
-  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=01515323&bsns_year=2026&reprt_code=11013&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con",
-  "inventory_y": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=01515323&bsns_year=2024&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
+  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=01515323&bsns_year=2026&reprt_code=11011&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
  },
  "inventory_q": {
   "corp_name": "LG에너지솔루션",
@@ -492,5 +491,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-09T02:24:50+09:00"
+ "updated_at": "2026-10-10T01:58:29+09:00"
 }
