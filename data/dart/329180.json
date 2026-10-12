@@ -1,9 +1,7 @@
 {
  "code": "329180",
  "corp_name": "HD현대중공업",
- "errors": {
-  "inventory_q": "ConnectTimeout: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/fnlttSinglAcntAll.json?crtfc_key=***&corp_code=01390344&bsns_year=2026&reprt_code=11012&fs_div=CFS (Caused by ConnectTimeoutError(<HTTPSConnection(host='opendart.fss.or.kr', port=443)>, 'Con"
- },
+ "errors": {},
  "inventory_q": {
   "corp_name": "HD현대중공업",
   "rows": [
@@ -1236,5 +1234,5 @@
   },
   "pending": 0
  },
- "updated_at": "2026-10-10T01:57:11+09:00"
+ "updated_at": "2026-10-12T09:26:28+09:00"
 }
