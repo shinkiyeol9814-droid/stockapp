@@ -220,4 +220,7 @@ async def main():
               + (f" / 보관기간초과 삭제 {stat['dropped']}" if stat['dropped'] else ""))
 
 if __name__ == "__main__":
+    from market_calendar import skip_if_closed
+    # 건너뛰어도 잃는 게 없다 — 다음 실행이 SYNC_FILE에 남은 마지막 메시지 시각부터 이어 읽는다.
+    skip_if_closed("실적 수집")
     asyncio.run(main())

@@ -12,6 +12,7 @@ beautifulsoup4
 html5lib
 telethon
 google-genai
+holidays                         # market_calendar: KRX 휴장일 판정
 aiohttp
 PyMuPDF
 streamlit-autorefresh

@@ -154,6 +154,11 @@ def main(argv=None):
     args, codes = parse_args(sys.argv[1:] if argv is None else argv, os.environ.get("CODES"))
     if args.one:
         return run_one(args.one) if _CODE_RE.match(args.one) else 1
+    if args.watchlist:
+        # 정기 실행만 거른다 — 앱이 요청한 종목은 사용자가 지금 보는 것이라 휴장일에도 돌린다.
+        # 휴장일엔 정기보고서가 접수되지 않아 워치리스트 전체를 다시 볼 이유가 없다.
+        from market_calendar import skip_if_closed
+        skip_if_closed("DART 워치리스트")
     if not codes:
         print("[batch_dart] 대상 종목 없음")
         return 0

@@ -68,6 +68,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
+| `market_calendar.py` | **KRX 개장일 판정 — 배치가 휴장일에 헛돌지 않게 (`skip_if_closed`)** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
 
 ---
@@ -179,6 +180,20 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
   updated_at을 올린다(앱의 반영 감지가 이 값을 본다).
 - 끝에 `::notice title=DART batch::` 요약(건수·소요·느린 종목)을 남긴다 — 로그는 관리자만 볼 수
   있지만 annotation은 공개 API로 읽힌다.
+
+### 휴장일엔 배치를 건너뛴다 (`market_calendar`)
+배치 대부분이 외부 크론(cron-job.org)이라 요일·공휴일 구분 없이 돈다 — 한글날(10/9)에 신고가
+분석이 Gemini를 부르고, 급등주 알림이 일요일 하루 288번 돌았다. 그래서 진입점에서
+`skip_if_closed("이름")`로 거른다: 신고가(`batch_analysis`)·급등주·실적·레포트, DART는
+`--watchlist` 정기 실행만(앱이 요청한 종목은 휴장일에도 돈다). 매크로는 해외 지표라 거르지 않는다.
+
+- 판정: 주말 + `holidays.KR`(2026년 1~8월 실제 KOSPI 거래일과 완전 일치, 지방선거일·제헌절 포함)
+  + 12/31 연말 휴장. `exchange_calendars`의 XKRX는 6/3·7/17을 빠뜨려 쓰지 않는다.
+- 정부가 임시공휴일을 급히 지정했는데 라이브러리가 모르면 `EXTRA_CLOSED`에 날짜를 넣는다.
+- 확인 실패 시 **개장일로 간주**(달력 오류로 평일 수집이 멈추는 게 더 나쁘다).
+- 수동 실행(`workflow_dispatch`)은 막지 않는다. 로컬 강제 실행은 `FORCE_RUN=1`.
+- 건너뛰어도 잃는 게 없는 구조인지 확인할 것: 실적은 SYNC_FILE, 레포트는 직전 파일명에서
+  이어 읽는다. 레포트 되짚기 하한은 연휴를 고려해 "최소 직전 개장일 07:00"(`_backfill_floor`).
 
 ### 워치리스트 저장 (GitHub)
 - 파일: `data/watchlist/watchlist.json` in `GITHUB_REPO`

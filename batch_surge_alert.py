@@ -265,4 +265,8 @@ def main():
 
 
 if __name__ == "__main__":
+    from market_calendar import skip_if_closed
+    # 아래 main()도 네이버 marketStatus로 장 운영 여부를 보지만, 그건 매 실행 네이버를
+    # 두 번 부른 뒤에야 안다(일요일 하루 288회). 달력으로 먼저 거른다.
+    skip_if_closed("급등주 알림")
     main()

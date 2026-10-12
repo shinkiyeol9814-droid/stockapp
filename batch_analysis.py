@@ -313,4 +313,6 @@ async def main():
     print(f"\n=== ✅ 모든 분석 완전 종료. 총 소요시간: {execution_time_str} ===")
 
 if __name__ == "__main__":
+    from market_calendar import skip_if_closed
+    skip_if_closed("신고가 분석")   # 휴장일엔 시세가 안 바뀌어 Gemini를 부를 이유가 없다
     asyncio.run(main())

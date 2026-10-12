@@ -93,6 +93,21 @@ _REPORT_DIR = "data/broker_report"
 _MAX_BACKFILL_DAYS = 4
 
 
+def _backfill_floor(anchor):
+    """
+    되짚기 하한. 기본은 anchor로부터 _MAX_BACKFILL_DAYS일 전이지만, 연휴로 그보다
+    오래 쉬었으면 직전 개장일 07:00까지는 내려간다.
+
+    💡 휴장일엔 이 배치를 건너뛰므로(market_calendar), 설 연휴처럼 금요일 이후
+    5.5일을 쉬면(2026-02-13 금 → 02-19 목) 4일 상한이 금요일 저녁 레포트를 잘라 먹는다.
+    """
+    from market_calendar import previous_open_day
+    prev = previous_open_day(anchor.date())
+    prev_07 = anchor.replace(year=prev.year, month=prev.month, day=prev.day,
+                             hour=7, minute=0, second=0, microsecond=0)
+    return min(anchor - timedelta(days=_MAX_BACKFILL_DAYS), prev_07)
+
+
 def _last_collected_end(now):
     """
     직전 수집이 '어디까지 읽고 끝났는지'. 기록이 없으면 None.
@@ -515,7 +530,7 @@ async def main():
         file_name = f"data/broker_report/regular_report_{today_str}.json"
         # 아침 실행이 걸러졌으면 그 구간까지 이어서 읽는다.
         resume = _last_collected_end(now)
-        floor = today_20 - timedelta(days=_MAX_BACKFILL_DAYS)
+        floor = _backfill_floor(today_20)
         fetch_start = max(resume, floor) if resume else today_07
         fetch_end = today_20
     else: 
@@ -532,7 +547,7 @@ async def main():
             # previous_day_report 파일 자체가 만들어지지 않았다.
             # 직전 수집이 끝난 지점부터 이어 읽는다(_last_collected_end 주석 참고).
             resume = _last_collected_end(now)
-            floor = today_07 - timedelta(days=_MAX_BACKFILL_DAYS)
+            floor = _backfill_floor(today_07)
             fetch_start = max(resume, floor) if resume else today_20 - timedelta(days=1)
             fetch_end = today_07
         else:
@@ -672,4 +687,7 @@ async def main():
     print(f"\n✅ 최종 배치 프로세스 완전 종료!")
 
 if __name__ == "__main__":
+    from market_calendar import skip_if_closed
+    # 건너뛰어도 다음 개장일 실행이 직전 수집 끝(_last_collected_end)부터 이어 읽는다.
+    skip_if_closed("레포트 수집")
     asyncio.run(main())

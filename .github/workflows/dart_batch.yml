@@ -36,7 +36,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Dependencies
-        run: pip install requests
+        run: pip install requests holidays   # holidays: 휴장일엔 워치리스트 실행 건너뜀
 
       # 💡 corp_map.json은 .gitignore돼 있어 매 실행이 체크아웃 직후엔 캐시가 없다.
       # 그러면 매번 corpCode.xml(3.6MB)을 새로 받아야 하고, 앱 요청 1건(원래 수십 초)이
