@@ -69,6 +69,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
 | `market_calendar.py` | **KRX 개장일 판정 — 배치가 휴장일에 헛돌지 않게 (`skip_if_closed`)** |
+| `lithium_source.py` | **리튬(TE) 현재가 + 그 값의 실제 날짜(직전 GFEX 거래일) — 배치·앱 공용** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
 
 ---
@@ -139,6 +140,13 @@ data/
 batch_macro._date_to_ms(d)          # 배치 쪽
 ui_macro._today_ms_utc_midnight()   # 앱 쪽 (같은 규칙)
 ```
+
+**"긁은 날"과 "값의 날짜"는 다를 수 있다.** 리튬(TE)은 날짜 없는 현재가만 주는데, 그 값은
+긁는 시각(KST 18시)에 아직 **직전 중국 거래일** 값이다. 긁은 날로 찍었다가 모든 점이 하루씩
+밀린 걸 사용자가 TE 앱과 대조해 찾았다(2026-10-16, 299점 전부 재배치). 날짜는
+`lithium_source.te_value_date()` — GFEX 거래일(시나 LC0 일봉 날짜)에서 오늘 이전 마지막 날.
+값은 TE 그대로다: GFEX 선물 종가와는 3~8% 다르고 방향이 다른 날도 있어 같은 시계열이 아니다.
+TE 차트 API는 응답을 일부러 난독화해 두었으니 그걸 풀어 쓰지 말 것.
 
 ### 리포지토리 비대화 방지
 - 날짜별 JSON은 `cleanup_data.py`가 보존 기간(기본 180일)을 넘긴 것을 지운다.

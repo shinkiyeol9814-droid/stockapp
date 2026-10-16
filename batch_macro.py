@@ -93,17 +93,27 @@ def _append_if_new(path: str, price: float | None) -> bool:
     return True
 
 
-def fetch_lithium_price() -> float | None:
-    try:
-        r = requests.get(
-            "https://ko.tradingeconomics.com/commodity/lithium",
-            headers={**_UA_HEADERS, "Accept-Language": "ko-KR,ko;q=0.9"},
-            timeout=15,
-        )
-        m = re.search(r'TEChartsMeta\s*=\s*\[{"value"\s*:\s*([\d.]+)', r.text)
-        return float(m.group(1)) if m else None
-    except Exception:
-        return None
+def update_lithium() -> bool:
+    """
+    TE 리튬 현재가를 "그 값의 실제 날짜"(오늘 이전 마지막 GFEX 거래일)로 저장한다.
+
+    💡 예전엔 _append_if_new로 긁은 날(KST)에 찍어 모든 점이 하루씩 밀렸다 —
+    TE 현재가는 그 시각에 아직 직전 거래일 값이다. 자세한 근거는 lithium_source 주석.
+    """
+    import lithium_source as ls
+    price = ls.fetch_te_value()
+    if price is None:
+        return False
+    d = ls.te_value_date(datetime.now(KST).date(), ls.gfex_trading_days())
+    ts = _date_to_ms(d)
+    raw = _load(_LITHIUM_CACHE)
+    if raw and raw[-1][0] >= ts:
+        return False   # 그 날짜 값이 이미 있다 (같은 날 재실행 등)
+    if raw and price == raw[-1][1]:
+        return False   # TE가 아직 새 값을 안 냈다 — 같은 값을 다음 날짜로 찍지 않는다
+    raw.append([ts, price])
+    _save(_LITHIUM_CACHE, raw)
+    return True
 
 
 def _fetch_dramexchange(pattern: str) -> float | None:
@@ -184,7 +194,7 @@ def fetch_us_debt_series() -> list | None:
 # 것으로 보인다). DART와 같은 처방: 러너가 대신 받아 파일로 남기고, 앱은
 # 라이브가 실패했을 때 이 파일로 폴백한다. 장이 쉬는 날에도 마지막 값이
 # 남아 있으므로 화면이 비지 않는다.
-_MARKET_TICKERS = ["USDKRW=X", "JPY=X", "^TNX", "CL=F", "GC=F", "HG=F"]
+_MARKET_TICKERS = ["USDKRW=X", "JPY=X", "^TNX", "CL=F", "GC=F", "SI=F", "HG=F"]
 _MARKET_KEEP_DAYS = 400   # 화면 차트가 최대 1년치 — 여유분만 남긴다
 
 
@@ -283,7 +293,7 @@ if __name__ == "__main__":
     if only in (None, "us_debt"):
         updated["us_debt"] = _replace_if_changed(_USDEBT_CACHE, fetch_us_debt_series())
     if only is None:
-        updated["lithium"] = _append_if_new(_LITHIUM_CACHE, fetch_lithium_price())
+        updated["lithium"] = update_lithium()
         updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
         updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
         updated["market"] = _merge_market(_MARKET_CACHE, fetch_market_series())

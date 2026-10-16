@@ -15,6 +15,8 @@ import re
 import html
 import urllib.parse
 
+import lithium_source
+
 _MACRO_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "macro")
 _LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
 _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
@@ -35,13 +37,14 @@ MARKET_ITEMS = [
     ("미국채 10년",    "^TNX",      "%",    ".2f", 1),
     ("WTI 유가",       "CL=F",      "$",    ",.2f", 1),
     ("금",             "GC=F",      "$",    ",.0f", 1),
+    ("은",             "SI=F",      "$",    ",.2f", 1),
     ("구리",           "HG=F",      "$/lb", ".3f", 1),
     ("리튬 탄산염",     "_LITHIUM_",  "CNY/t",",.0f", 1),
+    # 💡 3개씩 배치되는 그리드에서 DDR5/DDR4 쌍이 줄바꿈으로 갈라지지 않도록
+    # 둘을 맨 끝 줄에 함께 둔다. 은(銀)을 금 옆에 넣으면서 연방부채를 리튬 옆으로 올렸다.
+    ("미국 연방부채",   "_USDEBT_",  "조 달러", ",.3f", 1),
     ("DDR5 16Gb Spot", "_DRAM_",    "$",    ",.3f", 1),
     ("DDR4 16Gb Spot", "_DDR4_",    "$",    ",.3f", 1),
-    # 💡 맨 뒤에 붙였다 — 미국채 10년 옆이 의미상 더 맞지만, 중간에 끼우면
-    # 3개씩 배치되는 그리드에서 DDR5/DDR4 쌍이 줄바꿈으로 갈라진다.
-    ("미국 연방부채",   "_USDEBT_",  "조 달러", ",.3f", 1),
 ]
 
 # 카드 밑에 최신 뉴스 헤드라인 1건을 붙일 티커 → (검색어, 제목 필수 키워드).
@@ -56,13 +59,25 @@ MARKET_ITEMS = [
 #   · 검색어에 when:7d를 붙인다. 안 붙이면 100건 풀이 관련도 위주로 채워져
 #     최근 기사가 덜 들어온다 — WTI가 31.6시간 전 기사 → 10.5시간 전 기사로 당겨졌다.
 #
-# 다른 카드도 여기 한 줄 넣으면 붙는다(뉴스는 시세와 같이 병렬로 받아 오므로
-# 늘려도 로딩은 거의 그대로다 — 10개 전부 병렬 0.23초, 순차였으면 5.8초).
-# 다만 실측상 DDR4(최신이 11일 전)·연방부채(4일 전, 칼럼류)는 붙일 만한
-# 기사가 꾸준히 안 나와서 넣지 않았다.
+# 모든 카드에 붙인다(급등·급락 사유를 카드에서 바로 보려고). 뉴스는 시세와 같이
+# 병렬로 받아 오므로 11개를 다 붙여도 1초 남짓이다(2026-10-16 실측 1.08초).
+# 헤드라인 앞에 경과("2일")가 붙어, 기사가 뜸한 카드(DDR4 등)는 오래된 게 보인다.
+#
+# 키워드는 카드마다 실제 결과를 보고 골랐다:
+#   · 엔/달러 — "엔"만 쓰면 "원·달러 환율… 1,350원" 같은 원화 기사가 걸려 "엔화"로 좁힌다.
+#   · 은      — "은" 한 글자는 거의 모든 문장에 들어 있어 "은값/은 가격/국제 은"으로만.
 _NEWS_QUERY = {
-    "^TNX": ("미 국채금리 10년물", ("국채", "10년")),
-    "CL=F": ("WTI 유가", ("WTI",)),
+    "USDKRW=X":  ("원달러 환율", ("환율",)),
+    "JPY=X":     ("엔달러 환율 엔화", ("엔화", "엔/달러", "엔달러", "엔·달러")),
+    "^TNX":      ("미 국채금리 10년물", ("국채", "10년")),
+    "CL=F":      ("WTI 유가", ("WTI",)),
+    "GC=F":      ("국제 금값", ("금값", "금 가격", "금시세", "금 시세", "국제 금")),
+    "SI=F":      ("국제 은값", ("은값", "은 가격", "은시세", "은 시세", "국제 은")),
+    "HG=F":      ("구리 가격", ("구리",)),
+    "_LITHIUM_": ("탄산리튬 가격", ("리튬",)),
+    "_USDEBT_":  ("미국 국가부채", ("부채",)),
+    "_DRAM_":    ("DDR5 D램 가격", ("DDR5", "D램", "디램")),
+    "_DDR4_":    ("DDR4 가격", ("DDR4",)),
 }
 _NEWS_RECENT = " when:7d"
 
@@ -435,6 +450,12 @@ def _get_us_debt_history(period: str = "1y") -> pd.DataFrame | None:
     return df if not df.empty else None
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def _gfex_trading_days():
+    """GFEX 거래일 목록 — 리튬 현재가에 날짜를 붙이는 데 쓴다. 6시간 캐시."""
+    return lithium_source.gfex_trading_days(timeout=8)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
     """리튬 탄산염 가격 (CNY/ton) — 캐시 파일 + TE 현재가 스크래핑"""
@@ -445,24 +466,17 @@ def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
             return None
 
         # 현재가 스크래핑 (실패해도 캐시 데이터로 진행)
+        # 💡 TE 현재가는 아직 "직전 중국 거래일" 값이라 오늘 날짜로 찍으면 하루 밀린다.
+        # 배치와 같은 규칙(lithium_source.te_value_date)으로 날짜를 붙인다.
         try:
-            r = requests.get(
-                "https://ko.tradingeconomics.com/commodity/lithium",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                         "Accept-Language": "ko-KR,ko;q=0.9"},
-                timeout=10,
-            )
-            m = re.search(r'TEChartsMeta\s*=\s*\[{"value"\s*:\s*([\d.]+)', r.text)
-            if m:
-                current_price = float(m.group(1))
-                today_ms = _today_ms_utc_midnight()
-                # 💡 소스가 아직 오늘자를 발행하지 않으면 어제와 똑같은 값이
-                # 스크래핑된다. 그걸 오늘 점으로 덧붙이면 직전값과 같아져
-                # "전일대비 0.00%"가 되고, 실제로 마지막에 움직인 폭
-                # (예: DDR4 93.0 → 91.0)이 화면에서 사라진다.
-                # 값이 달라졌을 때만 새 점으로 인정한다.
-                if raw[-1][0] < today_ms and current_price != raw[-1][1]:
-                    raw.append([today_ms, current_price])
+            current_price = lithium_source.fetch_te_value(timeout=10)
+            if current_price is not None:
+                d = lithium_source.te_value_date(datetime.now(_KST).date(), _gfex_trading_days())
+                ts = int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+                # 💡 소스가 새 값을 아직 안 냈으면 직전과 같은 값이 긁힌다. 그걸 새 점으로
+                # 덧붙이면 "전일대비 0.00%"가 되어 실제 마지막 변동이 화면에서 사라진다.
+                if raw[-1][0] < ts and current_price != raw[-1][1]:
+                    raw.append([ts, current_price])
         except Exception:
             pass
 
