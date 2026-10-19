@@ -596,6 +596,137 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
 
 
 # ── 스파크라인 헬퍼 ─────────────────────────────────────────────────────────
+# ── 지수 밸류에이션 밴드 (코스피·코스닥 PER·PBR) ─────────────────────────────
+# 데이터는 index_valuation.py(GitHub Actions, KRX 로그인)가 data/macro/index_val/{연도}.json에
+# 쌓는다. 앱엔 KRX 계정이 없어 파일만 읽는다.
+#
+# "지금 PER이 싼가 비싼가"를 보려는 화면이라, 선택 기간의 최고·평균·최저를 가로선으로
+# 깔고 현재 값이 그 사이 어디인지(백분위)를 숫자로 붙인다. 최고·최저 선 색은 다른 카드의
+# "N개월 최고/최저" 배지와 같은 빨강·파랑이다.
+_INDEX_VAL_DIR = os.path.join(_MACRO_DIR, "index_val")
+_BAND_PERIODS = {"5년": 5, "10년": 10, "전체": None}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_index_valuation() -> dict:
+    """{"KOSPI": DataFrame(index=date, columns=[per, pbr, close]), "KOSDAQ": ...}"""
+    rows = {"KOSPI": [], "KOSDAQ": []}
+    try:
+        files = sorted(f for f in os.listdir(_INDEX_VAL_DIR) if f.endswith(".json"))
+    except Exception:
+        return {}
+    for fn in files:
+        try:
+            with open(os.path.join(_INDEX_VAL_DIR, fn), "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception:
+            continue
+        for k in rows:
+            rows[k].extend(d.get(k, []))
+    out = {}
+    for k, r in rows.items():
+        if not r:
+            continue
+        df = pd.DataFrame(r, columns=["date", "per", "pbr", "close"])
+        df["date"] = pd.to_datetime(df["date"])
+        out[k] = df.drop_duplicates("date").set_index("date").sort_index()
+    return out
+
+
+def _make_band_chart(s: pd.Series, unit: str) -> go.Figure:
+    hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        line=dict(color="#37474f", width=1.4), showlegend=False,
+        hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b><extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[s.index[-1]], y=[s.values[-1]], mode="markers",
+        marker=dict(color="#37474f", size=7, line=dict(color="#fff", width=1)),
+        showlegend=False, hoverinfo="skip",
+    ))
+    for y, name, color, dash in ((hi, "최고", "#ef5350", "dash"),
+                                 (mean, "평균", "#888888", "dot"),
+                                 (lo, "최저", "#1565C0", "dash")):
+        fig.add_hline(y=y, line=dict(color=color, width=1.2, dash=dash))
+        fig.add_annotation(x=1, xref="paper", xanchor="left", y=y, yref="y",
+                           text=f"{name} {y:.2f}", showarrow=False,
+                           font=dict(size=9, color=color))
+    fig.update_layout(
+        height=170, margin=dict(l=0, r=62, t=6, b=18),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x",
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
+                   tickfont=dict(size=8, color="#aaa"), ticklen=0),
+        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=8, color="#aaa")),
+    )
+    return fig
+
+
+def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str) -> None:
+    # KRX는 값이 없을 때 0을, 계산 불가일 때 9999.99를 넣는다(코스닥 PER: 2006~2010 합산 이익이
+    # 0 근처라 753일이 0, 2007-08-14에 9999.99). 둘 다 빼야 최고·평균선이 안 틀어진다.
+    # 2006~07·2014년 코스닥 PER 300배대는 실제 값(이익이 0에 가까웠던 해)이라 남긴다.
+    s = s[(s > 0) & (s < 9999)].dropna()
+    if len(s) < 20:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
+                    unsafe_allow_html=True)
+        return
+    cur = float(s.iloc[-1])
+    pct = float((s < cur).mean() * 100)          # 기간 중 지금보다 낮았던 날의 비율
+    vs_mean = (cur / float(s.mean()) - 1) * 100
+    badge = ""
+    if pct <= 20:
+        badge = ("<span style='background:#1565C0;color:#fff;font-size:9.5px;font-weight:700;"
+                 "padding:1px 5px;border-radius:3px;margin-left:6px;'>저점권</span>")
+    elif pct >= 80:
+        badge = ("<span style='background:#ef5350;color:#fff;font-size:9.5px;font-weight:700;"
+                 "padding:1px 5px;border-radius:3px;margin-left:6px;'>고점권</span>")
+    clr = "#ef5350" if vs_mean > 0 else "#1565C0" if vs_mean < 0 else "#888"
+    st.markdown(
+        f"<div style='font-size:11px;color:#888;'>{name}{badge}</div>"
+        f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{cur:.2f}{unit}</div>"
+        f"<div style='font-size:11.5px;'><span style='color:{clr};font-weight:600;'>"
+        f"평균 대비 {vs_mean:+.1f}%</span> <span style='color:#888;'>· {span_label} 백분위 "
+        f"{pct:.0f}% · {s.index[-1]:%m/%d} 기준</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(_make_band_chart(s, unit), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+
+
+def _render_valuation_band() -> None:
+    data = _get_index_valuation()
+    st.markdown(
+        "<div style='font-size:1.1rem;font-weight:bold;margin:18px 0 2px;'>📊 지수 밸류에이션 밴드</div>",
+        unsafe_allow_html=True,
+    )
+    if not data:
+        st.caption("코스피·코스닥 PER·PBR 데이터를 아직 받지 못했습니다 (평일 18:30 배치가 수집).")
+        return
+    span_label = st.radio("밴드 기간", list(_BAND_PERIODS), index=1,
+                          horizontal=True, key="macro_band_span")
+    years = _BAND_PERIODS[span_label]
+    st.caption("KRX 후행 PER·PBR (직전 4개 분기 실적 기준) · 선은 선택한 기간의 최고·평균·최저 · "
+               "백분위 = 기간 중 지금보다 낮았던 날의 비율 · 코스닥 PER은 이익이 0에 가까웠던 "
+               "해(2006~2010, 2014)에 비거나 수백 배로 튀어 '전체' 기간에선 PBR이 더 믿을 만하다")
+    for idx, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
+        df = data.get(idx)
+        cols = st.columns(2)
+        for col, (field, unit, title) in zip(cols, (("per", "배", "PER"), ("pbr", "배", "PBR"))):
+            with col:
+                if df is None or df.empty:
+                    _render_band_card(f"{label} {title}", pd.Series(dtype=float), unit, span_label)
+                    continue
+                s = df[field]
+                if years:
+                    s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
+                _render_band_card(f"{label} {title}", s, unit, span_label)
+
+
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                     note: tuple | None = None, chg: float | None = None) -> go.Figure:
     """
@@ -903,6 +1034,8 @@ def render_macro():
                         unsafe_allow_html=True,
                     )
 
+    _render_valuation_band()
+
     _, cr = st.columns([9, 1.5])
     with cr:
         if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
@@ -911,4 +1044,5 @@ def render_macro():
             _get_dram_price_history.clear()
             _get_ddr4_price_history.clear()
             _get_commodity_news.clear()
+            _get_index_valuation.clear()
             st.rerun()

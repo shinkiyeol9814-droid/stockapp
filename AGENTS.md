@@ -70,6 +70,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
 | `market_calendar.py` | **KRX 개장일 판정 — 배치가 휴장일에 헛돌지 않게 (`skip_if_closed`)** |
 | `lithium_source.py` | **리튬(TE) 현재가 + 그 값의 실제 날짜(직전 GFEX 거래일) — 배치·앱 공용** |
+| `index_valuation.py` | **코스피·코스닥 PER·PBR 일별 수집 (KRX 로그인, `index_valuation.yml`) — 매크로 밸류에이션 밴드** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
 
 ---
@@ -104,10 +105,14 @@ from krx_listing import fetch_krx_listing   # fdr → 캐시리포(날짜 되짚
 앱에서는 `valuation.get_ticker_listing()`을 쓰면 위 체인이 캐시와 함께 적용된다.
 `data/listing/krx_listing.csv`가 최후의 방어선이며 macro 배치가 매일 갱신한다.
 
-### pykrx는 쓰지 말 것
+### pykrx는 KRX 계정이 있는 배치에서만
 `pykrx`는 이제 `KRX_ID`/`KRX_PW` 환경변수(KRX 계정)를 요구해서 자격증명 없이는
 전부 실패한다. `batch_report.py`가 이 때문에 주가 수집이 상시 실패하고 있었다.
-대체: `fdr.StockListing('KRX')`가 Code/Name/Close/Marcap을 한 번에 준다.
+주가·종목목록은 `fdr.StockListing('KRX')`(Code/Name/Close/Marcap)로 대체한다.
+
+2026-10-20 사용자가 KRX 계정을 만들어 `KRX_ID`/`KRX_PW`를 **Actions Secrets에만** 넣었다.
+그래서 KRX에서만 나오는 데이터(지수 PER·PBR)는 `index_valuation.py`가 pykrx로 받는다.
+앱(Streamlit Cloud)에는 계정을 두지 않는다 — 앱에서 pykrx를 부르지 말 것.
 
 ---
 
@@ -124,6 +129,7 @@ data/
   broker_report/*.json           # 날짜별, 180일 보존
   new_high/*.json                # 날짜별, 180일 보존
   dart/{종목코드}.json            # 재고자산·수주잔고·가동률 (dart 배치가 수집, 앱은 읽기만)
+  macro/index_val/{연도}.json     # 코스피·코스닥 PER·PBR 일별 (2006~, 한 줄에 하루, 올해 파일만 바뀜)
 ```
 
 **실적 데이터는 `earnings_store`를 통해서만 읽고 쓴다.** 단일 파일을 매 배치마다
@@ -366,6 +372,7 @@ Streamlit이 내려주는 index.html `<head>`에는 color-scheme 선언이 없�
 |----|------|
 | `GEMINI_API_KEY_A` | Gemini AI 분석 |
 | `DART_API_KEY` | DART 재고자산·수주잔고·가동률 수집 (`dart_batch.yml`) |
+| `KRX_ID` / `KRX_PW` | KRX 정보데이터시스템 로그인 — 지수 PER·PBR (`index_valuation.yml`) |
 | `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | 텔레그램 접속 |
 | `TELEGRAM_SESSION` / `TELEGRAM_SESSION_BATCH` | 텔레그램 세션 문자열 |
 | `SURGE_ALERT_CHAT` | 급등주 알림 대상 (초대 링크 / @유저네임 / 채널 ID) |
