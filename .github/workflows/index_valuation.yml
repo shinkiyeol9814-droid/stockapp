@@ -1,0 +1,61 @@
+name: Index PER/PBR Batch (KOSPI/KOSDAQ)
+
+# 매크로 탭 "지수 밸류에이션 밴드"용. KRX가 로그인을 요구해 KRX_ID/KRX_PW로 받는다.
+# 상세는 index_valuation.py 머리 주석.
+on:
+  schedule:
+    - cron: '30 9 * * 1-5'   # 월~금 KST 18:30 — 장 마감 후 KRX 확정치
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "백필 시작 연도 (비우면 마지막 저장일 다음 날부터)"
+        required: false
+        default: ""
+
+concurrency:
+  group: "index-valuation"
+  cancel-in-progress: false
+
+jobs:
+  run-batch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pykrx holidays   # holidays: 휴장일엔 건너뜀(market_calendar)
+
+      - name: Run Script
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          SINCE: ${{ github.event.inputs.since }}
+        run: |
+          if [ -n "$SINCE" ]; then
+            python index_valuation.py --since "$SINCE"
+          else
+            python index_valuation.py
+          fi
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add data/macro/index_val/
+          git commit -m "Auto-update: KOSPI/KOSDAQ PER & PBR" || { echo "No changes to commit"; exit 0; }
+          BR="${{ github.ref_name }}"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
+              echo "push 성공 (시도 $i)"; exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
