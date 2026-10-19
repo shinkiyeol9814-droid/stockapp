@@ -194,7 +194,7 @@ def fetch_us_debt_series() -> list | None:
 # 것으로 보인다). DART와 같은 처방: 러너가 대신 받아 파일로 남기고, 앱은
 # 라이브가 실패했을 때 이 파일로 폴백한다. 장이 쉬는 날에도 마지막 값이
 # 남아 있으므로 화면이 비지 않는다.
-_MARKET_TICKERS = ["USDKRW=X", "JPY=X", "^TNX", "CL=F", "GC=F", "SI=F", "HG=F"]
+_MARKET_TICKERS = ["USDKRW=X", "JPY=X", "^TNX", "CL=F", "GC=F", "SI=F", "HG=F", "BTC-USD"]
 _MARKET_KEEP_DAYS = 400   # 화면 차트가 최대 1년치 — 여유분만 남긴다
 
 
