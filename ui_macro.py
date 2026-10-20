@@ -633,13 +633,20 @@ def _get_index_valuation() -> dict:
     return out
 
 
-def _make_band_chart(s: pd.Series, unit: str) -> go.Figure:
+def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
+                     index_name: str = "") -> go.Figure:
     hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
     fig = go.Figure()
+    # 마우스오버에 그날 지수 종가도 띄운다 — "PER 9.6배일 때 코스피가 몇 포인트였나"를
+    # 같이 봐야 밴드 위치를 지수 수준으로 옮겨 읽을 수 있다.
+    cd, close_line = None, ""
+    if close is not None:
+        cd = close.reindex(s.index).values
+        close_line = "<br>" + index_name + " %{customdata:,.2f}"
     fig.add_trace(go.Scatter(
-        x=s.index, y=s.values, mode="lines",
+        x=s.index, y=s.values, mode="lines", customdata=cd,
         line=dict(color="#37474f", width=1.4), showlegend=False,
-        hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b><extra></extra>",
+        hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b>" + close_line + "<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=[s.index[-1]], y=[s.values[-1]], mode="markers",
@@ -662,7 +669,8 @@ def _make_band_chart(s: pd.Series, unit: str) -> go.Figure:
     return fig
 
 
-def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str) -> None:
+def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
+                      close: pd.Series | None = None, index_name: str = "") -> None:
     # KRX는 값이 없을 때 0을, 계산 불가일 때 9999.99를 넣는다(코스닥 PER: 2006~2010 합산 이익이
     # 0 근처라 753일이 0, 2007-08-14에 9999.99). 둘 다 빼야 최고·평균선이 안 틀어진다.
     # 2006~07·2014년 코스닥 PER 300배대는 실제 값(이익이 0에 가까웠던 해)이라 남긴다.
@@ -695,7 +703,7 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str) -> No
         f"<span style='color:#1565C0;'>최저 {s.min():.2f}</span></div>",
         unsafe_allow_html=True,
     )
-    st.plotly_chart(_make_band_chart(s, unit), use_container_width=True,
+    st.plotly_chart(_make_band_chart(s, unit, close, index_name), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
 
 
@@ -727,7 +735,8 @@ def _render_valuation_band() -> None:
                 s = df[field]
                 if years:
                     s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
-                _render_band_card(f"{label} {title}", s, unit, span_label)
+                _render_band_card(f"{label} {title}", s, unit, span_label,
+                                  close=df["close"], index_name=label)
 
 
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
