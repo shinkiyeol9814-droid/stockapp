@@ -646,21 +646,18 @@ def _make_band_chart(s: pd.Series, unit: str) -> go.Figure:
         marker=dict(color="#37474f", size=7, line=dict(color="#fff", width=1)),
         showlegend=False, hoverinfo="skip",
     ))
-    for y, name, color, dash in ((hi, "최고", "#ef5350", "dash"),
-                                 (mean, "평균", "#888888", "dot"),
-                                 (lo, "최저", "#1565C0", "dash")):
-        fig.add_hline(y=y, line=dict(color=color, width=1.2, dash=dash))
-        fig.add_annotation(x=1, xref="paper", xanchor="left", y=y, yref="y",
-                           text=f"{name} {y:.2f}", showarrow=False,
-                           font=dict(size=9, color=color))
+    # 최고·평균·최저 값은 카드 글줄에 적는다 — 매크로 카드와 같은 크기로 맞추면서
+    # 오른쪽 라벨 자리(여백 62px)가 없어졌다. 선은 그대로 그린다.
+    for y, color, dash in ((hi, "#ef5350", "dash"), (mean, "#888888", "dot"), (lo, "#1565C0", "dash")):
+        fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+    # 크기·여백·눈금은 위 시세 카드(_make_sparkline)와 같게 — 한 화면에서 나란히 보이도록.
     fig.update_layout(
-        height=170, margin=dict(l=0, r=62, t=6, b=18),
+        height=90, margin=dict(l=0, r=2, t=2, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
-                   tickfont=dict(size=8, color="#aaa"), ticklen=0),
-        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
-                   tickfont=dict(size=8, color="#aaa")),
+                   tickfont=dict(size=7, color="#aaa"), ticklen=0),
+        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
     )
     return fig
 
@@ -691,7 +688,11 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str) -> No
         f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{cur:.2f}{unit}</div>"
         f"<div style='font-size:11.5px;'><span style='color:{clr};font-weight:600;'>"
         f"평균 대비 {vs_mean:+.1f}%</span> <span style='color:#888;'>· {span_label} 백분위 "
-        f"{pct:.0f}% · {s.index[-1]:%m/%d} 기준</span></div>",
+        f"{pct:.0f}% · {s.index[-1]:%m/%d} 기준</span></div>"
+        f"<div style='font-size:10px;margin-top:1px;'>"
+        f"<span style='color:#ef5350;'>최고 {s.max():.2f}</span> · "
+        f"<span style='color:#888;'>평균 {s.mean():.2f}</span> · "
+        f"<span style='color:#1565C0;'>최저 {s.min():.2f}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_band_chart(s, unit), use_container_width=True,
@@ -715,7 +716,9 @@ def _render_valuation_band() -> None:
                "해(2006~2010, 2014)에 비거나 수백 배로 튀어 '전체' 기간에선 PBR이 더 믿을 만하다")
     for idx, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
         df = data.get(idx)
-        cols = st.columns(2)
+        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 4장을 3칸에 흘리면 코스닥 PER·PBR이
+        # 줄바꿈으로 갈라져서, 지수당 한 줄로 두고 셋째 칸은 비운다.
+        cols = st.columns(3)[:2]
         for col, (field, unit, title) in zip(cols, (("per", "배", "PER"), ("pbr", "배", "PBR"))):
             with col:
                 if df is None or df.empty:
