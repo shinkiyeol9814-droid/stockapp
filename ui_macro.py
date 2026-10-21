@@ -633,6 +633,48 @@ def _get_index_valuation() -> dict:
     return out
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_index_live(idx: str):
+    """
+    네이버 실시간 지수 -> (지수, 전일대비, 등락률%, 시각, 장상태) 또는 None.
+    밴드 카드의 PER·PBR은 전일 배치(KRX 확정치) 기준이라, 오늘 지수는 따로 받는다.
+    전일대비·등락률은 부호 없이 오고 방향은 compareToPreviousPrice로 온다.
+    """
+    try:
+        d = requests.get(f"https://m.stock.naver.com/api/index/{idx}/basic",
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=5).json()
+        v = float(str(d["closePrice"]).replace(",", ""))
+        chg = abs(float(str(d["compareToPreviousClosePrice"]).replace(",", "")))
+        pct = abs(float(str(d["fluctuationsRatio"]).replace(",", "")))
+        direction = (d.get("compareToPreviousPrice") or {}).get("name", "")
+        sign = -1 if direction in ("FALLING", "LOWER_LIMIT") else 0 if direction == "UNCHANGED" else 1
+        t = datetime.fromisoformat(d["localTradedAt"]) if d.get("localTradedAt") else None
+        return v, sign * chg, sign * pct, t, d.get("marketStatus")
+    except Exception as e:
+        print(f"[ui_macro] 네이버 지수({idx}) 조회 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def _index_today_html(idx: str, label: str, df: pd.DataFrame | None) -> str:
+    """'코스피 5,711.39 ▲158.65 (+2.86%) · 10/21 09:56 장중' 한 줄."""
+    live = _get_index_live(idx)
+    if live:
+        v, chg, pct, t, status = live
+        when = (f"{t:%m/%d %H:%M} " if t else "") + ("장중" if status == "OPEN" else "종가")
+    elif df is not None and len(df) >= 2:
+        # 네이버가 막히면 배치가 받아 둔 최근 두 종가로 대신한다.
+        v, prev = float(df["close"].iloc[-1]), float(df["close"].iloc[-2])
+        chg, pct = v - prev, (v / prev - 1) * 100 if prev else 0.0
+        when = f"{df.index[-1]:%m/%d} 종가 (실시간 지연)"
+    else:
+        return ""
+    clr = "#ef5350" if chg > 0 else "#1565C0" if chg < 0 else "#888"
+    arrow = "▲" if chg > 0 else "▼" if chg < 0 else "─"
+    return (f"<div style='margin:10px 0 2px;font-size:14px;'><b>{label} {v:,.2f}</b> "
+            f"<span style='color:{clr};font-weight:600;'>{arrow}{abs(chg):,.2f} ({pct:+.2f}%)</span> "
+            f"<span style='font-size:11px;color:#aaa;'>· {when}</span></div>")
+
+
 def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
                      index_name: str = "") -> go.Figure:
     hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
@@ -724,6 +766,9 @@ def _render_valuation_band() -> None:
                "해(2006~2010, 2014)에 비거나 수백 배로 튀어 '전체' 기간에선 PBR이 더 믿을 만하다")
     for idx, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
         df = data.get(idx)
+        today_html = _index_today_html(idx, label, df)
+        if today_html:
+            st.markdown(today_html, unsafe_allow_html=True)
         # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 4장을 3칸에 흘리면 코스닥 PER·PBR이
         # 줄바꿈으로 갈라져서, 지수당 한 줄로 두고 셋째 칸은 비운다.
         cols = st.columns(3)[:2]
@@ -1057,4 +1102,5 @@ def render_macro():
             _get_ddr4_price_history.clear()
             _get_commodity_news.clear()
             _get_index_valuation.clear()
+            _get_index_live.clear()
             st.rerun()
