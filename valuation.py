@@ -863,7 +863,7 @@ def render_valuation_menu():
                         y_min = core_min * 0.8
                         fig1.update_yaxes(range=[max(0, y_min), y_max])
 
-                        fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='var(--text-color)', width=1.5)))
+                        fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#636EFA', width=1.5)))
                         for i, b in enumerate(bands):
                             if pd.notna(b): fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dot')))
                         fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
@@ -886,7 +886,7 @@ def render_valuation_menu():
                     core_m_max = max(important_mults) if important_mults else 20
                     y2_max     = core_m_max * 1.6
                     fig2.update_yaxes(range=[0, y2_max])
-                    fig2.add_trace(go.Scatter(x=df_price.index, y=all_daily_val[:len(df_price)], mode='lines', name='당일Val', line=dict(color='var(--text-color)', width=1.5)))
+                    fig2.add_trace(go.Scatter(x=df_price.index, y=all_daily_val[:len(df_price)], mode='lines', name='당일Val', line=dict(color='#636EFA', width=1.5)))
 
                     x_start, x_end = df_price.index[0], extended_dates[-1]
                     for i, b in enumerate(bands):

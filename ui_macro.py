@@ -605,6 +605,10 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
 # "N개월 최고/최저" 배지와 같은 빨강·파랑이다.
 _INDEX_VAL_DIR = os.path.join(_MACRO_DIR, "index_val")
 _BAND_PERIODS = {"5년": 5, "10년": 10, "전체": None}
+# valuation.py 밴드 차트의 주가·당일Val 선과 같은 색. 예전 코드엔 color="var(--text-color)"로
+# 적혀 있었지만 plotly.js는 CSS 변수를 못 읽어 기본 1번 색 #636EFA(남보라)로 그리고 있었다
+# (2026-10-21 브라우저 실측 rgb(99,110,250)). 실제로 보이던 색을 양쪽에 명시한다.
+_VALUATION_LINE = "#636EFA"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -687,12 +691,13 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         close_line = "<br>" + index_name + " %{customdata:,.2f}"
     fig.add_trace(go.Scatter(
         x=s.index, y=s.values, mode="lines", customdata=cd,
-        line=dict(color="#37474f", width=1.4), showlegend=False,
+        # 가치평가 탭 밴드 차트의 주가·당일Val 선과 같은 색·굵기.
+        line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
         hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b>" + close_line + "<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=[s.index[-1]], y=[s.values[-1]], mode="markers",
-        marker=dict(color="#37474f", size=7, line=dict(color="#fff", width=1)),
+        marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
         showlegend=False, hoverinfo="skip",
     ))
     # 최고·평균·최저 값은 카드 글줄에 적는다 — 매크로 카드와 같은 크기로 맞추면서
