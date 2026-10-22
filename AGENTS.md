@@ -70,7 +70,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
 | `market_calendar.py` | **KRX 개장일 판정 — 배치가 휴장일에 헛돌지 않게 (`skip_if_closed`)** |
 | `lithium_source.py` | **리튬(TE) 현재가 + 그 값의 실제 날짜(직전 GFEX 거래일) — 배치·앱 공용** |
-| `index_valuation.py` | **코스피·코스닥 PER·PBR 일별 수집 (KRX 로그인, `index_valuation.yml`) — 매크로 밸류에이션 밴드** |
+| `index_valuation.py` | **코스피·코스닥 PER·PBR·거래량·투자자별 순매수 일별 수집 (KRX 로그인, `index_valuation.yml`) — 매크로 밸류에이션 밴드** |
 | `cleanup_data.py` | 날짜별 데이터 보존 기간 관리 (기본 180일) |
 
 ---
@@ -129,7 +129,9 @@ data/
   broker_report/*.json           # 날짜별, 180일 보존
   new_high/*.json                # 날짜별, 180일 보존
   dart/{종목코드}.json            # 재고자산·수주잔고·가동률 (dart 배치가 수집, 앱은 읽기만)
-  macro/index_val/{연도}.json     # 코스피·코스닥 PER·PBR 일별 (2006~, 한 줄에 하루, 올해 파일만 바뀜)
+  macro/index_val/{연도}.json     # 코스피·코스닥 일별 (2006~, 한 줄에 하루, 올해 파일만 바뀜)
+                                  #   [날짜, PER, PBR, 종가, 거래량, 거래대금, 외국인, 기관, 개인 순매수]
+                                  #   16시 전엔 오늘 줄을 안 받는다(장중 미확정 값 방지)
 ```
 
 **실적 데이터는 `earnings_store`를 통해서만 읽고 쓴다.** 단일 파일을 매 배치마다
