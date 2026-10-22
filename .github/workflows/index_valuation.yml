@@ -11,6 +11,10 @@ on:
         description: "백필 시작 연도 (비우면 마지막 저장일 다음 날부터)"
         required: false
         default: ""
+      foreign_backfill:
+        description: "외국인 보유 비중 주 단위 백필 시작 연도 (비우면 매일분만)"
+        required: false
+        default: ""
 
 concurrency:
   group: "index-valuation"
@@ -44,11 +48,28 @@ jobs:
             python index_valuation.py
           fi
 
+      # 외국인 보유 비중(시가총액 기준) — 시장 단위 시계열이 KRX에 없어 종목별 보유량을 날짜마다
+      # 합산한다(foreign_holding.py). 실패해도 위 PER·PBR 커밋은 살린다.
+      - name: Foreign holding ratio
+        continue-on-error: true
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          FH_BACKFILL: ${{ github.event.inputs.foreign_backfill }}
+        run: |
+          if [ -n "$FH_BACKFILL" ]; then
+            python foreign_holding.py --backfill "$FH_BACKFILL"
+          else
+            python foreign_holding.py
+          fi
+
       - name: Commit and Push
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
           git add data/macro/index_val/
+          # 외국인 보유 단계가 실패해 폴더가 없으면 git add가 pathspec 오류로 스텝을 죽인다.
+          if [ -d data/macro/foreign_hold ]; then git add data/macro/foreign_hold/; fi
           git commit -m "Auto-update: KOSPI/KOSDAQ PER & PBR" || { echo "No changes to commit"; exit 0; }
           BR="${{ github.ref_name }}"
           for i in 1 2 3 4 5; do
