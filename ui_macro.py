@@ -831,67 +831,141 @@ def _get_flow_live(idx: str):
         return None
 
 
-def _make_flow_chart(m: pd.DataFrame) -> go.Figure:
-    """월별 외국인 순매수 막대 — 순매수 빨강 / 순매도 파랑 (색상 규칙)."""
-    colors = ["#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888888" for v in m["foreign"]]
-    cd = [[_fmt_krw_signed(a), _fmt_krw_signed(b), _fmt_krw_signed(c)]
-          for a, b, c in zip(m["foreign"], m["inst"], m["indiv"])]
-    fig = go.Figure(go.Bar(
-        x=m.index, y=m["foreign"] / 1e12, marker=dict(color=colors, line=dict(width=0)),
-        customdata=cd, showlegend=False,
-        hovertemplate=("%{x|%Y-%m}<br><b>외국인 %{customdata[0]}</b>"
-                       "<br>기관 %{customdata[1]} · 개인 %{customdata[2]}<extra></extra>"),
+_FOREIGN_HOLD_DIR = os.path.join(_MACRO_DIR, "foreign_hold")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_foreign_holding() -> dict:
+    """{"KOSPI": DataFrame(index=date, columns=[ratio, forn, cap]), "KOSDAQ": ...} — foreign_holding.py가 수집."""
+    rows = {"KOSPI": [], "KOSDAQ": []}
+    try:
+        files = sorted(f for f in os.listdir(_FOREIGN_HOLD_DIR) if f.endswith(".json"))
+    except Exception:
+        return {}
+    for fn in files:
+        try:
+            with open(os.path.join(_FOREIGN_HOLD_DIR, fn), "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception:
+            continue
+        for k in rows:
+            rows[k].extend(d.get(k, []))
+    out = {}
+    for k, r in rows.items():
+        if r:
+            df = pd.DataFrame(r, columns=["date", "ratio", "forn", "cap"])
+            df["date"] = pd.to_datetime(df["date"])
+            out[k] = df.drop_duplicates("date").set_index("date").sort_index()
+    return out
+
+
+def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figure:
+    """
+    외국인 보유 비중 선(위 60%) + 월별 외국인 순매수 막대(아래 40%, 순매수 빨강 / 순매도 파랑).
+    "얼마나 들고 있나"(선)와 "지금 사나 파나"(막대)를 한 장에서 같이 본다.
+    """
+    s = h["ratio"]
+    hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
+    fig = go.Figure()
+    has_flow = flow_m is not None and not flow_m.empty and float(flow_m["foreign"].abs().max()) > 0
+    if has_flow:
+        colors = ["#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888888" for v in flow_m["foreign"]]
+        fig.add_trace(go.Bar(
+            x=flow_m.index, y=flow_m["foreign"], yaxis="y2",
+            marker=dict(color=colors, opacity=0.55, line=dict(width=0)),
+            customdata=[[_fmt_krw_signed(a)] for a in flow_m["foreign"]],
+            showlegend=False, hovertemplate="%{x|%Y-%m} 외국인 순매수 <b>%{customdata[0]}</b><extra></extra>",
+        ))
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
+        customdata=[[f"{v / 1e12:,.0f}조", f"{c / 1e12:,.0f}조"] for v, c in zip(h["forn"], h["cap"])],
+        hovertemplate=("%{x|%Y-%m-%d}<br><b>보유 비중 %{y:.2f}%</b>"
+                       "<br>외국인 보유 %{customdata[0]} / 시총 %{customdata[1]}<extra></extra>"),
     ))
-    fig.add_hline(y=0, line=dict(color="#bbb", width=1))
-    # 크기·여백은 옆 PER·PBR 카드, 위 시세 카드와 같게.
+    fig.add_trace(go.Scatter(
+        x=[s.index[-1]], y=[s.values[-1]], mode="markers",
+        marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
+        showlegend=False, hoverinfo="skip",
+    ))
+    for y, color, dash in ((hi, "#ef5350", "dash"), (mean, "#888888", "dot"), (lo, "#1565C0", "dash")):
+        fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+    span = (hi - lo) or 1.0
+    m = float(flow_m["foreign"].abs().max()) if has_flow else 1.0
     fig.update_layout(
         height=90, margin=dict(l=0, r=2, t=2, b=18), bargap=0.15,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
                    tickfont=dict(size=7, color="#aaa"), ticklen=0),
-        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
+        # 선은 위 60%(거래량과 같은 배치), 막대는 0을 가운데 둔 아래 40% — 순매도도 아래로 그려진다.
+        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False,
+                   range=[lo - span * 0.70, hi + span * 0.06] if has_flow else None),
+        yaxis2=dict(overlaying="y", visible=False, fixedrange=True, range=[-m * 1.25, m * 5.0]),
     )
     return fig
 
 
-def _render_flow_card(idx: str, label: str, df: pd.DataFrame | None, years: int | None,
-                      span_label: str) -> None:
+def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, years: int | None,
+                         span_label: str) -> None:
     """
-    외국인 수급 — 오늘 순매수(네이버 실시간) + 최근 20거래일 누적 + 기간 월별 순매수 막대.
+    외국인 보유 비중(시가총액 기준) — 얼마나 들고 있고, 지금 사는지 파는지.
 
-    일별 막대는 10년이면 2,500개가 444px에 몰려 안 보이므로(거래량에서 겪은 문제) 월 합계로 묶는다.
+    선은 foreign_holding.py가 KRX 종목별 외국인 보유량을 합산한 비중(과거는 주 단위,
+    최근은 일 단위). 막대는 index_val의 일별 외국인 순매수를 월 합계로 묶은 것.
     """
-    if df is None or df.empty or float(df["foreign"].abs().max()) == 0:
-        st.markdown(f"<div style='font-size:11px;color:#888;'>{label} 외국인 수급</div>"
+    h = _get_foreign_holding().get(idx)
+    if h is None or h.empty:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{label} 외국인 보유 비중</div>"
                     f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
                     unsafe_allow_html=True)
         return
-    live = _get_flow_live(idx)
-    if live:
-        fo_today = live[0] * 1e8                    # 억원 → 원
-        bd = live[3] or ""
-        when = f"{bd[4:6]}/{bd[6:8]} 장중·잠정" if len(bd) == 8 else "오늘"
-    else:
-        fo_today, when = float(df["foreign"].iloc[-1]), f"{df.index[-1]:%m/%d} 확정"
-    sum20 = float(df["foreign"].tail(20).sum())
+    hs = h if not years else h[h.index >= h.index[-1] - pd.DateOffset(years=years)]
+    cur = float(h["ratio"].iloc[-1])
+
+    def chg_since(days):
+        past = h[h.index <= h.index[-1] - pd.Timedelta(days=days)]
+        return cur - float(past["ratio"].iloc[-1]) if not past.empty else None
+
+    def ytd():
+        past = h[h.index < pd.Timestamp(h.index[-1].year, 1, 1)]
+        return cur - float(past["ratio"].iloc[-1]) if not past.empty else None
 
     def c(v):
-        return "#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888"
+        return "#ef5350" if (v or 0) > 0 else "#1565C0" if (v or 0) < 0 else "#888"
 
+    def pp(name, v):
+        return "" if v is None else f"<span style='color:{c(v)};font-weight:600;'>{name} {v:+.2f}%p</span>"
+
+    # 오늘 순매수(네이버 실시간, 잠정) + 최근 20거래일 누적(확정)
+    flow_html = ""
+    if val_df is not None and float(val_df["foreign"].abs().max()) > 0:
+        live = _get_flow_live(idx)
+        if live:
+            today, when = live[0] * 1e8, "오늘(잠정)"
+        else:
+            today, when = float(val_df["foreign"].iloc[-1]), f"{val_df.index[-1]:%m/%d}"
+        s20 = float(val_df["foreign"].tail(20).sum())
+        flow_html = (f"<div style='font-size:10px;margin-top:1px;color:#888;'>순매수 {when} "
+                     f"<span style='color:{c(today)};'>{_fmt_krw_signed(today)}</span> · 20거래일 "
+                     f"<span style='color:{c(s20)};'>{_fmt_krw_signed(s20)}</span></div>")
+    chgs = " · ".join(x for x in (pp("1개월", chg_since(30)), pp("연초 대비", ytd())) if x)
     st.markdown(
-        f"<div style='font-size:11px;color:#888;'>{label} 외국인 수급</div>"
-        f"<div style='font-size:18px;font-weight:700;line-height:1.2;color:{c(fo_today)};'>"
-        f"{_fmt_krw_signed(fo_today)}</div>"
-        f"<div style='font-size:11.5px;'><span style='color:#888;'>{when} · 최근 20거래일 </span>"
-        f"<span style='color:{c(sum20)};font-weight:600;'>{_fmt_krw_signed(sum20)}</span></div>"
-        f"<div style='font-size:10px;margin-top:1px;color:#888;'>막대 = 월별 외국인 순매수 "
-        f"(<span style='color:#ef5350;'>순매수</span> · <span style='color:#1565C0;'>순매도</span>) · {span_label}</div>",
+        f"<div style='font-size:11px;color:#888;'>{label} 외국인 보유 비중</div>"
+        f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{cur:.2f}%</div>"
+        f"<div style='font-size:11.5px;'>{chgs} <span style='color:#888;'>· {h.index[-1]:%m/%d} 기준</span></div>"
+        f"<div style='font-size:10px;margin-top:1px;'>"
+        f"<span style='color:#ef5350;'>최고 {hs['ratio'].max():.2f}</span> · "
+        f"<span style='color:#888;'>평균 {hs['ratio'].mean():.2f}</span> · "
+        f"<span style='color:#1565C0;'>최저 {hs['ratio'].min():.2f}</span> ({span_label})</div>"
+        + flow_html,
         unsafe_allow_html=True,
     )
-    d = df if not years else df[df.index >= df.index[-1] - pd.DateOffset(years=years)]
-    m = d[["foreign", "inst", "indiv"]].resample("MS").sum()
-    st.plotly_chart(_make_flow_chart(m), use_container_width=True,
+    flow_m = None
+    if val_df is not None:
+        v = val_df[val_df.index >= hs.index[0]]
+        flow_m = v[["foreign"]].resample("MS").sum()
+    st.plotly_chart(_make_foreign_chart(hs, flow_m), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
 
 
@@ -915,10 +989,10 @@ def _render_valuation_band() -> None:
         today_html = _index_today_html(idx, label, df)
         if today_html:
             st.markdown(today_html, unsafe_allow_html=True)
-        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 지수당 한 줄: PER · PBR · 외국인 수급.
+        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 지수당 한 줄: PER · PBR · 외국인 보유 비중.
         cols = st.columns(3)
         with cols[2]:
-            _render_flow_card(idx, label, df, years, span_label)
+            _render_foreign_card(idx, label, df, years, span_label)
         for col, (field, unit, title) in zip(cols[:2], (("per", "배", "PER"), ("pbr", "배", "PBR"))):
             with col:
                 if df is None or df.empty:
@@ -1252,4 +1326,5 @@ def render_macro():
             _get_index_valuation.clear()
             _get_index_live.clear()
             _get_flow_live.clear()
+            _get_foreign_holding.clear()
             st.rerun()
