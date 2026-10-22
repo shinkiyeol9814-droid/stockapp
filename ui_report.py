@@ -1,4 +1,5 @@
 import streamlit as st
+from ui_common import page_header, section_title
 import pandas as pd
 import json
 import os
@@ -55,13 +56,8 @@ def get_report_options():
 
 
 def render_report_summary():
-    # 💡 [수동 갱신] 사용자가 원할 때 즉시 갱신할 수 있는 버튼 추가
-    col1, col2 = st.columns([8, 2])
-    with col1:
-        st.markdown("<div class='main-title'>📊 증권사 레포트 AI 요약</div>", unsafe_allow_html=True)
-    with col2:
-        if st.button("🔄 새로고침", use_container_width=True):
-            st.rerun()
+    if page_header("증권사 레포트 AI 요약", "report"):
+        st.rerun()
             
     report_options = get_report_options()
     

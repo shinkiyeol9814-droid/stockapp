@@ -42,12 +42,42 @@ st.markdown("""
             padding-right: 0.8rem !important;
         }
 
-        /* 3. 메인 타이틀 여백 조정 */
-        .main-title {
-            font-size: 1.4rem !important;
-            font-weight: bold;
-            margin-top: 0.5rem !important;
-            margin-bottom: 1rem !important;
+        /* 3. 제목 크기 통일 (ui_common.page_header / section_title).
+           예전엔 탭마다 1.4rem div · ### · ####가 섞여, 신고가의 "### 통합 분석 결과"가
+           페이지 제목보다 컸다. 페이지 제목 1.15rem, 소제목 1.0rem으로 맞춘다. */
+        .page-title, .main-title {
+            font-size: 1.15rem !important;
+            font-weight: 700;
+            line-height: 1.3;
+            margin: 0 !important;
+        }
+        .sec-title {
+            font-size: 1.0rem;
+            font-weight: 700;
+            margin: 14px 0 4px;
+        }
+
+        /* 3-1. 제목 줄(st-key-hdr_*)과 작은 옵션 줄(st-key-inline_*)은 휴대폰에서도 한 줄.
+           Streamlit은 좁은 화면에서 컬럼을 세로로 쌓아(폭 100%) 새로고침 버튼이 화면 폭
+           전체 막대가 됐다. 이 두 종류의 줄만 쌓지 않게 한다. */
+        [class*="st-key-hdr_"] [data-testid="stHorizontalBlock"],
+        [class*="st-key-inline_"] [data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            gap: 0.5rem !important;
+        }
+        [class*="st-key-hdr_"] [data-testid="stColumn"]:first-child {
+            flex: 1 1 auto !important; width: auto !important; min-width: 0 !important;
+        }
+        [class*="st-key-hdr_"] [data-testid="stColumn"]:last-child {
+            flex: 0 0 2.3rem !important; width: 2.3rem !important; min-width: 2.3rem !important;
+        }
+        [class*="st-key-hdr_"] [data-testid="stButton"] button {
+            width: 2.3rem !important; height: 2.3rem !important; min-height: 2.3rem !important;
+            padding: 0 !important;
+        }
+        [class*="st-key-inline_"] [data-testid="stColumn"] {
+            flex: 0 0 auto !important; width: auto !important; min-width: 0 !important;
         }
 
         /* 4. 버튼 클릭 잔상·트랜지션 제거 */

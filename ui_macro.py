@@ -5,7 +5,6 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.graph_objects as go
-import concurrent.futures
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
@@ -16,6 +15,7 @@ import html
 import urllib.parse
 
 import lithium_source
+from ui_common import page_header, section_title, run_with_progress
 
 _MACRO_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "macro")
 _LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
@@ -971,10 +971,7 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
 
 def _render_valuation_band() -> None:
     data = _get_index_valuation()
-    st.markdown(
-        "<div style='font-size:1.1rem;font-weight:bold;margin:18px 0 2px;'>📊 지수 밸류에이션 밴드</div>",
-        unsafe_allow_html=True,
-    )
+    section_title("지수 밸류에이션 밴드")
     if not data:
         st.caption("코스피·코스닥 PER·PBR 데이터를 아직 받지 못했습니다 (평일 18:30 배치가 수집).")
         return
@@ -1100,10 +1097,18 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
 
 # ── 렌더링 ────────────────────────────────────────────────────────────────────
 def render_macro():
-    st.markdown(
-        "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>🌐 매크로 지표</div>",
-        unsafe_allow_html=True,
-    )
+    # 새로고침은 원래 탭 맨 아래에 화면 폭 막대로 있었다 — 제목 옆 작은 버튼으로 옮겼다.
+    if page_header("매크로 지표", "macro"):
+        _get_price_history.clear()
+        _get_lithium_price_history.clear()
+        _get_dram_price_history.clear()
+        _get_ddr4_price_history.clear()
+        _get_commodity_news.clear()
+        _get_index_valuation.clear()
+        _get_index_live.clear()
+        _get_flow_live.clear()
+        _get_foreign_holding.clear()
+        st.rerun()
     st.caption("시장 지표 5분 자동갱신")
 
     # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.
@@ -1114,70 +1119,69 @@ def render_macro():
                       horizontal=True, key="macro_period")
     period = period_map[sel_p]
 
-    with st.spinner("시장 데이터 로딩 중..."):
-        # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
-        # 티커당 차트용 history() + 실시간가 fast_info/get_info()까지 최대
-        # 2~3번 왕복이라, 콜드 캐시일 때 다 더하면 꽤 오래 걸렸다. 워치리스트와
-        # 같은 패턴으로 전부 스레드풀에서 동시에 가져오도록 바꾼다.
-        hists = {}
-        last_prev_map = {}
-        full_map = {}   # 마일스톤 배지용 전체 이력
+    # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
+    # 티커당 차트용 history() + 실시간가 fast_info/get_info()까지 최대
+    # 2~3번 왕복이라, 콜드 캐시일 때 다 더하면 꽤 오래 걸렸다. 워치리스트와
+    # 같은 패턴으로 전부 스레드풀에서 동시에 가져오도록 바꾼다.
+    hists = {}
+    last_prev_map = {}
+    full_map = {}   # 마일스톤 배지용 전체 이력
 
-        def _fetch_hist(item):
-            nm, tk = item[0], item[1]
-            if tk == "_LITHIUM_":
-                return nm, _get_lithium_price_history(period)
-            elif tk == "_DRAM_":
-                return nm, _get_dram_price_history(period)
-            elif tk == "_DDR4_":
-                return nm, _get_ddr4_price_history(period)
-            elif tk == "_USDEBT_":
-                return nm, _get_us_debt_history(period)
-            else:
-                return nm, _get_price_history(tk, period)
+    def _fetch_hist(item):
+        nm, tk = item[0], item[1]
+        if tk == "_LITHIUM_":
+            return nm, _get_lithium_price_history(period)
+        elif tk == "_DRAM_":
+            return nm, _get_dram_price_history(period)
+        elif tk == "_DDR4_":
+            return nm, _get_ddr4_price_history(period)
+        elif tk == "_USDEBT_":
+            return nm, _get_us_debt_history(period)
+        else:
+            return nm, _get_price_history(tk, period)
 
-        def _fetch_full(item):
-            """마일스톤 판정용 전체 이력. 캐시 기반은 잘라내지 않은 원본."""
-            nm, tk = item[0], item[1]
-            if tk == "_LITHIUM_":
-                return nm, _get_lithium_price_history("max")
-            elif tk == "_DRAM_":
-                return nm, _get_dram_price_history("max")
-            elif tk == "_DDR4_":
-                return nm, _get_ddr4_price_history("max")
-            elif tk == "_USDEBT_":
-                return nm, _get_us_debt_history("max")
-            return nm, _get_full_history(tk)
+    def _fetch_full(item):
+        """마일스톤 판정용 전체 이력. 캐시 기반은 잘라내지 않은 원본."""
+        nm, tk = item[0], item[1]
+        if tk == "_LITHIUM_":
+            return nm, _get_lithium_price_history("max")
+        elif tk == "_DRAM_":
+            return nm, _get_dram_price_history("max")
+        elif tk == "_DDR4_":
+            return nm, _get_ddr4_price_history("max")
+        elif tk == "_USDEBT_":
+            return nm, _get_us_debt_history("max")
+        return nm, _get_full_history(tk)
 
-        def _fetch_last_prev(item):
-            nm, tk = item[0], item[1]
-            if tk.startswith("_"):
-                return nm, (None, None, None)
-            # 채권 금리는 네이버 실시간 우선 (^TNX는 미국 정규장만 갱신됨).
-            # 네이버가 실패하면 기존 야후 경로로 폴백한다.
-            if tk in _NAVER_BOND_MAP:
-                q = _get_naver_bond_quote(_NAVER_BOND_MAP[tk])
-                if q[0] is not None:
-                    return nm, q
-            return nm, _get_last_and_prev_close(tk)
+    def _fetch_last_prev(item):
+        nm, tk = item[0], item[1]
+        if tk.startswith("_"):
+            return nm, (None, None, None)
+        # 채권 금리는 네이버 실시간 우선 (^TNX는 미국 정규장만 갱신됨).
+        # 네이버가 실패하면 기존 야후 경로로 폴백한다.
+        if tk in _NAVER_BOND_MAP:
+            q = _get_naver_bond_quote(_NAVER_BOND_MAP[tk])
+            if q[0] is not None:
+                return nm, q
+        return nm, _get_last_and_prev_close(tk)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(MARKET_ITEMS) * 2) as ex:
-            hist_futures = [ex.submit(_fetch_hist, item) for item in MARKET_ITEMS]
-            lp_futures = [ex.submit(_fetch_last_prev, item) for item in MARKET_ITEMS]
-            full_futures = [ex.submit(_fetch_full, item) for item in MARKET_ITEMS]
-            # 뉴스도 같은 풀에서 — 카드 그리면서 하나씩 받으면 카드 수만큼 직렬로 쌓인다.
-            news_futures = {tk: ex.submit(_get_commodity_news, q, must)
-                            for tk, (q, must) in _NEWS_QUERY.items()}
-            news_map = {tk: f.result() for tk, f in news_futures.items()}
-            for f in hist_futures:
-                nm, h = f.result()
-                hists[nm] = h
-            for f in lp_futures:
-                nm, lp = f.result()
-                last_prev_map[nm] = lp
-            for f in full_futures:
-                nm, fh = f.result()
-                full_map[nm] = fh
+    # 시세·실시간가·전체이력·뉴스를 한 번에 병렬로 — 오래 걸리면 0~100% 진행률을 띄운다.
+    # 뉴스도 같은 풀에서 받는다(카드 그리면서 하나씩 받으면 카드 수만큼 직렬로 쌓인다).
+    jobs = {}
+    for item in MARKET_ITEMS:
+        jobs[("hist", item[0])] = lambda it=item: _fetch_hist(it)[1]
+        jobs[("lp", item[0])] = lambda it=item: _fetch_last_prev(it)[1]
+        jobs[("full", item[0])] = lambda it=item: _fetch_full(it)[1]
+    for tk, (q, must) in _NEWS_QUERY.items():
+        jobs[("news", tk)] = lambda q=q, must=must: _get_commodity_news(q, must)
+    res = run_with_progress(jobs, label="시장 데이터 불러오는 중", max_workers=len(MARKET_ITEMS) * 2)
+    ok = lambda v, default=None: default if isinstance(v, Exception) else v
+    news_map = {k[1]: ok(v) for k, v in res.items() if k[0] == "news"}
+    for item in MARKET_ITEMS:
+        nm = item[0]
+        hists[nm] = ok(res[("hist", nm)])
+        last_prev_map[nm] = ok(res[("lp", nm)], (None, None, None))
+        full_map[nm] = ok(res[("full", nm)])
 
     for row_start in range(0, len(MARKET_ITEMS), 3):
         cols = st.columns(3)
@@ -1315,16 +1319,4 @@ def render_macro():
 
     _render_valuation_band()
 
-    _, cr = st.columns([9, 1.5])
-    with cr:
-        if st.button("🔄 새로고침", key="macro_mkt_refresh", use_container_width=True):
-            _get_price_history.clear()
-            _get_lithium_price_history.clear()
-            _get_dram_price_history.clear()
-            _get_ddr4_price_history.clear()
-            _get_commodity_news.clear()
-            _get_index_valuation.clear()
-            _get_index_live.clear()
-            _get_flow_live.clear()
-            _get_foreign_holding.clear()
-            st.rerun()
+

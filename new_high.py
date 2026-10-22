@@ -1,4 +1,5 @@
 import streamlit as st
+from ui_common import page_header, section_title
 import pandas as pd
 import json
 import os
@@ -54,13 +55,8 @@ def save_to_github(file_path, content, message):
         return False, f"통신 에러: {type(e).__name__}: {e}"
 
 def render_new_high_menu():
-    # 💡 [수동 갱신] 즉시 갱신 버튼 추가
-    col1, col2 = st.columns([8, 2])
-    with col1:
-        st.markdown("<div style='font-size: 1.4rem; font-weight: bold;'>🚀 신고가 트래킹 </div>", unsafe_allow_html=True)
-    with col2:
-        if st.button("🔄 새로고침", use_container_width=True):
-            st.rerun()
+    if page_header("신고가 트래킹", "newhigh"):
+        st.rerun()
             
     report_files = get_all_reports()
     if not report_files:
@@ -122,7 +118,7 @@ def render_new_high_menu():
     disp_df['가치평가_이동'] = "/?stock_code=" + disp_df['코드']
     disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
     
-    st.markdown(f"### 📝 통합 분석 결과 ({len(filtered_df)}건)")
+    section_title(f"통합 분석 결과 ({len(filtered_df)}건)")
     st.caption("💡 '추정 사유' 셀을 더블클릭하여 수정 후, 반드시 **`Enter` 키**를 누르고 하단의 저장 버튼을 눌러주세요.")
     
     # ---------------------------------------------------------
@@ -172,7 +168,7 @@ def render_new_high_menu():
                 st.error(f"❌ 저장 실패: {error_msg}")
 
     st.markdown("---")
-    st.markdown("### 🔍 주요 뉴스 모니터링")
+    section_title("주요 뉴스 모니터링")
     for _, row in edited_df.iterrows():
         original_row = next((item for item in report_data['results'] if item['코드'] == row['코드']), {})
         corp_name_clean = original_row.get('종목명', '알 수 없음')

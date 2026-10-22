@@ -4,6 +4,7 @@ ui_sector.py — 섹터(업종)별 등락률 탭.
 많이 오르고/내리고 있는지 한눈에 보여준다.
 """
 import streamlit as st
+from ui_common import page_header, section_title
 import pandas as pd
 import requests
 import io
@@ -337,22 +338,20 @@ def _spotlight_card(row, news):
 
 
 def render_sector_menu():
-    st.markdown("<div class='main-title'>🏭 섹터별 등락률</div>", unsafe_allow_html=True)
+    refresh = page_header("섹터별 등락률", "sector")
     st.caption("KRX 업종분류(KIND) × 종목별 종가 등락률을 시가총액으로 가중해 "
                f"직접 집계합니다 · 구성종목 {_MIN_MEMBERS}개 이상 업종만 · 3분 캐시")
 
-    _, col_r = st.columns([8, 1.5])
-    with col_r:
-        if st.button("🔄 새로고침", use_container_width=True, key="sector_refresh"):
-            # 💡 get_sector_performance만 비우면 실패 상태에서 새로고침이 먹지
-            # 않는다 — 조회가 실패하면 _merged_quotes가 None을 180초간 캐시해
-            # 두기 때문에, 상위만 비워도 같은 None을 그대로 다시 받는다.
-            # 체인 전체를 비워야 실제로 재조회가 일어난다.
-            _industry_map.clear()
-            _merged_quotes.clear()
-            get_sector_performance.clear()
-            get_sector_stocks.clear()
-            st.rerun()
+    if refresh:
+        # 💡 get_sector_performance만 비우면 실패 상태에서 새로고침이 먹지
+        # 않는다 — 조회가 실패하면 _merged_quotes가 None을 180초간 캐시해
+        # 두기 때문에, 상위만 비워도 같은 None을 그대로 다시 받는다.
+        # 체인 전체를 비워야 실제로 재조회가 일어난다.
+        _industry_map.clear()
+        _merged_quotes.clear()
+        get_sector_performance.clear()
+        get_sector_stocks.clear()
+        st.rerun()
 
     with st.spinner("업종 데이터 로딩 중..."):
         df, as_of, stale = get_sector_snapshot()
@@ -390,7 +389,7 @@ def render_sector_menu():
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("#### 🔥 상승 TOP 5")
+        section_title("상승 TOP 5")
         st.markdown(
             "<div style='border:1px solid #eee;border-radius:8px;overflow:hidden;'>"
             + "".join(_spotlight_card(r, news_map.get(r["업종명"], []))
@@ -399,7 +398,7 @@ def render_sector_menu():
             unsafe_allow_html=True,
         )
     with c2:
-        st.markdown("#### ❄️ 하락 TOP 5")
+        section_title("하락 TOP 5")
         st.markdown(
             "<div style='border:1px solid #eee;border-radius:8px;overflow:hidden;'>"
             + "".join(_spotlight_card(r, news_map.get(r["업종명"], []))

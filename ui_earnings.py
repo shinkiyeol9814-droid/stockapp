@@ -1,4 +1,5 @@
 import streamlit as st
+from ui_common import page_header, section_title
 import json
 import os
 import re
@@ -146,6 +147,10 @@ def render_earnings_menu():
         top: 14px;
         width: 30px;
     }
+    .st-key-inline_ea_opts div[data-testid="stCheckbox"] {
+        position: static !important; left: auto !important; top: auto !important;
+        width: auto !important;
+    }
     div[data-testid="stForm"] button[kind="secondaryFormSubmit"] {
         background-color: #FFE5E5;
         color: #CC0000;
@@ -158,26 +163,32 @@ def render_earnings_menu():
     if 'batch_enabled' not in st.session_state:
         st.session_state.batch_enabled = load_batch_config()
 
-    col1, col2, col3, col4 = st.columns([5, 1.8, 1.5, 1.7])
-    with col1:
-        st.markdown("<div class='main-title'>📈 실적 스크리닝 (AWAKE)</div>", unsafe_allow_html=True)
-    with col2:
-        batch_label = "🟢 수집 ON" if st.session_state.batch_enabled else "🔴 수집 OFF"
-        if st.button(batch_label, use_container_width=True, key="batch_btn"):
-            new_state = not st.session_state.batch_enabled
-            save_batch_config(new_state)
-            st.session_state.batch_enabled = new_state
-            st.rerun()
-    with col3:
-        fav_label = "⭐ 관심종목 ✓" if st.session_state.get('ea_favs', False) else "⭐ 관심종목"
-        if st.button(fav_label, use_container_width=True, key="fav_filter_btn"):
-            st.session_state.ea_favs = not st.session_state.get('ea_favs', False)
-            st.rerun()
-    with col4:
-        if st.button("🔄 새로고침", use_container_width=True):
-            st.session_state.pop('favorites', None)
-            st.session_state.pop('batch_enabled', None)
-            st.rerun()
+    if page_header("실적 스크리닝 (AWAKE)", "earnings"):
+        st.session_state.pop('favorites', None)
+        st.session_state.pop('batch_enabled', None)
+        st.session_state.pop('ea_batch_cb', None)
+        st.rerun()
+
+    # 💡 수집 ON/OFF와 관심종목 필터는 원래 화면 폭을 나눠 쓰는 버튼 두 개였다(휴대폰에선
+    # 각각 한 줄씩). 작은 체크박스 두 개를 한 줄에 둔다(st-key-inline_* → 전역 CSS가 nowrap).
+    def _on_batch_toggle():
+        new_state = bool(st.session_state.ea_batch_cb)
+        save_batch_config(new_state)
+        st.session_state.batch_enabled = new_state
+
+    def _on_fav_toggle():
+        st.session_state.ea_favs = bool(st.session_state.ea_fav_cb)
+
+    if 'ea_batch_cb' not in st.session_state:
+        st.session_state.ea_batch_cb = bool(st.session_state.batch_enabled)
+    st.session_state.ea_fav_cb = bool(st.session_state.get('ea_favs', False))
+    with st.container(key="inline_ea_opts"):
+        o1, o2 = st.columns(2)
+        with o1:
+            st.checkbox("수집", key="ea_batch_cb", on_change=_on_batch_toggle,
+                        help="실적 공시 자동 수집 켜기/끄기")
+        with o2:
+            st.checkbox("관심종목만", key="ea_fav_cb", on_change=_on_fav_toggle)
             
     # 💡 분기 목록만 먼저 읽고(가벼움), 실제 레코드는 선택된 분기 것만 읽는다.
     quarters = [q for q in load_quarter_list() if q and "미상" not in q]

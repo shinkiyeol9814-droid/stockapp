@@ -16,7 +16,8 @@ import concurrent.futures
 import plotly.graph_objects as go
 
 from krx_listing import fetch_krx_listing
-from ui_dart_panel import render_dart_panel
+from ui_dart_panel import render_dart_panel, _load as dart_load
+from ui_common import page_header, run_with_progress
 from ui_mobile import disable_keyboard
 from broker_targets import get_broker_targets, summarize as summarize_targets
 
@@ -112,6 +113,25 @@ def _searchable_names():
     return df['Name'].astype(str).drop_duplicates().tolist()
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_naver_stock_count(ticker):
+    """
+    네이버 상장주식수(모바일 API → PC 페이지 순). 하루 캐시 — 예전엔 매 화면 갱신(3분 자동
+    새로고침 포함)마다 다시 받았다. 둘 다 실패하면 예외를 올려 실패가 캐시에 남지 않게 한다.
+    """
+    try:
+        url = f"https://m.stock.naver.com/api/stock/{ticker}/integration"
+        res = requests.get(url, headers=API_HEADERS, timeout=5).json()
+        return int(res['stockEndType']['totalInfo']['stockCount'])
+    except Exception: pass
+    url = f"https://finance.naver.com/item/main.naver?code={ticker}"
+    res = requests.get(url, headers=API_HEADERS, timeout=5)
+    match = re.search(r'상장주식수<.*?<em>([\d,]+)</em>', res.text, re.DOTALL)
+    if match:
+        return int(match.group(1).replace(',', ''))
+    raise RuntimeError("상장주식수 없음")
+
+
 def get_stocks_count(ticker_row, ticker):
     try:
         if 'Stocks' in ticker_row.columns:
@@ -119,15 +139,7 @@ def get_stocks_count(ticker_row, ticker):
             if pd.notna(sc) and sc > 0: return sc
     except Exception: pass
     try:
-        url = f"https://m.stock.naver.com/api/stock/{ticker}/integration"
-        res = requests.get(url, headers=API_HEADERS, timeout=5).json()
-        return int(res['stockEndType']['totalInfo']['stockCount'])
-    except Exception: pass
-    try:
-        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
-        res = requests.get(url, headers=API_HEADERS, timeout=5)
-        match = re.search(r'상장주식수<.*?<em>([\d,]+)</em>', res.text, re.DOTALL)
-        if match: return int(match.group(1).replace(',', ''))
+        return _cached_naver_stock_count(ticker)
     except Exception: pass
     try:
         if 'Marcap' in ticker_row.columns and 'Close' in ticker_row.columns:
@@ -164,6 +176,25 @@ def _naver_price_history(ticker, start_date, end_date):
 
 
 def get_stock_price_data(ticker, start_date, end_date):
+    """
+    주가 조회(10분 캐시). 예전엔 캐시가 없어 화면이 다시 그려질 때마다(3분 자동 새로고침
+    포함) 5년치 주가를 처음부터 다시 받았다. 실패(빈 표)는 캐시하지 않는다.
+    """
+    try:
+        return _cached_stock_price_data(ticker, start_date, end_date)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_stock_price_data(ticker, start_date, end_date):
+    df = _fetch_stock_price_data(ticker, start_date, end_date)
+    if df is None or df.empty:
+        raise RuntimeError("주가 없음")      # 빈 결과를 10분간 붙잡지 않도록
+    return df
+
+
+def _fetch_stock_price_data(ticker, start_date, end_date):
     """
     주가 조회 — fdr 2회 시도 후 네이버 직접 호출로 폴백.
     예전엔 단 한 번 실패하면 곧바로 빈 DF를 반환해서, 일시적인 네트워크
@@ -583,7 +614,7 @@ def render_valuation_menu():
         .stButton > button:hover, [data-testid="stFormSubmitButton"] > button:hover { background-color: #ffcccc !important; }
         </style>
     """, unsafe_allow_html=True)
-    st.markdown("<div class='main-title'>📈 가치평가 시뮬레이터</div>", unsafe_allow_html=True)
+    page_header("가치평가 시뮬레이터", "valuation", refresh=False)
 
     with st.form("search_form", border=False):
         col1, col2, col3, col4 = st.columns([2, 1.5, 1.2, 1])
@@ -644,6 +675,18 @@ def render_valuation_menu():
                 st.error("❌ 종목을 찾을 수 없습니다. 종목명을 정확히 입력해주세요.")
             else:
                 ticker = str(ticker_row['Code'].values[0]).split('.')[0].strip().zfill(6)
+                # 💡 아래 조회들은 서로 기다릴 이유가 없는데 하나씩 차례로 돌았다(주식수 →
+                # 재무 → 사용자 추정치(GitHub) → 주가 → DART(GitHub)). 먼저 한꺼번에 병렬로
+                # 받아 캐시를 채운다 — 아래 순서대로의 호출은 전부 캐시 적중이 된다.
+                # 오래 걸리면 0~100% 진행률을 띄운다.
+                _today = datetime.today().strftime('%Y-%m-%d')
+                run_with_progress({
+                    "주식수": lambda: get_stocks_count(ticker_row, ticker),
+                    "재무": lambda: get_hybrid_financials(ticker),
+                    "추정치": load_user_estimates,
+                    "주가": lambda: get_stock_price_data(ticker, "2021-01-01", _today),
+                    "DART": lambda: dart_load(ticker),
+                }, label=f"{corp_name} 데이터 불러오는 중")
                 stocks_count = get_stocks_count(ticker_row, ticker)
                 fin_df = get_hybrid_financials(ticker)
                 orig_fin_df = fin_df.copy()

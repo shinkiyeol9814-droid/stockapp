@@ -2,11 +2,11 @@
 ui_watchlist.py — 밸류 워치리스트 tab (AG Grid 테이블 + 실시간 계산).
 """
 import streamlit as st
+from ui_common import page_header, run_with_progress
 import requests
 import json
 import base64
 import pandas as pd
-import concurrent.futures
 from datetime import datetime
 
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode, DataReturnMode
@@ -283,10 +283,14 @@ class DelBtn {
 
 # ── 렌더링 ─────────────────────────────────────────────────────────────────────
 def render_watchlist():
-    st.markdown(
-        "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>📋 밸류 워치리스트</div>",
-        unsafe_allow_html=True,
-    )
+    # 새로고침은 원래 탭 맨 아래 화면 폭 버튼이었다 — 제목 옆 작은 버튼으로 옮겼다.
+    # 가격 캐시를 비우고 "로딩 완료" 표시(_wlc_*)도 지워, 아래 병렬 로더가 가격을 한꺼번에
+    # 다시 받게 한다(표시만 남겨 두면 그리드가 종목마다 하나씩 순서대로 받는다).
+    if page_header("밸류 워치리스트", "watchlist"):
+        get_live_price.clear()
+        for k in [k for k in st.session_state if str(k).startswith("_wlc_")]:
+            del st.session_state[k]
+        st.rerun()
     st.caption("≡ 핸들 드래그로 순서 이동 · 파란 셀 클릭 편집 → 업사이드 즉시 반영 · 자동 저장 · 주가 자동갱신 3분 / 🔄 버튼으로 즉시 갱신")
 
     # ── 직전 편집값 선적용 + watchlist 즉시 반영 (GitHub 캐시 지연 우회) ────
@@ -389,12 +393,12 @@ def render_watchlist():
             get_watch_financials(code)
             get_live_price(code)
             return code
-        with st.spinner(f"데이터 로딩 중... ({len(uncached)}개 종목)"):
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(10, len(uncached))
-            ) as executor:
-                for code in executor.map(_load_one, uncached):
-                    st.session_state[f"_wlc_{code}"] = True
+        # 오래 걸리면 0~100% 진행률을 띄운다(종목 수만큼 단계).
+        res = run_with_progress({c: (lambda c=c: _load_one(c)) for c in uncached},
+                                label=f"종목 데이터 불러오는 중", max_workers=10)
+        for code, out in res.items():
+            if not isinstance(out, Exception):
+                st.session_state[f"_wlc_{code}"] = True
 
     # ── 섹터 그룹화 (섹터 순서를 유지하며 정렬, 같은 섹터 내 원래 순서 보존) ──
     CY, NY = f"{CUR_YEAR}E", f"{NEXT_YEAR}E"
@@ -426,7 +430,6 @@ def render_watchlist():
     for sector, sc in sector_groups.items():
         _render_sector_table(sector, sc, watchlist, CY, NY, CY_YRS, NY_YRS, force_reload)
 
-    _render_bottom(watchlist)
 
 
 _right = {"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}
@@ -624,22 +627,3 @@ def _render_sector_table(sector, sc, watchlist, CY, NY, CY_YRS, NY_YRS, force_re
         st.rerun(scope="fragment")
     else:
         st.toast("순서 저장됨", icon="✅")
-
-
-def _render_bottom(watchlist: dict = None):
-    st.write("")
-    _, col_r = st.columns([8, 1.5])
-    with col_r:
-        if st.button("🔄 새로고침", use_container_width=True):
-            get_live_price.clear()
-            # 가격만 병렬 갱신 (재무데이터 캐시는 유지)
-            if watchlist:
-                codes_to_refresh = list(watchlist.keys())
-                def _rp(c):
-                    get_live_price(c)
-                    return c
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(10, len(codes_to_refresh))
-                ) as exc:
-                    list(exc.map(_rp, codes_to_refresh))
-            st.rerun()

@@ -10,6 +10,7 @@ ui_trade.py — 수출입 동향 탭 (관세청 품목별 수출입실적).
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import time
 import requests
 from requests.adapters import HTTPAdapter
 import html
@@ -25,6 +26,7 @@ from datetime import datetime
 from trade_items import TRADE_ITEMS, themes, lookup, item_count
 
 from ui_mobile import disable_keyboard
+from ui_common import page_header, run_with_progress
 
 _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 # 국가 차원이 필요할 때 쓰는 엔드포인트 (품목 × 국가).
@@ -72,7 +74,7 @@ def _year_windows(months: list[str]) -> list[tuple[str, str]]:
             for i in range(0, len(months), 12)]
 
 
-def _fetch_code_range(api_key: str, code: str, a: str, b: str, keep=None):
+def _fetch_code_range(api_key: str, code: str, a: str, b: str, keep=None, strict=False):
     """
     HS코드 하나의 [a, b] 구간 월별 실적 -> {키: [수출M, 수입M, 수출kg]}.
 
@@ -90,13 +92,22 @@ def _fetch_code_range(api_key: str, code: str, a: str, b: str, keep=None):
     url = _NITEM_BASE if keep else _API_BASE
     out = {}
     try:
-        r = _HTTP.get(
-            url,
-            params={"serviceKey": api_key, "strtYymm": a, "endYymm": b,
-                    "hsSgn": code, "numOfRows": 9999, "pageNo": 1},
-            timeout=25,
-        )
+        # 💡 data.go.kr는 초당 요청 한도가 있어 66건을 한꺼번에 쏘면 429가 난다(2026-10-22
+        # 실측: 0.3초에 66건 → 전부 429, 20초 뒤 정상. 일일 한도 1만 건과는 별개). 잠깐 쉬었다
+        # 다시 보낸다. 예전 코드는 429를 "빈 결과"로 받아 테마 전체를 1시간 캐시했다.
+        for wait in (0.5, 1.0, 2.0, None):
+            r = _HTTP.get(
+                url,
+                params={"serviceKey": api_key, "strtYymm": a, "endYymm": b,
+                        "hsSgn": code, "numOfRows": 9999, "pageNo": 1},
+                timeout=25,
+            )
+            if r.status_code != 429 or wait is None:
+                break
+            time.sleep(wait)
         if r.status_code != 200:
+            if strict:
+                raise RuntimeError(f"HTTP {r.status_code}")
             return out
         for item in ET.fromstring(r.text).findall(".//item"):
             ym_raw = (item.findtext("year", "") or "").strip()
@@ -125,27 +136,39 @@ def _fetch_code_range(api_key: str, code: str, a: str, b: str, keep=None):
         # 실제로 이 except가 NameError를 삼켜 국가 옵션이 통째로
         # 비어 나온 사고가 있었다. 최소한 로그는 남긴다.
         print(f"[ui_trade] {code} {a}~{b} 조회 실패: {type(e).__name__}: {e}")
+        if strict:
+            raise
     return out
 
 
-def _fetch_theme(api_key, codes, months, keep=None):
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_code_range_cached(api_key: str, code: str, a: str, b: str, keep=None):
+    """
+    요청 하나(코드 × 1년 창) 단위 캐시. 예전엔 테마 전체를 통째로 캐시해 진행률을 낼 수
+    없었다 — 요청 단위로 캐시하면 처음 방문 땐 진행률이 보이고, 다시 오면 전부 캐시 적중이다.
+    실패는 예외로 올려 캐시에 남기지 않는다(빈 결과를 1시간 붙잡고 있으면 안 된다).
+    """
+    return _fetch_code_range(api_key, code, a, b, keep, strict=True)
+
+
+def _fetch_theme(api_key, codes, months, keep=None, label="수출 데이터 불러오는 중"):
     """테마의 고유 코드 × 1년 창을 병렬로 받아 {코드: {키: [수출M, 수입M, kg]}}."""
     per_code = {c: {} for c in codes}
-    jobs = [(c, a, b) for c in codes for a, b in _year_windows(months)]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
-        futs = {ex.submit(_fetch_code_range, api_key, c, a, b, keep): c
-                for c, a, b in jobs}
-        for f in concurrent.futures.as_completed(futs):
-            c = futs[f]
-            for key, (e, m, w) in f.result().items():
-                row = per_code[c].setdefault(key, [0.0, 0.0, 0.0])
-                row[0] += e
-                row[1] += m
-                row[2] += w
+    jobs = {(c, a, b): (lambda c=c, a=a, b=b: _fetch_code_range_cached(api_key, c, a, b, keep))
+            for c in codes for a, b in _year_windows(months)}
+    # 동시 6개 — 12개면 초당 한도(429)에 더 자주 걸린다.
+    res = run_with_progress(jobs, label=label, max_workers=6)
+    for (c, _a, _b), out in res.items():
+        if isinstance(out, Exception):
+            continue            # 이번 화면에선 빈 칸 — 캐시엔 안 남아 다음에 다시 받는다
+        for key, (e, m, w) in out.items():
+            row = per_code[c].setdefault(key, [0.0, 0.0, 0.0])
+            row[0] += e
+            row[1] += m
+            row[2] += w
     return per_code
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def _theme_country_table(theme: str, n_months: int, countries: tuple):
     """
     테마 전체의 국가별 표 — 대상국 셀렉터에 있는 나라들만, 한 번에.
@@ -164,7 +187,6 @@ def _theme_country_table(theme: str, n_months: int, countries: tuple):
     return _fetch_theme(api_key, codes, _month_list(n_months), keep=frozenset(countries))
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def get_theme_trends(theme: str, n_months: int = 36, country=None):
     """
     테마 안 모든 품목의 월별 시계열을 한 번에 -> {품목명: DataFrame}.
@@ -482,10 +504,10 @@ _COLS = 3          # 카드 한 줄에 3개 (매크로 탭과 동일)
 
 
 def render_trade():
-    st.markdown(
-        "<div style='font-size:1.4rem;font-weight:bold;margin-bottom:4px;'>🚢 수출입 동향</div>",
-        unsafe_allow_html=True,
-    )
+    if page_header("수출입 동향", "trade"):
+        _fetch_code_range_cached.clear()
+        get_country_options.clear()
+        st.rerun()
     st.caption(
         f"관세청 품목별 수출입실적 · 세부품목 {item_count()}개 · "
         f"월별 {_MONTHS}개월 · 12개월 중위 대비 급등 순 · 1시간 캐시"
@@ -528,8 +550,7 @@ def render_trade():
     country = code_by_label.get(picked_country)
     where = "전체" if not country else picked_country.split(" (")[0]
 
-    with st.spinner(f"{theme} 품목별 수출 데이터 로딩 중..."):
-        trends = get_theme_trends(theme, _MONTHS, country)
+    trends = get_theme_trends(theme, _MONTHS, country)
 
     if not trends:
         st.error("API에서 데이터를 가져오지 못했습니다. API 키와 네트워크 상태를 확인해주세요.")
