@@ -631,9 +631,10 @@ def _get_index_valuation() -> dict:
     for k, r in rows.items():
         if not r:
             continue
-        # 2026-10-22부터 거래량·거래대금이 붙어 6칸이 됐다. 옛 4칸 줄은 0으로 채운다.
-        r = [list(x) + [0] * (6 - len(x)) for x in r]
-        df = pd.DataFrame(r, columns=["date", "per", "pbr", "close", "volume", "value"])
+        # 줄이 4칸 → 6칸(거래량·대금) → 9칸(외국인·기관·개인 순매수)으로 늘었다. 짧은 줄은 0으로 채운다.
+        r = [list(x) + [0] * (9 - len(x)) for x in r]
+        df = pd.DataFrame(r, columns=["date", "per", "pbr", "close", "volume", "value",
+                                      "foreign", "inst", "indiv"])
         df["date"] = pd.to_datetime(df["date"])
         out[k] = df.drop_duplicates("date").set_index("date").sort_index()
     return out
@@ -695,13 +696,25 @@ def _fmt_krw(v) -> str:
     return f"{v / 1e12:,.1f}조" if v >= 1e12 else f"{v / 1e8:,.0f}억"
 
 
+def _fmt_krw_signed(v) -> str:
+    """순매수(원) → '+1,058억' / '-3.2조' / '0'."""
+    if v is None or v != v:
+        return "-"
+    if v == 0:
+        return "0"
+    sign = "+" if v > 0 else "-"
+    a = abs(v)
+    return f"{sign}{a / 1e12:,.1f}조" if a >= 1e12 else f"{sign}{a / 1e8:,.0f}억"
+
+
 def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
                      index_name: str = "", volume: pd.Series | None = None,
-                     value: pd.Series | None = None) -> go.Figure:
+                     value: pd.Series | None = None, foreign: pd.Series | None = None) -> go.Figure:
     hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
     fig = go.Figure()
 
-    # 거래량 — 보조축으로 그래프 아래 1/4에만 깐다(보조축 범위를 최대의 4배로 잡음).
+    # 거래량 — 보조축으로 그래프 아래 40%에 깐다(보조축 범위를 최대의 2.5배로 잡음).
+    # 처음엔 1/4이었는데 너무 낮아 흐름이 안 읽힌다는 피드백으로 키웠다.
     # 막대가 아니라 면적으로 그린다: 10년 일봉 2,451개가 444px에 몰려 막대 하나가 0.2px라
     # 브라우저에서 거의 안 보였다(2026-10-22 실측). 같은 값을 면으로 채우면 밀도와 상관없이 보인다.
     # 상승/하락 색을 쓰지 않는 이유도 같다 — 그 밀도에선 빨강·파랑이 섞여 얼룩이 된다.
@@ -721,10 +734,14 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         c = close.reindex(s.index)
         v = vol if vol is not None else pd.Series(0, index=s.index)
         val = value.reindex(s.index).fillna(0) if value is not None else pd.Series(0, index=s.index)
-        cd = [[f"{a:,.2f}", _fmt_shares(b), _fmt_krw(d)] for a, b, d in zip(c.values, v.values, val.values)]
+        fo = foreign.reindex(s.index).fillna(0) if foreign is not None else pd.Series(0, index=s.index)
+        cd = [[f"{a:,.2f}", _fmt_shares(b), _fmt_krw(d), _fmt_krw_signed(f)]
+              for a, b, d, f in zip(c.values, v.values, val.values, fo.values)]
         extra = "<br>" + index_name + " %{customdata[0]}"
         if has_vol:
             extra += "<br>거래량 %{customdata[1]} · 대금 %{customdata[2]}"
+        if float(fo.abs().max()) > 0:
+            extra += "<br>외국인 %{customdata[3]}"
     fig.add_trace(go.Scatter(
         x=s.index, y=s.values, mode="lines", customdata=cd,
         # 가치평가 탭 밴드 차트의 주가·당일Val 선과 같은 색·굵기.
@@ -750,11 +767,11 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
     )
     if has_vol:
-        # 선은 위 3/4에 오도록 아래쪽에 여유를 둔다(최저선이 거래량 막대와 겹치지 않게).
+        # 선은 위 60%에 오도록 아래쪽에 여유를 둔다(최저선이 거래량 면과 겹치지 않게).
         span = (hi - lo) or abs(hi) or 1.0
         fig.update_layout(
-            yaxis=dict(range=[lo - span * 0.42, hi + span * 0.06]),
-            yaxis2=dict(overlaying="y", range=[0, float(vol.max()) * 4.0], visible=False,
+            yaxis=dict(range=[lo - span * 0.70, hi + span * 0.06]),
+            yaxis2=dict(overlaying="y", range=[0, float(vol.max()) * 2.5], visible=False,
                         fixedrange=True),
         )
     return fig
@@ -762,7 +779,8 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
 
 def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
                       close: pd.Series | None = None, index_name: str = "",
-                      volume: pd.Series | None = None, value: pd.Series | None = None) -> None:
+                      volume: pd.Series | None = None, value: pd.Series | None = None,
+                      foreign: pd.Series | None = None) -> None:
     # KRX는 값이 없을 때 0을, 계산 불가일 때 9999.99를 넣는다(코스닥 PER: 2006~2010 합산 이익이
     # 0 근처라 753일이 0, 2007-08-14에 9999.99). 둘 다 빼야 최고·평균선이 안 틀어진다.
     # 2006~07·2014년 코스닥 PER 300배대는 실제 값(이익이 0에 가까웠던 해)이라 남긴다.
@@ -795,7 +813,85 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
         f"<span style='color:#1565C0;'>최저 {s.min():.2f}</span></div>",
         unsafe_allow_html=True,
     )
-    st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value), use_container_width=True,
+    st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value, foreign), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_flow_live(idx: str):
+    """네이버 오늘 투자자별 순매수(억원) -> (외국인, 기관, 개인, 기준일 'YYYYMMDD') 또는 None."""
+    try:
+        d = requests.get(f"https://m.stock.naver.com/api/index/{idx}/integration",
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=5).json()
+        t = d.get("dealTrendInfo") or {}
+        num = lambda k: float(str(t.get(k, "0")).replace(",", "").replace("+", "") or 0)
+        return num("foreignValue"), num("institutionalValue"), num("personalValue"), t.get("bizdate")
+    except Exception as e:
+        print(f"[ui_macro] 네이버 수급({idx}) 조회 실패: {type(e).__name__}: {e}")
+        return None
+
+
+def _make_flow_chart(m: pd.DataFrame) -> go.Figure:
+    """월별 외국인 순매수 막대 — 순매수 빨강 / 순매도 파랑 (색상 규칙)."""
+    colors = ["#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888888" for v in m["foreign"]]
+    cd = [[_fmt_krw_signed(a), _fmt_krw_signed(b), _fmt_krw_signed(c)]
+          for a, b, c in zip(m["foreign"], m["inst"], m["indiv"])]
+    fig = go.Figure(go.Bar(
+        x=m.index, y=m["foreign"] / 1e12, marker=dict(color=colors, line=dict(width=0)),
+        customdata=cd, showlegend=False,
+        hovertemplate=("%{x|%Y-%m}<br><b>외국인 %{customdata[0]}</b>"
+                       "<br>기관 %{customdata[1]} · 개인 %{customdata[2]}<extra></extra>"),
+    ))
+    fig.add_hline(y=0, line=dict(color="#bbb", width=1))
+    # 크기·여백은 옆 PER·PBR 카드, 위 시세 카드와 같게.
+    fig.update_layout(
+        height=90, margin=dict(l=0, r=2, t=2, b=18), bargap=0.15,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x",
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
+                   tickfont=dict(size=7, color="#aaa"), ticklen=0),
+        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
+    )
+    return fig
+
+
+def _render_flow_card(idx: str, label: str, df: pd.DataFrame | None, years: int | None,
+                      span_label: str) -> None:
+    """
+    외국인 수급 — 오늘 순매수(네이버 실시간) + 최근 20거래일 누적 + 기간 월별 순매수 막대.
+
+    일별 막대는 10년이면 2,500개가 444px에 몰려 안 보이므로(거래량에서 겪은 문제) 월 합계로 묶는다.
+    """
+    if df is None or df.empty or float(df["foreign"].abs().max()) == 0:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{label} 외국인 수급</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
+                    unsafe_allow_html=True)
+        return
+    live = _get_flow_live(idx)
+    if live:
+        fo_today = live[0] * 1e8                    # 억원 → 원
+        bd = live[3] or ""
+        when = f"{bd[4:6]}/{bd[6:8]} 장중·잠정" if len(bd) == 8 else "오늘"
+    else:
+        fo_today, when = float(df["foreign"].iloc[-1]), f"{df.index[-1]:%m/%d} 확정"
+    sum20 = float(df["foreign"].tail(20).sum())
+
+    def c(v):
+        return "#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888"
+
+    st.markdown(
+        f"<div style='font-size:11px;color:#888;'>{label} 외국인 수급</div>"
+        f"<div style='font-size:18px;font-weight:700;line-height:1.2;color:{c(fo_today)};'>"
+        f"{_fmt_krw_signed(fo_today)}</div>"
+        f"<div style='font-size:11.5px;'><span style='color:#888;'>{when} · 최근 20거래일 </span>"
+        f"<span style='color:{c(sum20)};font-weight:600;'>{_fmt_krw_signed(sum20)}</span></div>"
+        f"<div style='font-size:10px;margin-top:1px;color:#888;'>막대 = 월별 외국인 순매수 "
+        f"(<span style='color:#ef5350;'>순매수</span> · <span style='color:#1565C0;'>순매도</span>) · {span_label}</div>",
+        unsafe_allow_html=True,
+    )
+    d = df if not years else df[df.index >= df.index[-1] - pd.DateOffset(years=years)]
+    m = d[["foreign", "inst", "indiv"]].resample("MS").sum()
+    st.plotly_chart(_make_flow_chart(m), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
 
 
@@ -819,10 +915,11 @@ def _render_valuation_band() -> None:
         today_html = _index_today_html(idx, label, df)
         if today_html:
             st.markdown(today_html, unsafe_allow_html=True)
-        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 4장을 3칸에 흘리면 코스닥 PER·PBR이
-        # 줄바꿈으로 갈라져서, 지수당 한 줄로 두고 셋째 칸은 비운다.
-        cols = st.columns(3)[:2]
-        for col, (field, unit, title) in zip(cols, (("per", "배", "PER"), ("pbr", "배", "PBR"))):
+        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 지수당 한 줄: PER · PBR · 외국인 수급.
+        cols = st.columns(3)
+        with cols[2]:
+            _render_flow_card(idx, label, df, years, span_label)
+        for col, (field, unit, title) in zip(cols[:2], (("per", "배", "PER"), ("pbr", "배", "PBR"))):
             with col:
                 if df is None or df.empty:
                     _render_band_card(f"{label} {title}", pd.Series(dtype=float), unit, span_label)
@@ -832,7 +929,7 @@ def _render_valuation_band() -> None:
                     s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
                 _render_band_card(f"{label} {title}", s, unit, span_label,
                                   close=df["close"], index_name=label,
-                                  volume=df["volume"], value=df["value"])
+                                  volume=df["volume"], value=df["value"], foreign=df["foreign"])
 
 
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
@@ -1154,4 +1251,5 @@ def render_macro():
             _get_commodity_news.clear()
             _get_index_valuation.clear()
             _get_index_live.clear()
+            _get_flow_live.clear()
             st.rerun()
