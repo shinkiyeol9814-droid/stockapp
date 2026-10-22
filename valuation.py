@@ -116,19 +116,30 @@ def _searchable_names():
 @st.cache_data(ttl=86400, show_spinner=False)
 def _cached_naver_stock_count(ticker):
     """
-    네이버 상장주식수(모바일 API → PC 페이지 순). 하루 캐시 — 예전엔 매 화면 갱신(3분 자동
+    네이버 상장주식수(기업정보 → 시세 스냅샷 순). 하루 캐시 — 예전엔 매 화면 갱신(3분 자동
     새로고침 포함)마다 다시 받았다. 둘 다 실패하면 예외를 올려 실패가 캐시에 남지 않게 한다.
+
+    2026-10 네이버 개편으로 예전 두 소스가 모두 죽었다: 모바일 integration API는
+    `stockEndType`이 문자열이 되고 `totalInfos`에 주식수가 없어졌으며, PC 종목 페이지는
+    클라이언트 렌더링(stock.naver.com)으로 넘어가 HTML에 값이 없다.
     """
     try:
-        url = f"https://m.stock.naver.com/api/stock/{ticker}/integration"
-        res = requests.get(url, headers=API_HEADERS, timeout=5).json()
-        return int(res['stockEndType']['totalInfo']['stockCount'])
+        # 네이버 '기업정보' 탭의 원본(와이즈리포트) — "발행주식수/유동비율" 칸, 정확한 값
+        url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
+        res = requests.get(url, headers=API_HEADERS, timeout=5)
+        res.encoding = 'utf-8'
+        match = re.search(r'발행주식수.*?<td[^>]*>\s*([\d,]+)', res.text, re.DOTALL)
+        if match:
+            sc = int(match.group(1).replace(',', ''))
+            if sc > 0: return sc
     except Exception: pass
-    url = f"https://finance.naver.com/item/main.naver?code={ticker}"
-    res = requests.get(url, headers=API_HEADERS, timeout=5)
-    match = re.search(r'상장주식수<.*?<em>([\d,]+)</em>', res.text, re.DOTALL)
-    if match:
-        return int(match.group(1).replace(',', ''))
+    # 시세 스냅샷의 시가총액(원, 백만 단위 절사) ÷ 현재가 — 오차 수 주 이내
+    url = f"https://stock.naver.com/api/stockSecurity/items/v2/domestic/{ticker}/price-snapshot"
+    krx = requests.get(url, headers=API_HEADERS, timeout=5).json().get('krx') or {}
+    marcap = float(str(krx.get('marketCap') or 0).replace(',', ''))
+    price = float(str(krx.get('currentPrice') or 0).replace(',', ''))
+    if marcap > 0 and price > 0:
+        return int(round(marcap / price))
     raise RuntimeError("상장주식수 없음")
 
 
