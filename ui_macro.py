@@ -631,7 +631,9 @@ def _get_index_valuation() -> dict:
     for k, r in rows.items():
         if not r:
             continue
-        df = pd.DataFrame(r, columns=["date", "per", "pbr", "close"])
+        # 2026-10-22부터 거래량·거래대금이 붙어 6칸이 됐다. 옛 4칸 줄은 0으로 채운다.
+        r = [list(x) + [0] * (6 - len(x)) for x in r]
+        df = pd.DataFrame(r, columns=["date", "per", "pbr", "close", "volume", "value"])
         df["date"] = pd.to_datetime(df["date"])
         out[k] = df.drop_duplicates("date").set_index("date").sort_index()
     return out
@@ -679,21 +681,53 @@ def _index_today_html(idx: str, label: str, df: pd.DataFrame | None) -> str:
             f"<span style='font-size:11px;color:#aaa;'>· {when}</span></div>")
 
 
+def _fmt_shares(v) -> str:
+    """거래량(주) → '5.2억주' / '8,300만주'."""
+    if not v or v != v:
+        return "-"
+    return f"{v / 1e8:,.1f}억주" if v >= 1e8 else f"{v / 1e4:,.0f}만주"
+
+
+def _fmt_krw(v) -> str:
+    """거래대금(원) → '12.3조' / '8,400억'."""
+    if not v or v != v:
+        return "-"
+    return f"{v / 1e12:,.1f}조" if v >= 1e12 else f"{v / 1e8:,.0f}억"
+
+
 def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
-                     index_name: str = "") -> go.Figure:
+                     index_name: str = "", volume: pd.Series | None = None,
+                     value: pd.Series | None = None) -> go.Figure:
     hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
     fig = go.Figure()
-    # 마우스오버에 그날 지수 종가도 띄운다 — "PER 9.6배일 때 코스피가 몇 포인트였나"를
-    # 같이 봐야 밴드 위치를 지수 수준으로 옮겨 읽을 수 있다.
-    cd, close_line = None, ""
+
+    # 거래량 막대 — 보조축으로 그래프 아래 1/4에만 깐다(보조축 범위를 최대의 4배로 잡음).
+    # 상승/하락 색을 쓰지 않는 이유: 10년 일봉 2,500개가 444px에 몰려 빨강·파랑이 섞이면
+    # 보라색 얼룩이 된다. 양만 보는 용도라 옅은 회색으로 둔다.
+    vol = volume.reindex(s.index).fillna(0) if volume is not None else None
+    has_vol = vol is not None and float(vol.max()) > 0
+    if has_vol:
+        fig.add_trace(go.Bar(
+            x=s.index, y=vol.values, yaxis="y2", marker=dict(color="rgba(120,144,156,0.45)", line=dict(width=0)),
+            showlegend=False, hoverinfo="skip",
+        ))
+
+    # 마우스오버에 그날 지수 종가·거래량·거래대금을 같이 띄운다 — "PER 9.6배일 때 코스피가 몇
+    # 포인트였고 거래가 얼마나 붙었나"를 같이 봐야 밴드 위치를 시장 상황으로 옮겨 읽을 수 있다.
+    cd, extra = None, ""
     if close is not None:
-        cd = close.reindex(s.index).values
-        close_line = "<br>" + index_name + " %{customdata:,.2f}"
+        c = close.reindex(s.index)
+        v = vol if vol is not None else pd.Series(0, index=s.index)
+        val = value.reindex(s.index).fillna(0) if value is not None else pd.Series(0, index=s.index)
+        cd = [[f"{a:,.2f}", _fmt_shares(b), _fmt_krw(d)] for a, b, d in zip(c.values, v.values, val.values)]
+        extra = "<br>" + index_name + " %{customdata[0]}"
+        if has_vol:
+            extra += "<br>거래량 %{customdata[1]} · 대금 %{customdata[2]}"
     fig.add_trace(go.Scatter(
         x=s.index, y=s.values, mode="lines", customdata=cd,
         # 가치평가 탭 밴드 차트의 주가·당일Val 선과 같은 색·굵기.
         line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
-        hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b>" + close_line + "<extra></extra>",
+        hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b>" + extra + "<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=[s.index[-1]], y=[s.values[-1]], mode="markers",
@@ -712,12 +746,22 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
                    tickfont=dict(size=7, color="#aaa"), ticklen=0),
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
+        bargap=0,
     )
+    if has_vol:
+        # 선은 위 3/4에 오도록 아래쪽에 여유를 둔다(최저선이 거래량 막대와 겹치지 않게).
+        span = (hi - lo) or abs(hi) or 1.0
+        fig.update_layout(
+            yaxis=dict(range=[lo - span * 0.42, hi + span * 0.06]),
+            yaxis2=dict(overlaying="y", range=[0, float(vol.max()) * 4.0], visible=False,
+                        fixedrange=True),
+        )
     return fig
 
 
 def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
-                      close: pd.Series | None = None, index_name: str = "") -> None:
+                      close: pd.Series | None = None, index_name: str = "",
+                      volume: pd.Series | None = None, value: pd.Series | None = None) -> None:
     # KRX는 값이 없을 때 0을, 계산 불가일 때 9999.99를 넣는다(코스닥 PER: 2006~2010 합산 이익이
     # 0 근처라 753일이 0, 2007-08-14에 9999.99). 둘 다 빼야 최고·평균선이 안 틀어진다.
     # 2006~07·2014년 코스닥 PER 300배대는 실제 값(이익이 0에 가까웠던 해)이라 남긴다.
@@ -750,7 +794,7 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
         f"<span style='color:#1565C0;'>최저 {s.min():.2f}</span></div>",
         unsafe_allow_html=True,
     )
-    st.plotly_chart(_make_band_chart(s, unit, close, index_name), use_container_width=True,
+    st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
 
 
@@ -786,7 +830,8 @@ def _render_valuation_band() -> None:
                 if years:
                     s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
                 _render_band_card(f"{label} {title}", s, unit, span_label,
-                                  close=df["close"], index_name=label)
+                                  close=df["close"], index_name=label,
+                                  volume=df["volume"], value=df["value"])
 
 
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,

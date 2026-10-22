@@ -11,7 +11,8 @@ KRX_ID / KRX_PW로 로그인한다 — Actions Secrets에 있다. 앱(Streamlit 
 
 ━━ 저장 ━━
 data/macro/index_val/{연도}.json
-    {"KOSPI": [["2026-10-19", PER, PBR, 종가], ...], "KOSDAQ": [...]}
+    {"KOSPI": [["2026-10-19", PER, PBR, 종가, 거래량(주), 거래대금(원)], ...], "KOSDAQ": [...]}
+(2026-10-22 이전 줄은 종가까지 4칸 — 앱은 4칸·6칸 둘 다 읽는다. 백필로 6칸으로 다시 채웠다.)
 연도별로 나눈 이유: 하루 한 줄씩 늘 때마다 20년치 파일 전체를 다시 쓰면 커밋마다
 수백 KB가 쌓인다(earnings_store를 분기별로 나눈 것과 같은 이유). 지난해 파일은
 다시 바뀌지 않는다.
@@ -78,21 +79,39 @@ def last_saved_date() -> date | None:
 
 
 def _fetch(ticker: str, start: date, end: date):
-    """[(YYYY-MM-DD, PER, PBR, 종가)] — 연 단위로 끊어 받는다(긴 구간 한 번에 요청하면 거절될 수 있다)."""
+    """
+    [(YYYY-MM-DD, PER, PBR, 종가, 거래량(주), 거래대금(원))] — 연 단위로 끊어 받는다
+    (긴 구간 한 번에 요청하면 거절될 수 있다).
+
+    PER·PBR은 지수 펀더멘털, 거래량·거래대금은 지수 OHLCV에서 온다. 날짜로 맞춰 한 줄에 합친다.
+    OHLCV가 비는 날은 0으로 둔다(앱은 0을 "거래량 없음"으로 그린다).
+    """
     from pykrx import stock
     out = []
     s = start
     while s <= end:
         e = min(date(s.year, 12, 31), end)
-        df = stock.get_index_fundamental(s.strftime("%Y%m%d"), e.strftime("%Y%m%d"), ticker)
+        a, b = s.strftime("%Y%m%d"), e.strftime("%Y%m%d")
+        df = stock.get_index_fundamental(a, b, ticker)
+        time.sleep(0.5)    # KRX 부하 배려
+        vol = {}
+        try:
+            ov = stock.get_index_ohlcv_by_date(a, b, ticker, name_display=False)
+            if ov is not None and not ov.empty:
+                for idx, row in ov.iterrows():
+                    vol[idx.strftime("%Y-%m-%d")] = (int(row.get("거래량") or 0), int(row.get("거래대금") or 0))
+        except Exception as ex:
+            print(f"  ⚠️ {ticker} {a}~{b} 거래량 조회 실패: {type(ex).__name__}: {ex}")
         if df is not None and not df.empty:
             for idx, row in df.iterrows():
+                d = idx.strftime("%Y-%m-%d")
                 per = float(row.get("PER") or 0)
                 pbr = float(row.get("PBR") or 0)
                 close = float(row.get("종가") or 0)
-                out.append([idx.strftime("%Y-%m-%d"), round(per, 2), round(pbr, 2), round(close, 2)])
+                v, val = vol.get(d, (0, 0))
+                out.append([d, round(per, 2), round(pbr, 2), round(close, 2), v, val])
         s = e + timedelta(days=1)
-        time.sleep(0.5)    # KRX 부하 배려
+        time.sleep(0.5)
     return out
 
 
