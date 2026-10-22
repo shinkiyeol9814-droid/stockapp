@@ -125,7 +125,10 @@ def update(since: int | None = None) -> bool:
     if since:
         start = date(since, 1, 1)
     elif last:
-        start = last + timedelta(days=1)
+        # 마지막 저장일도 다시 받는다 — 장중에 수동 실행하면 그날 줄이 장중 값(미확정 PER·
+        # 거래량)으로 저장되는데, "다음 날부터"로 이어 받으면 그 줄이 영영 안 고쳐진다
+        # (2026-10-22 백필을 10시대에 돌려 실제로 그렇게 됐다). 같은 날짜는 덮어쓴다.
+        start = last
     else:
         start = date(_DEFAULT_SINCE, 1, 1)
     if start > today:

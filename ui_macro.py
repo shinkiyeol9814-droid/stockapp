@@ -701,14 +701,16 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
     hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
     fig = go.Figure()
 
-    # 거래량 막대 — 보조축으로 그래프 아래 1/4에만 깐다(보조축 범위를 최대의 4배로 잡음).
-    # 상승/하락 색을 쓰지 않는 이유: 10년 일봉 2,500개가 444px에 몰려 빨강·파랑이 섞이면
-    # 보라색 얼룩이 된다. 양만 보는 용도라 옅은 회색으로 둔다.
+    # 거래량 — 보조축으로 그래프 아래 1/4에만 깐다(보조축 범위를 최대의 4배로 잡음).
+    # 막대가 아니라 면적으로 그린다: 10년 일봉 2,451개가 444px에 몰려 막대 하나가 0.2px라
+    # 브라우저에서 거의 안 보였다(2026-10-22 실측). 같은 값을 면으로 채우면 밀도와 상관없이 보인다.
+    # 상승/하락 색을 쓰지 않는 이유도 같다 — 그 밀도에선 빨강·파랑이 섞여 얼룩이 된다.
     vol = volume.reindex(s.index).fillna(0) if volume is not None else None
     has_vol = vol is not None and float(vol.max()) > 0
     if has_vol:
-        fig.add_trace(go.Bar(
-            x=s.index, y=vol.values, yaxis="y2", marker=dict(color="rgba(120,144,156,0.45)", line=dict(width=0)),
+        fig.add_trace(go.Scatter(
+            x=s.index, y=vol.values, yaxis="y2", mode="lines", fill="tozeroy",
+            line=dict(width=0, color="rgba(120,144,156,0)"), fillcolor="rgba(120,144,156,0.35)",
             showlegend=False, hoverinfo="skip",
         ))
 
@@ -746,7 +748,6 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
                    tickfont=dict(size=7, color="#aaa"), ticklen=0),
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
-        bargap=0,
     )
     if has_vol:
         # 선은 위 3/4에 오도록 아래쪽에 여유를 둔다(최저선이 거래량 막대와 겹치지 않게).
