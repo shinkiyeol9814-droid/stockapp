@@ -308,16 +308,57 @@ components.html("""
         ov.style.cssText = 'display:none;position:fixed;inset:0;z-index:99999;'
             + 'background:rgba(255,255,255,0.94);flex-direction:column;'
             + 'align-items:center;justify-content:center;';
+        // 💡 예전엔 스피너 + "불러오는 중..." 문구만 있었다. 이 오버레이가 화면을 94%로
+        // 덮어서, 그 아래 st.progress(ui_common.run_with_progress)가 그려져도 안 보였다.
+        // 이제 오버레이가 페이지의 진행률 막대를 읽어 직접 % 를 보여준다(문구는 없앰).
         ov.innerHTML =
             '<div style="border:4px solid #f0f0f0;border-top:4px solid #FF4B4B;'
             + 'border-radius:50%;width:40px;height:40px;'
             + 'animation:__tab_spin__ 0.8s linear infinite;"></div>'
-            + '<div style="margin-top:12px;color:#666;font-size:14px;">불러오는 중...</div>';
+            + '<div id="__tab_prog__" style="display:none;width:220px;margin-top:16px;">'
+            +   '<div style="height:6px;background:#f0f0f0;border-radius:3px;overflow:hidden;">'
+            +     '<div id="__tab_prog_bar__" style="height:100%;width:0;background:#FF4B4B;'
+            +       'transition:width .15s linear;"></div></div>'
+            +   '<div id="__tab_prog_txt__" style="margin-top:8px;text-align:center;'
+            +     'color:#555;font-size:13px;font-weight:600;"></div>'
+            + '</div>';
         doc.body.appendChild(ov);
         return ov;
     }
 
-    function showOverlay() { ensureOverlay().style.display = 'flex'; }
+    // 페이지의 st.progress에서 0~100 값을 읽는다. 없으면 null.
+    function readProgress() {
+        var doc = mainDoc();
+        var p = doc.querySelector('[data-testid="stProgress"]');
+        if (!p) return null;
+        var txt = p.innerText || '';
+        var bar = p.querySelector('[role="progressbar"]');
+        var v = bar ? parseFloat(bar.getAttribute('aria-valuenow')) : NaN;
+        if (isNaN(v)) { var m = txt.match(/([0-9]+)%/); v = m ? parseFloat(m[1]) : NaN; }
+        if (isNaN(v)) return null;
+        if (v <= 1 && !/[0-9]+%/.test(txt)) v = v * 100;     // 0~1로 오는 경우 대비
+        var c = txt.match(/[(]([0-9]+[/][0-9]+)[)]/);
+        return {pct: Math.max(0, Math.min(100, Math.round(v))), count: c ? c[1] : ''};
+    }
+
+    function updateOverlayProgress() {
+        var doc = mainDoc();
+        var box = doc.getElementById('__tab_prog__');
+        if (!box) return;
+        var p = readProgress();
+        if (!p) return;                     // 진행률이 없는 탭은 스피너만
+        box.style.display = 'block';
+        doc.getElementById('__tab_prog_bar__').style.width = p.pct + '%';
+        doc.getElementById('__tab_prog_txt__').textContent =
+            p.pct + '%' + (p.count ? '  ·  ' + p.count : '');
+    }
+
+    function showOverlay() {
+        var ov = ensureOverlay();
+        var box = mainDoc().getElementById('__tab_prog__');
+        if (box) box.style.display = 'none';        // 이전 탭의 진행률이 남지 않게
+        ov.style.display = 'flex';
+    }
     function hideOverlay() {
         var ov = mainDoc().getElementById('__tab_loading_overlay__');
         if (ov) ov.style.display = 'none';
@@ -338,6 +379,7 @@ components.html("""
         } catch (e) {}
 
         var iv = setInterval(function() {
+            updateOverlayProgress();
             var now = Date.now();
             var quietFor = now - lastMutation;
             var elapsed = now - startedAt;
