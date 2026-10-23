@@ -16,6 +16,7 @@ ui_surge.py — 거래대금 급증 스크리너 탭.
 """
 import html
 
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -196,6 +197,77 @@ def _rows(doc: dict, slot: str) -> list:
     return out
 
 
+# ── 표(정렬 가능) ─────────────────────────────────────────────────────────────
+# 수집 사이트(kosdaq-surge)와 같은 열 구성. st.dataframe은 헤더를 누르면 그 열로
+# 정렬되므로 "배수 큰 순 / 회전율 높은 순"을 버튼 없이 바로 볼 수 있다.
+# 카드 보기는 그대로 남겼다 — 일봉 캔들(양봉 빨강·음봉 파랑)과 뉴스 링크는
+# 표에서 재현할 수 없어서다(LineChartColumn은 선 하나, 셀 안에 링크를 못 넣는다).
+_TABLE_COLS = {
+    "포착":        dict(kind="text",   label="포착 시각", width="small",
+                        help="왼쪽부터 10:05 · 12:05 · 14:05 · 종가. ●는 그 시각에 잡힌 것"),
+    "등급":        dict(kind="text",   label="등급", width="small"),
+    "종목":        dict(kind="text",   label="종목", width="medium"),
+    "코드":        dict(kind="text",   label="코드", width="small"),
+    "시장":        dict(kind="text",   label="시장", width="small"),
+    "최근 뉴스":   dict(kind="text",   label="최근 뉴스", width="large"),
+    "3개월":       dict(kind="chart",  label="3개월 종가"),
+    "배수":        dict(kind="num",    label="배수", fmt="%.1f배", width="small"),
+    "현재가":      dict(kind="num",    label="현재가", fmt="%,d", width="small"),
+    "등락률":      dict(kind="num",    label="등락률", fmt="%+.2f%%", width="small"),
+    "시총(억)":    dict(kind="num",    label="시총(억)", fmt="%,d", width="small"),
+    "거래대금(억)": dict(kind="num",   label="거래대금(억)", fmt="%,.1f", width="small"),
+    "회전율":      dict(kind="num",    label="회전율", fmt="%.1f%%", width="small"),
+    "링크":        dict(kind="link",   label="차트", width="small"),
+}
+
+
+def _table_df(rows) -> pd.DataFrame:
+    out = []
+    for r in rows:
+        st_ = r["st"]
+        nw = st_.get("news")
+        closes = [c[3] for c in (st_.get("k") or [])]
+        out.append({
+            # 점 네 개로 '어느 시각에 잡혔는지'를 그대로 옮긴다(카드의 _dots와 같은 순서).
+            "포착": "".join("●" if sl in r["on"] else "○" for sl in SLOTS),
+            "등급": "★" * (r["grade"] or 0),
+            "종목": str(st_.get("n", r["code"])),
+            "코드": r["code"],
+            "시장": "코스피" if st_.get("m") == "K" else "코스닥",
+            "최근 뉴스": str(nw[0]) if nw else "",
+            "3개월": closes or None,
+            "배수": float(r["mult"] or 0),
+            "현재가": float(r["price"] or 0),
+            "등락률": float(r["chg"] or 0),
+            "시총(억)": float(r["cap"] or 0),
+            "거래대금(억)": float(r["value"] or 0),
+            "회전율": float(r["turn"] or 0),
+            "링크": f"https://finance.naver.com/item/main.naver?code={r['code']}",
+        })
+    return pd.DataFrame(out, columns=list(_TABLE_COLS))
+
+
+def _render_table(rows) -> None:
+    df = _table_df(rows)
+    cfg = {}
+    for col, spec in _TABLE_COLS.items():
+        kind, label, width = spec["kind"], spec["label"], spec.get("width")
+        if kind == "num":
+            cfg[col] = st.column_config.NumberColumn(label, format=spec["fmt"], width=width)
+        elif kind == "chart":
+            cfg[col] = st.column_config.LineChartColumn(label, width=width)
+        elif kind == "link":
+            cfg[col] = st.column_config.LinkColumn(label, display_text="네이버", width=width)
+        else:
+            cfg[col] = st.column_config.TextColumn(label, width=width, help=spec.get("help"))
+    # 등락률만 한국 관례 색을 입힌다(상승 빨강·하락 파랑). 숫자 열에 Styler를
+    # 걸어도 헤더 정렬은 그대로 동작한다.
+    styled = df.style.map(lambda v: f"color:{_clr(v)};font-weight:600", subset=["등락률"])
+    st.dataframe(styled, column_config=cfg, hide_index=True,
+                 use_container_width=True,
+                 height=min(len(df) * 35 + 38, 760))
+
+
 _SORTS = {
     "기본": None,
     "배수": "mult",
@@ -235,13 +307,16 @@ def render_surge():
 
     by_day = {d["d"]: d for d in days}
     with st.container(key="inline_surge_opts"):
-        c1, c2 = st.columns([1.15, 1], vertical_alignment="center")
+        c1, c2, c3 = st.columns([1.15, 1, 0.62], vertical_alignment="center")
         with c1:
             day = st.selectbox("일자", list(by_day), format_func=lambda d: _day_label(by_day[d]),
                                key="surge_day", label_visibility="collapsed")
         with c2:
             mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
                                        key="surge_mkt", label_visibility="collapsed") or "전체"
+        with c3:
+            view = st.segmented_control("보기", ["표", "카드"], default="표",
+                                        key="surge_view", label_visibility="collapsed") or "표"
     disable_keyboard("surge_day")
 
     try:
@@ -261,9 +336,13 @@ def render_surge():
     if mkt != "전체":
         rows = [r for r in rows if r["st"].get("m") == ("K" if mkt == "코스피" else "Q")]
 
-    with st.container(key="inline_surge_sort"):
-        sort = st.segmented_control("정렬", list(_SORTS), default="기본", key="surge_sort",
-                                    label_visibility="collapsed") or "기본"
+    if view == "카드":
+        with st.container(key="inline_surge_sort"):
+            sort = st.segmented_control("정렬", list(_SORTS), default="기본", key="surge_sort",
+                                        label_visibility="collapsed") or "기본"
+    else:
+        # 표는 열 머리글을 눌러 정렬하므로 버튼을 두지 않는다(수집 사이트와 같은 방식).
+        sort = "기본"
     key = _SORTS[sort]
     if key:
         rows.sort(key=lambda r: -(r[key] or 0))
@@ -288,6 +367,12 @@ def render_surge():
 
     if not rows:
         st.info("이 조건에 잡힌 종목이 없습니다.")
+        return
+
+    if view == "표":
+        _render_table(rows)
+        st.caption(f"열 머리글을 누르면 그 열로 정렬됩니다 · "
+                   f"시세는 네이버 금융 공개 데이터 · 수집 리포 [kosdaq-surge]({_SITE})")
         return
 
     # 같은 화면(일자·시각·시장·정렬)을 보는 동안만 '더 보기'가 누적된다
