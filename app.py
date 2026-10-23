@@ -42,6 +42,16 @@ st.markdown("""
             padding-right: 0.8rem !important;
         }
 
+        /* 2-1. 요소 사이 간격·구분선 여백 줄이기 (2026-10-23 "불필요한 여백 제거").
+           Streamlit 세로 블록의 기본 간격은 1rem이라 요소가 많은 탭은 빈 줄이 겹겹이 생겼다.
+           구분선(st.divider / ---)도 위아래 여백이 커서 한 줄짜리 빈칸처럼 보였다. */
+        [data-testid="stVerticalBlock"] {
+            gap: 0.6rem !important;
+        }
+        [data-testid="stMarkdownContainer"] hr, hr {
+            margin: 0.35rem 0 !important;
+        }
+
         /* 3. 제목 크기 통일 (ui_common.page_header / section_title).
            예전엔 탭마다 1.4rem div · ### · ####가 섞여, 신고가의 "### 통합 분석 결과"가
            페이지 제목보다 컸다. 페이지 제목 1.15rem, 소제목 1.0rem으로 맞춘다. */

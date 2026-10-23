@@ -99,12 +99,10 @@ def render_report_summary():
                     if top_row['Upside_num'] > 0:
                         st.success(f"🚀 **오늘의 최고 기대 종목:** {top_row.get('종목명', 'N/A')} (기대수익률: **{top_row['Upside_num']:.1f}%** | {top_row.get('증권사', 'N/A')})")
                 
-                st.divider()
-
+                # 💡 여기 있던 st.divider() + "<br>"은 하이라이트 배지와 첫 카드 사이에 큰 빈칸만
+                # 만들었다(요소 간격까지 세 겹). 카드가 테두리로 구분되니 둘 다 뺀다.
                 df = df.sort_values(by='Upside_num', ascending=False)
                 df['Upside_str'] = df['Upside_num'].apply(lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%")
-
-                st.markdown("<br>", unsafe_allow_html=True)
 
                 for _, row in df.iterrows():
                     title = row.get('레포트 제목', '제목 없음')
