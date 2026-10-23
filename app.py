@@ -408,6 +408,12 @@ components.html("""
         doc.body.classList.remove('__tab_loading__');
     }
 
+    // Streamlit이 스크립트를 돌리는 동안 뜨는 상태 위젯. 간헐적이라 이것만
+    // 믿진 않고 DOM 변화와 함께 쓴다(실측: 전환 0.5초 지점에만 잠깐 보였다).
+    function isRunning() {
+        return !!mainDoc().querySelector('[data-testid="stStatusWidget"]');
+    }
+
     function waitForRunFinish() {
         // 💡 "Stop" 텍스트로 실행중 여부를 판단했었는데, Streamlit 버전이 올라가며
         // 그 표시 방식이 바뀌어 더 이상 감지가 안 됐다 — 그 결과 항상 세이프티넷
@@ -422,16 +428,31 @@ components.html("""
             mo.observe(doc.body, {childList: true, subtree: true, attributes: true, characterData: true});
         } catch (e) {}
 
+        var SHOW_AFTER = 400;       // 이 안에 끝나면 오버레이를 아예 안 띄운다
+        var MIN_VISIBLE = 300;      // 한 번 뜨면 깜빡이지 않게 최소 유지
+        var shown = false, shownAt = 0;
+
         var iv = setInterval(function() {
-            updateOverlayProgress();
             var now = Date.now();
             var quietFor = now - lastMutation;
             var elapsed = now - startedAt;
-            // 최소 300ms는 무조건 떠 있어(너무 짧으면 깜빡임), 600ms 동안 DOM 변화가
-            // 없으면 렌더 완료로 간주. 감지가 완전히 실패해도 화면이 영영 안 가려져
-            // 있진 않도록 60초를 최후의 세이프티넷으로 둔다(콜드 캐시로 탭 하나가
-            // 60~100초 걸리던 경우가 있어 너무 짧게 잡으면 로딩 중에 먼저 걷혀버림).
-            if ((elapsed > 300 && quietFor > 600) || elapsed > 60000) {
+
+            // 400ms가 지났는데 "아직 그리는 중"이면 그제서야 띄운다. 아직 그리는
+            // 중인지는 상태 위젯 또는 최근 DOM 변화로 판단한다 — 둘 중 하나만
+            // 맞아도 되게 해서 한쪽 감지가 실패해도 덮인다.
+            if (!shown && elapsed > SHOW_AFTER && (isRunning() || quietFor < 250)) {
+                showOverlay();
+                shown = true;
+                shownAt = now;
+            }
+            if (shown) updateOverlayProgress();
+
+            // 600ms 동안 DOM 변화가 없으면 렌더 완료로 본다. 감지가 완전히 실패해도
+            // 화면이 영영 안 가려져 있진 않도록 60초를 최후의 세이프티넷으로 둔다
+            // (콜드 캐시로 탭 하나가 60~100초 걸리던 경우가 있어 짧게 잡으면 로딩
+            // 중에 먼저 걷혀버린다).
+            if (quietFor > 600 || elapsed > 60000) {
+                if (shown && now - shownAt < MIN_VISIBLE) return;
                 clearInterval(iv);
                 mo.disconnect();
                 hideOverlay();
@@ -451,7 +472,9 @@ components.html("""
                 if (a.dataset.tabOverlayBound) return;
                 a.dataset.tabOverlayBound = '1';
                 a.addEventListener('click', function() {
-                    showOverlay();
+                    // 바로 띄우지 않는다 — 캐시가 차 있어 금방 끝나는 전환에서는
+                    // 오버레이가 번쩍였다. 아래 waitForRunFinish가 "아직 그리는
+                    // 중"일 때만 늦게 띄운다(ui_common.run_with_progress의 show_after와 같은 생각).
                     waitForRunFinish();
                 });
             });
