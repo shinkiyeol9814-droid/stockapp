@@ -18,7 +18,7 @@ LOCAL_BATCH_CONFIG_FILE = BASE_DIR / "data" / "earnings" / "batch_config.json"
 
 @st.cache_resource
 def get_github_repo():
-    # 다른 모듈(valuation/new_high/ui_watchlist)과 동일하게 GH_PAT을 우선 인식하고,
+    # 다른 모듈(valuation/new_high)과 동일하게 GH_PAT을 우선 인식하고,
     # 레포명 시크릿이 없으면 하드코딩 기본값으로 폴백 — 시크릿 하나만 설정돼도
     # 실적 탭 저장이 조용히 실패하던 문제 방지.
     token = st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", "")

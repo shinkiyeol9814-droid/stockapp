@@ -36,7 +36,7 @@ def save_to_github(file_path, content, message):
     
     # 💡 timeout이 없으면 GitHub이 응답을 안 줄 때 Streamlit 세션이 그대로
     # 매달린다 — 신고가 탭 "저장"이 영원히 안 끝나는 형태로 나타난다.
-    # 다른 모듈(valuation/ui_watchlist)은 이미 timeout을 걸고 있어 여기만 누락.
+    # 다른 모듈(valuation 등)은 이미 timeout을 걸고 있어 여기만 누락.
     try:
         res = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=7)
         sha = res.json().get('sha') if res.status_code == 200 else None

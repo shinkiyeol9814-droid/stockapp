@@ -17,5 +17,4 @@ aiohttp
 PyMuPDF
 streamlit-autorefresh
 streamlit-option-menu
-streamlit-aggrid==0.3.4.post3
 PyGithub==2.1.1

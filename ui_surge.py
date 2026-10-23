@@ -1,0 +1,309 @@
+"""
+ui_surge.py — 거래대금 급증 스크리너 탭.
+
+같은 시각 최근 20거래일 누적거래대금 중앙값보다 몇 배로 불어난 종목을 하루 네 번
+(10:05 · 12:05 · 14:05 · 종가) 잡아낸 결과를 보여준다.
+
+━━ 데이터는 별도 리포가 만든다 ━━
+수집·포착은 shinkiyeol9814-droid/kosdaq-surge(GitHub Actions + cron-job.org)가 하고,
+결과 JSON을 GitHub Pages로 공개한다. 이 탭은 그 JSON을 읽어 앱 스타일로 그리기만 한다
+— 시장 전체 스냅샷(4천 종목 × 하루 4번)을 이 리포에 커밋하면 배치 커밋이 앱을 재시작시키고
+리포가 불어난다(AGENTS.md 리포지토리 비대화 방지). 기준 숫자는 index.json의 criteria를 따른다.
+
+일자 파일 구조(kosdaq-surge/surge/screen.py):
+  slots.{slot}.hits.{코드} = [배수, 시장 내 대금순위, 등급, 현재가, 등락률, 거래대금(억), 회전율%]
+  stocks.{코드} = {n, m(K/Q), p, c, v(억), cap(억), turn, news[제목,언론사,URL,시각], k[[시,고,저,종]...]}
+"""
+import html
+
+import requests
+import streamlit as st
+
+from ui_common import page_header
+from ui_mobile import disable_keyboard
+
+# Pages가 1순위(CDN), 실패하면 raw. 둘 다 공개 URL이라 토큰이 필요 없다.
+_SOURCES = [
+    "https://shinkiyeol9814-droid.github.io/kosdaq-surge/data",
+    "https://raw.githubusercontent.com/shinkiyeol9814-droid/kosdaq-surge/main/docs/data",
+]
+_SITE = "https://shinkiyeol9814-droid.github.io/kosdaq-surge/"
+SLOTS = ["1005", "1205", "1405", "close"]
+LABEL = {"all": "종합", "1005": "10:05", "1205": "12:05", "1405": "14:05", "close": "종가"}
+_WD = "월화수목금토일"
+_PAGE = 30          # 한 번에 그리는 카드 수 — 카드마다 일봉 SVG가 있어 100장을 한꺼번에 그리면 무겁다
+
+_UP, _DOWN, _FLAT = "#ef5350", "#1565C0", "#888"
+_STAR = "#f5a623"
+
+
+def _fetch(path: str):
+    last = None
+    for base in _SOURCES:
+        try:
+            r = requests.get(f"{base}/{path}", timeout=8)
+            if r.status_code == 200:
+                return r.json()
+            last = RuntimeError(f"HTTP {r.status_code}")
+        except Exception as e:
+            last = e
+    raise last
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_index():
+    """일자 목록·시각별 건수·기준값. 실패는 예외로 — 빈 결과를 5분간 붙잡지 않게."""
+    return _fetch("index.json")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_day(day: str, updated: str):
+    """일자 파일. updated를 키에 넣어, 새 수집이 올라오면(색인 갱신) 자동으로 다시 받는다."""
+    return _fetch(f"days/{day}.json")
+
+
+# ── 카드 조각 ────────────────────────────────────────────────────────────────
+def _clr(v):
+    return _UP if v > 0 else _DOWN if v < 0 else _FLAT
+
+
+def _candles(k) -> str:
+    """3개월 일봉 미니 차트. 양봉 빨강·음봉 파랑. 요소 수를 줄이려고 색별로 path 하나씩."""
+    if not k or len(k) < 2:
+        return ""
+    W, H = 104.0, 34.0
+    n = len(k)
+    step = W / n
+    bw = max(1.0, step * 0.6)
+    lo = min(r[2] for r in k if r[2] > 0)
+    hi = max(r[1] for r in k)
+
+    def y(v):
+        return H / 2 if hi == lo else 1 + (H - 2) * (1 - (v - lo) / (hi - lo))
+
+    wick = {True: [], False: []}
+    body = {True: [], False: []}
+    for i, (o, h, l, c) in enumerate(k):
+        up = c >= o
+        x = i * step + step / 2
+        wick[up].append(f"M{x:.1f} {y(h):.1f}V{y(l):.1f}")
+        top, bot = y(max(o, c)), y(min(o, c))
+        body[up].append(f"M{x - bw / 2:.1f} {top:.1f}h{bw:.1f}v{max(0.8, bot - top):.1f}h{-bw:.1f}z")
+    paths = "".join(
+        f'<path d="{"".join(wick[u])}" stroke="{col}" stroke-width="0.7" fill="none"/>'
+        f'<path d="{"".join(body[u])}" fill="{col}"/>'
+        for u, col in ((True, _UP), (False, _DOWN)) if wick[u])
+    return (f'<svg width="{W:.0f}" height="{H:.0f}" viewBox="0 0 {W:.0f} {H:.0f}" '
+            f'style="flex:none;display:block;" role="img" aria-label="최근 3개월 일봉">{paths}</svg>')
+
+
+def _dots(on) -> str:
+    """잡힌 시각 표시 — 10:05 · 12:05 · 14:05 · 종가 순서의 점 네 개."""
+    return "".join(
+        f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;'
+        + ("background:#555;" if s in on else "box-shadow:inset 0 0 0 1px #bbb;") + '"></span>'
+        for s in SLOTS)
+
+
+def _card(r) -> str:
+    """
+    한 종목 = 이름·등급·배수 / 시세 한 줄 / 뉴스 한 줄, 오른쪽에 3개월 일봉.
+    ⚠️ 마크다운은 4칸 들여쓴 줄을 코드블록으로 보므로 한 줄 문자열로 조립한다(ui_sector와 같은 이유).
+    """
+    st_ = r["st"]
+    name = html.escape(str(st_.get("n", r["code"])))
+    mkt = "코스피" if st_.get("m") == "K" else "코스닥"
+    stars = (f'<span style="color:{_STAR};font-size:12px;letter-spacing:1px;margin-left:5px;">'
+             f'{"★" * r["grade"]}</span>') if r["grade"] else ""
+    chg = r["chg"] or 0
+    line2a = (f'{r["price"]:,.0f} '
+              f'<b style="color:{_clr(chg)};">{"+" if chg > 0 else ""}{chg:.2f}%</b>'
+              f' · 대금 {r["value"]:,.1f}억')
+    line2b = f'· 회전 {r["turn"]:.1f}% · 시총 {r["cap"]:,.0f}억'
+    nw = st_.get("news")
+    if nw:
+        news = (f'<div style="font-size:11.5px;line-height:1.35;margin-top:3px;white-space:nowrap;'
+                f'overflow:hidden;text-overflow:ellipsis;">'
+                f'<a href="{html.escape(nw[2])}" target="_blank" rel="noopener noreferrer" '
+                f'style="color:#7a8794;text-decoration:none;">📰 {html.escape(nw[0])}</a></div>')
+    else:
+        news = ""
+    link = f"https://finance.naver.com/item/main.naver?code={r['code']}"
+    return (
+        f'<div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:10px;align-items:center;">'
+        f'<div style="flex:1;min-width:0;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">'
+        f'<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+        f'<a href="{link}" target="_blank" rel="noopener noreferrer" '
+        f'style="font-size:13.5px;font-weight:600;color:#333;text-decoration:none;">{name}</a>{stars}'
+        # 휴대폰에서 줄이 넘치면 회색 코드·시장부터 잘리도록 맨 뒤에 둔다(별이 잘리지 않게)
+        f'<span style="font-size:11px;color:#999;margin-left:5px;">{r["code"]} · {mkt}</span></span>'
+        f'<span style="font-size:13.5px;font-weight:700;color:#333;white-space:nowrap;">{r["mult"]:,.1f}배</span>'
+        f'</div>'
+        # 시세 줄은 좁은 화면에서 두 줄로 접히게 둔다 — 한 줄로 자르면 회전율·시총이 잘려 보이지 않았다
+        f'<div style="font-size:12px;color:#666;margin-top:2px;line-height:1.45;">'
+        f'<span style="white-space:nowrap;">{_dots(r["on"])} {line2a}</span> '
+        f'<span style="white-space:nowrap;">{line2b}</span></div>'
+        f'{news}</div>'
+        f'{_candles(st_.get("k"))}</div>'
+    )
+
+
+def _rules_html(c: dict) -> str:
+    eok = lambda w: f"{w / 1e8:,.0f}"
+    scale = dict((s, r) for r, s in c["scale"])
+    turn = dict((s, p) for p, s in c["turnover"])
+    rows = "".join(
+        f'<tr><td style="color:{_STAR};padding:3px 10px 3px 0;">{"★" * s}</td>'
+        f'<td style="padding:3px 10px 3px 0;">시장 내 대금 {scale.get(s, "-")}위 이내</td>'
+        f'<td style="padding:3px 0;">회전율 {turn.get(s, "-")}% 이상</td></tr>'
+        for s in (3, 2, 1))
+    return (
+        f'<div style="font-size:12.5px;color:#555;line-height:1.55;">'
+        f'시가총액 <b>{eok(c["min_mcap"])}억</b> 이상 · 최근 <b>{c["base_days"]}거래일</b> 같은 시각 '
+        f'누적거래대금 <b>중앙값의 {c["multiple"]:g}배</b> 이상 · 누적거래대금 장중 '
+        f'<b>{eok(c["min_value"]["1005"])}억</b> / 종가 <b>{eok(c["min_value"]["close"])}억</b> 이상'
+        f'<div style="margin:6px 0 2px;">등급은 두 기준 중 높은 쪽 — 규모(같은 시장 안 거래대금 순위)는 큰 종목에, '
+        f'손바뀜(거래대금 ÷ 시총)은 작은 종목에 유리하다. 별이 없으면 배수로는 급증이지만 시장 전체로는 크지 않다는 뜻.</div>'
+        f'<table style="border-collapse:collapse;font-size:12.5px;">{rows}</table>'
+        f'<div style="margin-top:4px;">점 네 개 = 10:05 · 12:05 · 14:05 · 종가 중 잡힌 시각. '
+        f'여러 시각에 걸쳐 잡힐수록 하루 내내 이어진 급증이다.</div></div>'
+    )
+
+
+# ── 표 데이터 ────────────────────────────────────────────────────────────────
+def _rows(doc: dict, slot: str) -> list:
+    stocks = doc.get("stocks", {})
+    slots = doc.get("slots", {})
+    hit_on = lambda code: [s for s in SLOTS if code in slots.get(s, {}).get("hits", {})]
+    out = []
+    if slot == "all":
+        for code, st_ in stocks.items():
+            on = hit_on(code)
+            hs = [slots[s]["hits"][code] for s in on]
+            if not hs:
+                continue
+            out.append({"code": code, "st": st_, "on": on, "cnt": len(on),
+                        "grade": max(h[2] for h in hs), "mult": max(h[0] for h in hs),
+                        "price": st_.get("p", 0), "chg": st_.get("c", 0), "value": st_.get("v", 0),
+                        "turn": st_.get("turn", 0), "cap": st_.get("cap", 0)})
+    else:
+        for code, h in slots.get(slot, {}).get("hits", {}).items():
+            st_ = stocks.get(code, {})
+            on = hit_on(code)
+            out.append({"code": code, "st": st_, "on": on, "cnt": len(on), "grade": h[2], "mult": h[0],
+                        "price": h[3], "chg": h[4], "value": h[5], "turn": h[6], "cap": st_.get("cap", 0)})
+    return out
+
+
+_SORTS = {
+    "기본": None,
+    "배수": "mult",
+    "등락률": "chg",
+    "거래대금": "value",
+    "회전율": "turn",
+}
+
+
+def render_surge():
+    if page_header("거래대금 급증 스크리너", "surge"):
+        _get_index.clear()
+        _get_day.clear()
+        st.rerun()
+
+    try:
+        idx = _get_index()
+    except Exception as e:
+        st.error(f"❌ 스크리너 데이터를 가져오지 못했습니다: {type(e).__name__}")
+        return
+    days = idx.get("days") or []
+    if not days:
+        st.info("아직 수집된 날이 없습니다.")
+        return
+
+    c = idx.get("criteria", {})
+    st.caption(f"같은 시각 최근 {c.get('base_days', 20)}거래일 누적거래대금 중앙값의 "
+               f"{c.get('multiple', 3):g}배 이상 · 하루 4번 수집 · 갱신 {idx.get('updated', '-')}")
+    if c:
+        with st.expander("포착 기준과 등급", expanded=False):
+            st.markdown(_rules_html(c), unsafe_allow_html=True)
+
+    def _day_label(d):
+        from datetime import date
+        dd = date.fromisoformat(d["d"])
+        return f"{d['d'][5:]} ({_WD[dd.weekday()]}) · {d['n'].get('all', 0)}종목"
+
+    by_day = {d["d"]: d for d in days}
+    with st.container(key="inline_surge_opts"):
+        c1, c2 = st.columns([1.15, 1], vertical_alignment="center")
+        with c1:
+            day = st.selectbox("일자", list(by_day), format_func=lambda d: _day_label(by_day[d]),
+                               key="surge_day", label_visibility="collapsed")
+        with c2:
+            mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
+                                       key="surge_mkt", label_visibility="collapsed") or "전체"
+    disable_keyboard("surge_day")
+
+    try:
+        doc = _get_day(day, idx.get("updated", ""))
+    except Exception as e:
+        st.error(f"❌ {day} 데이터를 가져오지 못했습니다: {type(e).__name__}")
+        return
+
+    counts = {s: len(doc.get("slots", {}).get(s, {}).get("hits", {})) for s in SLOTS}
+    counts["all"] = len(doc.get("stocks", {}))
+    avail = ["all"] + [s for s in SLOTS if s in doc.get("slots", {})]
+    slot = st.segmented_control("시각", avail, default="all", key=f"surge_slot_{day}",
+                                format_func=lambda s: f"{LABEL[s]} {counts[s]}",
+                                label_visibility="collapsed") or "all"
+
+    rows = _rows(doc, slot)
+    if mkt != "전체":
+        rows = [r for r in rows if r["st"].get("m") == ("K" if mkt == "코스피" else "Q")]
+
+    with st.container(key="inline_surge_sort"):
+        sort = st.segmented_control("정렬", list(_SORTS), default="기본", key="surge_sort",
+                                    label_visibility="collapsed") or "기본"
+    key = _SORTS[sort]
+    if key:
+        rows.sort(key=lambda r: -(r[key] or 0))
+    elif slot == "all":
+        rows.sort(key=lambda r: (-r["cnt"], -r["mult"]))     # 여러 시각에 걸칠수록 위로
+    else:
+        rows.sort(key=lambda r: -r["mult"])
+
+    all4 = sum(1 for r in rows if r["cnt"] == len(SLOTS))
+    taken = doc.get("slots", {}).get(slot, {}).get("t", "") if slot != "all" else ""
+    note = doc.get("note")
+    badge = (f"<span style='display:inline-block;white-space:nowrap;background:#6b7a8c;color:#fff;font-size:10.5px;font-weight:700;"
+             f"padding:1px 6px;border-radius:3px;margin-left:6px;'>{html.escape(note)}</span>") if note else ""
+    st.markdown(
+        f"<div style='font-size:12.5px;color:#666;margin:2px 0 6px;'>"
+        f"{LABEL[slot]} 포착 <b>{len(rows)}</b>종목"
+        + (f" · 네 시각 모두 <b>{all4}</b>" if slot == "all" else "")
+        + (f" · 수집 {html.escape(taken[11:16])}" if taken else "")
+        + f"{badge}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not rows:
+        st.info("이 조건에 잡힌 종목이 없습니다.")
+        return
+
+    # 같은 화면(일자·시각·시장·정렬)을 보는 동안만 '더 보기'가 누적된다
+    sig = (day, slot, mkt, sort)
+    if st.session_state.get("_surge_sig") != sig:
+        st.session_state["_surge_sig"] = sig
+        st.session_state["_surge_limit"] = _PAGE
+    limit = st.session_state["_surge_limit"]
+
+    st.markdown(
+        "<div style='border:1px solid #eee;border-radius:8px;overflow:hidden;'>"
+        + "".join(_card(r) for r in rows[:limit]) + "</div>",
+        unsafe_allow_html=True,
+    )
+    if len(rows) > limit:
+        if st.button(f"더 보기 ({len(rows) - limit}종목 남음)", key="surge_more", use_container_width=True):
+            st.session_state["_surge_limit"] = limit + _PAGE
+            st.rerun()
+    st.caption(f"시세는 네이버 금융 공개 데이터 · 수집 리포 [kosdaq-surge]({_SITE})")

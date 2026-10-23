@@ -38,9 +38,6 @@ Streamlit Cloud에서 호스팅. 실시간 주가·재무·수출 데이터 취�
 # Python HTML (st.markdown)
 clr = "#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888"
 
-# AG Grid cellStyle (JsCode)
-"if (v > 0) return {color:'#ef5350'}; if (v < 0) return {color:'#1565C0'};"
-
 # Plotly 트레이스
 color = "#ef5350" if is_up else "#1565C0"
 
@@ -59,7 +56,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `app.py` | 메인 진입점, 탭 라우팅, 전역 CSS, autorefresh |
 | `ui_common.py` | **탭 공용 UI: `page_header`(제목+작은 새로고침) · `section_title` · `run_with_progress`(병렬 조회+0~100% 진행률)** |
 | `valuation.py` | 가치평가 탭 UI + 공유 데이터 함수(`get_hybrid_financials` 등) |
-| `ui_watchlist.py` | 워치리스트 탭 (AG Grid 섹터별 테이블) |
+| `ui_surge.py` | **거래대금 급증 스크리너 탭 — 별도 리포 `kosdaq-surge`가 만든 JSON을 읽어 그리기만 함** |
 | `ui_macro.py` | 매크로 지표 탭 (환율/금리/원자재/메모리/미국부채) |
 | `ui_earnings.py` | 실적 탭 |
 | `ui_report.py` | 레포트 탭 |
@@ -82,14 +79,8 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 ```
 streamlit, plotly, pandas, yfinance
 FinanceDataReader (fdr)          # 한국 주식/FX 데이터
-streamlit-aggrid==0.3.4.post3    # 워치리스트 테이블
 streamlit-option-menu            # 상단 탭 메뉴
 ```
-
-### pandas 2.x 호환 주의사항 (aggrid)
-- `valueGetter` (JS) 대신 **Python 사전 계산** 사용
-- `type="numericColumn"` 컬럼은 반드시 `float64` dtype (None → `float("nan")`)
-- aggrid `reload_data=True` 는 편집값을 초기화하므로 변경 시에만 사용
 
 ---
 
@@ -214,39 +205,27 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
 - 건너뛰어도 잃는 게 없는 구조인지 확인할 것: 실적은 SYNC_FILE, 레포트는 직전 파일명에서
   이어 읽는다. 레포트 되짚기 하한은 연휴를 고려해 "최소 직전 개장일 07:00"(`_backfill_floor`).
 
-### 워치리스트 저장 (GitHub)
-- 파일: `data/watchlist/watchlist.json` in `GITHUB_REPO`
-- 인증: `st.secrets["GH_PAT"]` 또는 `st.secrets["GITHUB_TOKEN"]`
-- JSON 스키마: `{종목코드: {method, multiple, sector}}`
+### 워치리스트 파일 (탭은 2026-10-23 제거)
+워치리스트 탭(AG Grid)은 없앴고 그 자리를 거래대금 급증 스크리너가 대신한다.
+`data/watchlist/watchlist.json`(`{종목코드: {method, multiple, sector}}`)은 남겨 두었다 —
+`batch_dart.py --watchlist`가 평일 19시에 이 목록의 DART 데이터를 미리 갱신한다. 이제 앱에서
+편집할 화면이 없으니 목록을 바꾸려면 파일을 직접 고친다.
+
+### 거래대금 급증 스크리너 (`ui_surge`)
+수집·포착은 별도 공개 리포 `shinkiyeol9814-droid/kosdaq-surge`(로컬 `D:\Claude\kosdaq-surge`,
+자체 AGENTS.md 있음)가 GitHub Actions + cron-job.org로 하루 4번 한다. 이 앱은 그 결과
+(`docs/data/index.json`, `docs/data/days/{일자}.json`)를 GitHub Pages(실패 시 raw)에서 읽어
+앱 스타일 카드로 그리기만 한다. **스냅샷 수집을 이 리포로 옮기지 말 것** — 4천 종목 × 하루 4번
+커밋이 앱 재시작과 리포 비대화를 부른다. 기준 숫자도 그쪽 `index.json.criteria`를 그대로 쓴다.
+카드는 한 번에 30장(일봉 SVG가 있어 100장을 한 번에 그리면 무겁다) + '더 보기'.
 
 ### 캐시 전략
 
 | 함수 | TTL | 이유 |
 |------|-----|------|
-| `get_live_price` | 60s | 실시간 주가 |
-| `load_watchlist` | 60s | GitHub API 속도 제한 |
-| `get_watch_financials` | 3600s | 재무데이터 변동 적음 |
+| `ui_surge._get_index` | 300s | 급증 스크리너 색인 (일자 파일은 색인 `updated`를 키로 3600s) |
 | `_get_price_history` (macro) | 300s | 시장 지표 |
 | `_get_export_trend` (trade) | 3600s | 관세청 수출입 데이터 |
-
-### 워치리스트 Session State 네이밍
-
-| 키 | 내용 |
-|----|------|
-| `wl_m_{code}` | 평가방식 (method) |
-| `wl_x_{code}` | 목표배수 (multiple) |
-| `wl_s_{code}` | 섹터 (sector) |
-| `_wlc_{code}` | 병렬 로딩 완료 마킹 |
-| `_wl_pending` | 다음 런 적용할 변경값 `{code: (m, x, s)}` |
-| `_wl_fresh` | GitHub 캐시 지연 우회용 즉시 반영 watchlist dict |
-
-### 2-Rerun 패턴 (편집값 즉시 반영)
-
-AG Grid 편집 → 업사이드 즉시 재계산을 위한 패턴:
-
-1. **편집 감지** → `_wl_pending` 설정 + `st.rerun()`
-2. **다음 런 시작** → `pending = st.session_state.pop("_wl_pending", {})` →
-   세션 상태 업데이트 → df 재계산 → `force_reload=True` 로 그리드 갱신
 
 ---
 
@@ -388,7 +367,7 @@ Streamlit이 내려주는 index.html `<head>`에는 color-scheme 선언이 없�
 
 | 키 | 용도 |
 |----|------|
-| `GH_PAT` / `GITHUB_TOKEN` | GitHub 워치리스트 저장 · DART 배치 요청(repository_dispatch) · `data/dart` 조회 |
+| `GH_PAT` / `GITHUB_TOKEN` | DART 배치 요청(repository_dispatch) · `data/dart` 조회 |
 | `DATA_GO_KR_KEY` | 관세청 수출입 통계 API (수출입 탭) |
 
 > 텔레그램 시크릿은 앱에서 더 이상 쓰지 않는다 — 뷰어 탭을 없앴고,

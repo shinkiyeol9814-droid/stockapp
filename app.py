@@ -130,7 +130,7 @@ from new_high import render_new_high_menu
 from valuation import render_valuation_menu, get_ticker_listing
 from ui_report import render_report_summary
 from ui_earnings import render_earnings_menu
-from ui_watchlist import render_watchlist
+from ui_surge import render_surge
 from ui_macro import render_macro
 from ui_trade import render_trade
 from ui_sector import render_sector_menu
@@ -159,10 +159,10 @@ if query_stock_code:
 menu = option_menu(
     menu_title=None,
     # 💡 2줄로 감싸지는 메뉴라(4개씩) 순서가 곧 화면 배치: 리스트의 앞 4개가
-    # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/워치리스트/레포트/수출입,
+    # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/거래급증/레포트/수출입,
     # 아랫줄 = 섹터별/신고가/실적/매크로.
-    options=["가치평가", "워치리스트", "레포트", "수출입", "섹터별", "신고가", "실적", "매크로"],
-    icons=["graph-up-arrow", "list-check", "newspaper", "box-seam", "pie-chart", "rocket", "bar-chart-line", "globe"],
+    options=["가치평가", "거래급증", "레포트", "수출입", "섹터별", "신고가", "실적", "매크로"],
+    icons=["graph-up-arrow", "lightning-charge", "newspaper", "box-seam", "pie-chart", "rocket", "bar-chart-line", "globe"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -395,8 +395,8 @@ components.html("""
             var elapsed = now - startedAt;
             // 최소 300ms는 무조건 떠 있어(너무 짧으면 깜빡임), 600ms 동안 DOM 변화가
             // 없으면 렌더 완료로 간주. 감지가 완전히 실패해도 화면이 영영 안 가려져
-            // 있진 않도록 60초를 최후의 세이프티넷으로 둔다(콜드 캐시로 워치리스트가
-            // 60~100초 걸리는 경우가 있어 너무 짧게 잡으면 로딩 중에 먼저 걷혀버림).
+            // 있진 않도록 60초를 최후의 세이프티넷으로 둔다(콜드 캐시로 탭 하나가
+            // 60~100초 걸리던 경우가 있어 너무 짧게 잡으면 로딩 중에 먼저 걷혀버림).
             if ((elapsed > 300 && quietFor > 600) || elapsed > 60000) {
                 clearInterval(iv);
                 mo.disconnect();
@@ -437,8 +437,8 @@ components.html("""
 if menu == "가치평가":
     render_valuation_menu()
 
-elif menu == "워치리스트":
-    render_watchlist()
+elif menu == "거래급증":
+    render_surge()
 
 elif menu == "레포트":
     render_report_summary()
