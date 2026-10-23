@@ -428,7 +428,14 @@ components.html("""
             mo.observe(doc.body, {childList: true, subtree: true, attributes: true, characterData: true});
         } catch (e) {}
 
-        var SHOW_AFTER = 400;       // 이 안에 끝나면 오버레이를 아예 안 띄운다
+        // 💡 기준을 "DOM이 아직 바뀌는 중"에서 "파이썬이 아직 도는 중"으로 바꿨다.
+        // 라이브에서 재보니 렌더가 끝나도 DOM은 1~2초까지 계속 바뀐다(plotly·
+        // 컴포넌트 iframe 때문). 그걸 기준 삼으면 어느 탭이든 오버레이가 떴다.
+        // 상태 위젯(stStatusWidget)은 실제 실행 시간을 따라간다 — 실측:
+        //   가치평가 0회(한 번도 안 뜸) · 레포트 377~622ms · 매크로 176~3557ms
+        // 그래서 0.7초를 넘겨 '아직 도는 중'인 탭만 걸린다(= 매크로류만).
+        var SHOW_AFTER = 700;       // 파이썬 실행이 이보다 길어질 때만 띄운다
+        var SHOW_FALLBACK = 1500;   // 상태 위젯 감지가 깨졌을 때를 위한 보조 조건
         var MIN_VISIBLE = 300;      // 한 번 뜨면 깜빡이지 않게 최소 유지
         var shown = false, shownAt = 0;
 
@@ -437,10 +444,11 @@ components.html("""
             var quietFor = now - lastMutation;
             var elapsed = now - startedAt;
 
-            // 400ms가 지났는데 "아직 그리는 중"이면 그제서야 띄운다. 아직 그리는
-            // 중인지는 상태 위젯 또는 최근 DOM 변화로 판단한다 — 둘 중 하나만
-            // 맞아도 되게 해서 한쪽 감지가 실패해도 덮인다.
-            if (!shown && elapsed > SHOW_AFTER && (isRunning() || quietFor < 250)) {
+            // 보조 조건은 1.5초로 넉넉히 둔다 — 빠른 탭도 DOM은 1초 넘게
+            // 바뀌므로, 이걸 짧게 잡으면 다시 전부 뜨게 된다.
+            if (!shown &&
+                ((elapsed > SHOW_AFTER && isRunning()) ||
+                 (elapsed > SHOW_FALLBACK && quietFor < 250))) {
                 showOverlay();
                 shown = true;
                 shownAt = now;
