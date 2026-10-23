@@ -206,7 +206,11 @@ _TABLE_COLS = {
     "포착":        dict(kind="text",   label="포착 시각", width="small",
                         help="왼쪽부터 10:05 · 12:05 · 14:05 · 종가. ●는 그 시각에 잡힌 것"),
     "등급":        dict(kind="text",   label="등급", width="small"),
-    "종목":        dict(kind="text",   label="종목", width="medium"),
+    # 종목명 자체에 네이버 금융 링크를 건다. st.dataframe은 셀에 HTML을 못 넣고
+    # LinkColumn의 display_text는 "URL에 적용하는 정규식" 하나뿐이라, 이름을
+    # URL 프래그먼트(#종목명)로 실어 보내고 거기서 되뽑는다. 프래그먼트는 서버로
+    # 전송되지 않으므로 네이버 요청에는 아무 영향이 없다.
+    "종목":        dict(kind="namelink", label="종목", width="medium"),
     "코드":        dict(kind="text",   label="코드", width="small"),
     "시장":        dict(kind="text",   label="시장", width="small"),
     "최근 뉴스":   dict(kind="text",   label="최근 뉴스", width="large"),
@@ -217,8 +221,10 @@ _TABLE_COLS = {
     "시총(억)":    dict(kind="num",    label="시총(억)", fmt="%,d", width="small"),
     "거래대금(억)": dict(kind="num",   label="거래대금(억)", fmt="%,.1f", width="small"),
     "회전율":      dict(kind="num",    label="회전율", fmt="%.1f%%", width="small"),
-    "링크":        dict(kind="link",   label="차트", width="small"),
 }
+
+# 프래그먼트에서 종목명만 떼어내는 패턴 — LinkColumn.display_text에 그대로 넘긴다.
+_NAME_FROM_URL = r"#(.+)$"
 
 
 def _table_df(rows) -> pd.DataFrame:
@@ -231,7 +237,9 @@ def _table_df(rows) -> pd.DataFrame:
             # 점 네 개로 '어느 시각에 잡혔는지'를 그대로 옮긴다(카드의 _dots와 같은 순서).
             "포착": "".join("●" if sl in r["on"] else "○" for sl in SLOTS),
             "등급": "★" * (r["grade"] or 0),
-            "종목": str(st_.get("n", r["code"])),
+            # 이름이 비면 정규식이 안 걸려 URL이 그대로 보이므로 코드로 메운다.
+            "종목": (f"https://finance.naver.com/item/main.naver?code={r['code']}"
+                     f"#{str(st_.get('n') or r['code'])}"),
             "코드": r["code"],
             "시장": "코스피" if st_.get("m") == "K" else "코스닥",
             "최근 뉴스": str(nw[0]) if nw else "",
@@ -242,7 +250,6 @@ def _table_df(rows) -> pd.DataFrame:
             "시총(억)": float(r["cap"] or 0),
             "거래대금(억)": float(r["value"] or 0),
             "회전율": float(r["turn"] or 0),
-            "링크": f"https://finance.naver.com/item/main.naver?code={r['code']}",
         })
     return pd.DataFrame(out, columns=list(_TABLE_COLS))
 
@@ -256,8 +263,10 @@ def _render_table(rows) -> None:
             cfg[col] = st.column_config.NumberColumn(label, format=spec["fmt"], width=width)
         elif kind == "chart":
             cfg[col] = st.column_config.LineChartColumn(label, width=width)
-        elif kind == "link":
-            cfg[col] = st.column_config.LinkColumn(label, display_text="네이버", width=width)
+        elif kind == "namelink":
+            cfg[col] = st.column_config.LinkColumn(label, display_text=_NAME_FROM_URL,
+                                                   width=width,
+                                                   help="누르면 네이버 금융 종목 페이지가 열립니다")
         else:
             cfg[col] = st.column_config.TextColumn(label, width=width, help=spec.get("help"))
     # 등락률만 한국 관례 색을 입힌다(상승 빨강·하락 파랑). 숫자 열에 Styler를
