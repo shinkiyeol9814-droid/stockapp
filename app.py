@@ -113,6 +113,18 @@ st.markdown("""
             display: none !important;
         }
 
+        /* 6-1. 탭 전환 오버레이가 떠 있는 동안에는 페이지 안의 로딩 표시를 감춘다.
+           오버레이(94% 불투명)가 화면을 덮어도 st.spinner "데이터 분석 중..."이
+           비쳐 보여서 진행 표시가 두 개로 보였다. 오버레이가 그 둘(스피너 문구·
+           진행률)을 읽어 직접 보여주므로 페이지 쪽은 가린다.
+           display:none이 아니라 visibility:hidden인 이유 — 자리(레이아웃)를 유지해
+           오버레이가 걷힐 때 화면이 튀지 않게 하려는 것이다. 대신 문자열은
+           innerText가 아니라 textContent로 읽어야 한다(숨긴 요소는 innerText가 빈다). */
+        body.__tab_loading__ [data-testid="stSpinner"],
+        body.__tab_loading__ [data-testid="stProgress"] {
+            visibility: hidden !important;
+        }
+
         /* 7. 전역 autorefresh 타이머는 아무것도 그리지 않으면서 26px + gap 16px를
            먹어 메뉴 위에 빈 줄을 만들었다. display:none은 숨긴 iframe의 타이머가
            throttle될 수 있어 쓰지 않고, 흐름에서만 빼낸다(렌더링은 계속된다). */
@@ -325,6 +337,8 @@ components.html("""
             '<div style="border:4px solid #f0f0f0;border-top:4px solid #FF4B4B;'
             + 'border-radius:50%;width:40px;height:40px;'
             + 'animation:__tab_spin__ 0.8s linear infinite;"></div>'
+            + '<div id="__tab_note__" style="display:none;margin-top:14px;color:#555;'
+            +   'font-size:13px;font-weight:600;text-align:center;max-width:70vw;"></div>'
             + '<div id="__tab_prog__" style="display:none;width:220px;margin-top:16px;">'
             +   '<div style="height:6px;background:#f0f0f0;border-radius:3px;overflow:hidden;">'
             +     '<div id="__tab_prog_bar__" style="height:100%;width:0;background:#FF4B4B;'
@@ -341,7 +355,7 @@ components.html("""
         var doc = mainDoc();
         var p = doc.querySelector('[data-testid="stProgress"]');
         if (!p) return null;
-        var txt = p.innerText || '';
+        var txt = p.textContent || '';
         var bar = p.querySelector('[role="progressbar"]');
         var v = bar ? parseFloat(bar.getAttribute('aria-valuenow')) : NaN;
         if (isNaN(v)) { var m = txt.match(/([0-9]+)%/); v = m ? parseFloat(m[1]) : NaN; }
@@ -351,12 +365,25 @@ components.html("""
         return {pct: Math.max(0, Math.min(100, Math.round(v))), count: c ? c[1] : ''};
     }
 
+    // 페이지의 st.spinner 문구("데이터 분석 중..." 등). 없으면 ''.
+    // 숨긴 요소라 innerText는 비므로 textContent로 읽는다.
+    function readSpinnerText() {
+        var sp = mainDoc().querySelector('[data-testid="stSpinner"]');
+        return sp ? (sp.textContent || '').trim() : '';
+    }
+
     function updateOverlayProgress() {
         var doc = mainDoc();
         var box = doc.getElementById('__tab_prog__');
         if (!box) return;
+        var note = doc.getElementById('__tab_note__');
+        if (note) {
+            var t = readSpinnerText();
+            note.textContent = t;
+            note.style.display = t ? 'block' : 'none';
+        }
         var p = readProgress();
-        if (!p) return;                     // 진행률이 없는 탭은 스피너만
+        if (!p) return;                     // 진행률이 없는 탭은 스피너(+문구)만
         box.style.display = 'block';
         doc.getElementById('__tab_prog_bar__').style.width = p.pct + '%';
         doc.getElementById('__tab_prog_txt__').textContent =
@@ -365,13 +392,20 @@ components.html("""
 
     function showOverlay() {
         var ov = ensureOverlay();
-        var box = mainDoc().getElementById('__tab_prog__');
+        var doc = mainDoc();
+        var box = doc.getElementById('__tab_prog__');
         if (box) box.style.display = 'none';        // 이전 탭의 진행률이 남지 않게
+        var note = doc.getElementById('__tab_note__');
+        if (note) { note.textContent = ''; note.style.display = 'none'; }
+        // 페이지 안의 스피너·진행률을 감춘다(전역 CSS의 body.__tab_loading__ 규칙).
+        doc.body.classList.add('__tab_loading__');
         ov.style.display = 'flex';
     }
     function hideOverlay() {
-        var ov = mainDoc().getElementById('__tab_loading_overlay__');
+        var doc = mainDoc();
+        var ov = doc.getElementById('__tab_loading_overlay__');
         if (ov) ov.style.display = 'none';
+        doc.body.classList.remove('__tab_loading__');
     }
 
     function waitForRunFinish() {
