@@ -23,6 +23,7 @@ _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
 _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
+_FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 
 _USDEBT_API = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -48,6 +49,7 @@ MARKET_ITEMS = [
     # 💡 맨 끝(DDR4 옆 빈 칸)에 붙였다 — 중간에 끼우면 DDR5/DDR4 쌍이 줄바꿈으로 갈라진다.
     # 24시간 거래라 "전일"은 야후의 직전 UTC 자정 종가 기준이다.
     ("비트코인",        "BTC-USD",   "$",    ",.0f", 1),
+    ("공포·탐욕 지수",   "_FNG_",     "점",   ".0f", 1),
 ]
 
 # 카드 밑에 최신 뉴스 헤드라인 1건을 붙일 티커 → (검색어, 제목 필수 키워드).
@@ -251,6 +253,77 @@ def _get_full_history(ticker: str) -> pd.DataFrame | None:
         print(f"[ui_macro] {ticker} 전체 이력 조회 실패: {type(e).__name__}: {e}")
         # 마일스톤 배지는 없어도 되지만, 스냅샷이 있으면 그거라도 쓴다.
         return _market_cache_history(ticker, "max")
+
+
+_FNG_API = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+# CNN은 평범한 요청을 418로 막는다 — Referer/Origin까지 있어야 200이 온다.
+_FNG_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://edition.cnn.com/markets/fear-and-greed",
+    "Origin": "https://edition.cnn.com",
+}
+
+# CNN이 쓰는 구간. 탐욕(주가 상승 국면)을 빨강, 공포를 파랑으로 둬서
+# 이 앱의 색 규칙(상승 빨강·하락 파랑)과 방향을 맞춘다.
+_FNG_BANDS = [
+    (25, "극단적 공포", "#1565C0"),
+    (45, "공포",        "#4A8FD6"),
+    (55, "중립",        "#888888"),
+    (76, "탐욕",        "#F08C8A"),
+    (101, "극단적 탐욕", "#ef5350"),
+]
+
+
+def _fng_rating(v):
+    """점수 -> (등급 문구, 색)."""
+    for upper, label, color in _FNG_BANDS:
+        if v < upper:
+            return label, color
+    return _FNG_BANDS[-1][1], _FNG_BANDS[-1][2]
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _get_fng_history(period: str = "1y") -> pd.DataFrame | None:
+    """
+    CNN 공포·탐욕 지수(0~100). 배치가 쌓아둔 캐시가 1순위.
+
+    연방부채와 같은 모양이다 — 한 번 받을 때 1년치 전체가 오므로 '오늘 값
+    덧붙이기'가 필요 없고, 캐시가 아직 없는 배포에서도 API 폴백으로 바로 뜬다.
+    """
+    raw = None
+    try:
+        with open(_FNG_CACHE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        raw = None
+
+    if not raw:
+        try:
+            r = requests.get(_FNG_API, headers=_FNG_HEADERS, timeout=15)
+            data = (r.json().get("fear_and_greed_historical") or {}).get("data") or []
+            # 타임스탬프 규칙은 다른 캐시와 같다 — 그날의 UTC 자정(AGENTS.md).
+            raw = []
+            for x in data:
+                d = datetime.fromtimestamp(float(x["x"]) / 1000, timezone.utc).date()
+                ms = int(datetime(d.year, d.month, d.day,
+                                  tzinfo=timezone.utc).timestamp() * 1000)
+                raw.append([ms, round(float(x["y"]), 2)])
+        except Exception as e:
+            print(f"[ui_macro] 공포탐욕지수 조회 실패: {type(e).__name__}: {e}")
+            return None
+
+    if not raw:
+        return None
+    df = pd.DataFrame(raw, columns=["ts", "price"])
+    df["date"] = pd.to_datetime(df["ts"], unit="ms")
+    df = df.set_index("date").drop(columns=["ts"]).sort_index()
+    cutoff_days = _PERIOD_DAYS.get(period, 365)
+    if cutoff_days < 100000:
+        df = df[df.index >= pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)]
+    return df if not df.empty else None
 
 
 def _milestone_note(full: pd.DataFrame | None, last: float):
@@ -1137,6 +1210,8 @@ def render_macro():
             return nm, _get_ddr4_price_history(period)
         elif tk == "_USDEBT_":
             return nm, _get_us_debt_history(period)
+        elif tk == "_FNG_":
+            return nm, _get_fng_history(period)
         else:
             return nm, _get_price_history(tk, period)
 
@@ -1151,6 +1226,8 @@ def render_macro():
             return nm, _get_ddr4_price_history("max")
         elif tk == "_USDEBT_":
             return nm, _get_us_debt_history("max")
+        elif tk == "_FNG_":
+            return nm, _get_fng_history("max")
         return nm, _get_full_history(tk)
 
     def _fetch_last_prev(item):
@@ -1277,7 +1354,10 @@ def render_macro():
                         )
                 # 💡 특이사항 배지를 차트 안(paper 우상단)에 뒀더니, 최근이 고점이면
                 # 선이 바로 그 자리로 올라와 겹쳤다 — 카드 헤더로 빼서 지표명 옆에 붙인다.
-                note = _milestone_note(full_map.get(name), last)
+                # 공포·탐욕 지수는 "몇 개월 만의 최저"보다 지금이 어느 구간인지가
+                # 먼저 읽혀야 해서, 마일스톤 대신 등급을 배지로 쓴다.
+                note = (_fng_rating(last) if ticker == "_FNG_"
+                        else _milestone_note(full_map.get(name), last))
                 badge_html = ""
                 if note:
                     _txt, _clr = note

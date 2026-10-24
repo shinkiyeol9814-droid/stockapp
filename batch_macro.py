@@ -21,6 +21,7 @@ _DRAM_CACHE    = os.path.join(_MACRO_DIR, "dram_cache.json")
 _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
+_FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 
 # 미국 연방부채는 스크래핑이 아니라 재무부 공식 API로 받는다 — 키가 필요 없고
 # 1993년부터 일별 전체 이력이 나온다. 그래서 리튬/DRAM처럼 "오늘 값만 긁어
@@ -188,6 +189,66 @@ def fetch_us_debt_series() -> list | None:
         return None
 
 
+# ── CNN 공포·탐욕 지수 ───────────────────────────────────────────────────────
+# CNN이 매일 계산하는 0~100 심리 지표(7개 하위지표 합성). 공개 엔드포인트지만
+# 평범한 요청은 418로 막힌다 — Referer/Origin까지 붙여야 200이 온다.
+# 한 번에 최근 1년치 일별 이력을 주므로 us_debt처럼 "받아서 합치기"로 쌓는다
+# (그냥 덮어쓰면 1년이 지난 과거가 매번 잘려 나간다).
+_FNG_API = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+_FNG_HEADERS = {
+    **_UA_HEADERS,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://edition.cnn.com/markets/fear-and-greed",
+    "Origin": "https://edition.cnn.com",
+}
+_FNG_KEEP_DAYS = 365 * 3
+
+
+def fetch_fng_series() -> list:
+    """[[epoch_ms(UTC 자정), 점수], ...]. 실패하면 빈 리스트."""
+    try:
+        r = requests.get(_FNG_API, headers=_FNG_HEADERS, timeout=20)
+        if r.status_code != 200:
+            print(f"[fng] HTTP {r.status_code}")
+            return []
+        data = (r.json().get("fear_and_greed_historical") or {}).get("data") or []
+        out = []
+        for row in data:
+            try:
+                d = datetime.fromtimestamp(float(row["x"]) / 1000, timezone.utc).date()
+                out.append([_date_to_ms(d), round(float(row["y"]), 2)])
+            except Exception:
+                continue
+        print(f"[fng] {len(out)}건 (최신 {out[-1][1] if out else '-'})")
+        return out
+    except Exception as e:
+        print(f"[fng] 실패: {type(e).__name__}: {e}")
+        return []
+
+
+def _merge_list(path: str, rows: list, keep_days: int) -> bool:
+    """[[ms, 값]] 시계열을 기존 파일과 날짜 기준으로 합쳐 저장. 바뀌었으면 True."""
+    if not rows:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cur = json.load(f)
+        if not isinstance(cur, list):
+            cur = []
+    except Exception:
+        cur = []
+
+    by_ts = {int(ts): v for ts, v in cur if isinstance(ts, (int, float))}
+    by_ts.update({int(ts): v for ts, v in rows})
+    cutoff = _date_to_ms(datetime.now(KST).date() - timedelta(days=keep_days))
+    merged = [[ts, by_ts[ts]] for ts in sorted(by_ts) if ts >= cutoff]
+    if merged == cur:
+        return False
+    _save(path, merged)
+    return True
+
+
 # ── 야후 시세(환율·금리·원자재) 스냅샷 ──────────────────────────────────────
 # 앱(ui_macro)은 야후를 직접 부르지만 Streamlit Cloud에서는 그 호출이 통째로
 # 실패해 카드가 전부 N/A로 떨어진 적이 있다(공유 IP 대역이 레이트리밋에 걸린
@@ -297,5 +358,6 @@ if __name__ == "__main__":
         updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
         updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
         updated["market"] = _merge_market(_MARKET_CACHE, fetch_market_series())
+        updated["fng"] = _merge_list(_FNG_CACHE, fetch_fng_series(), _FNG_KEEP_DAYS)
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")
