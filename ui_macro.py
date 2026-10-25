@@ -268,21 +268,26 @@ _FNG_HEADERS = {
 
 # CNN이 쓰는 구간. 탐욕(주가 상승 국면)을 빨강, 공포를 파랑으로 둬서
 # 이 앱의 색 규칙(상승 빨강·하락 파랑)과 방향을 맞춘다.
+# 경계는 CNN이 실제로 붙여 보내는 rating에서 역산했다(1년치 실측):
+#   extreme fear ~24.77 · fear 25.26~44.86 · neutral 45.23~54.97 · greed 56.20~
+# 흔히 보이는 0-20/21-40/41-60/61-80/81-100 구분은 다른 지수(암호화폐
+# Fear & Greed)의 것이라 이 데이터에는 맞지 않는다.
+# (하한, 상한, 등급, 선색, 차트 띠 색)
 _FNG_BANDS = [
-    (25, "극단적 공포", "#1565C0"),
-    (45, "공포",        "#4A8FD6"),
-    (55, "중립",        "#888888"),
-    (76, "탐욕",        "#F08C8A"),
-    (101, "극단적 탐욕", "#ef5350"),
+    (0,  25,  "극단적 공포", "#1565C0", "rgba(21,101,192,0.13)"),
+    (25, 45,  "공포",        "#4A8FD6", "rgba(74,143,214,0.11)"),
+    (45, 55,  "중립",        "#888888", "rgba(136,136,136,0.10)"),
+    (55, 76,  "탐욕",        "#F08C8A", "rgba(240,140,138,0.11)"),
+    (76, 100, "극단적 탐욕", "#ef5350", "rgba(239,83,80,0.13)"),
 ]
 
 
 def _fng_rating(v):
     """점수 -> (등급 문구, 색)."""
-    for upper, label, color in _FNG_BANDS:
-        if v < upper:
+    for lo, hi, label, color, _fill in _FNG_BANDS:
+        if v < hi:
             return label, color
-    return _FNG_BANDS[-1][1], _FNG_BANDS[-1][2]
+    return _FNG_BANDS[-1][2], _FNG_BANDS[-1][3]
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1077,7 +1082,8 @@ def _render_valuation_band() -> None:
 
 
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
-                    note: tuple | None = None, chg: float | None = None) -> go.Figure:
+                    note: tuple | None = None, chg: float | None = None,
+                    bands: list | None = None) -> go.Figure:
     """
     chg: 전일대비 등락률(%). 선 색을 이걸로 정한다.
 
@@ -1098,11 +1104,16 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
         # 보합은 배지(─)와 같은 회색. 빨강/파랑 중 하나로 찍으면 없는 방향을 만든다.
         color, fill_c = "#9e9e9e", "rgba(158,158,158,0.12)"
 
-    min_val = float(prices.min())
-    max_val = float(prices.max())
-    rng = (max_val - min_val) or abs(max_val) * 0.02 or 1.0
-    base_y = min_val - rng * 0.1
-    top_y  = max_val + rng * 0.1
+    if bands:
+        # 공포·탐욕처럼 눈금 자체에 의미가 있는 지표는 축을 0~100으로 고정한다.
+        # 자동 범위로 두면 띠의 두께가 그날 값에 따라 달라져 구간을 못 읽는다.
+        base_y, top_y = bands[0][0], bands[-1][1]
+    else:
+        min_val = float(prices.min())
+        max_val = float(prices.max())
+        rng = (max_val - min_val) or abs(max_val) * 0.02 or 1.0
+        base_y = min_val - rng * 0.1
+        top_y  = max_val + rng * 0.1
 
     shapes: list = []
     seen_ym: set = set()
@@ -1117,6 +1128,13 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                     line=dict(color="rgba(150,150,150,0.22)", width=1, dash="dot"),
                 ))
 
+    if bands:
+        # 띠는 월 구분선보다 먼저(=아래) 깔아야 선·격자가 그 위로 보인다.
+        shapes = [dict(type="rect", xref="paper", yref="y", layer="below",
+                       x0=0, x1=1, y0=lo, y1=hi,
+                       fillcolor=fill, line=dict(width=0))
+                  for lo, hi, _lbl, _c, fill in bands] + shapes
+
     dtick = {"1mo": "W1", "3mo": "M1", "6mo": "M1", "1y": "M2"}.get(period, "M1")
     tfmt  = "%d일" if period == "1mo" else "%m월"
 
@@ -1130,7 +1148,7 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
         x=hist.index, y=prices,
         mode="lines",
         line=dict(color=color, width=1.5),
-        fill="tonexty", fillcolor=fill_c,
+        fill=None if bands else "tonexty", fillcolor=fill_c,
         showlegend=False,
         hovertemplate=f"%{{x|%m/%d}}<br>%{{y:{fmt}}} {unit}<extra></extra>",
     ))
@@ -1378,7 +1396,8 @@ def render_macro():
                     unsafe_allow_html=True,
                 )
                 st.plotly_chart(
-                    _make_sparkline(hist, unit, fmt, period, note, chg_p),
+                    _make_sparkline(hist, unit, fmt, period, note, chg_p,
+                                    bands=_FNG_BANDS if ticker == "_FNG_" else None),
                     use_container_width=True,
                     # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
