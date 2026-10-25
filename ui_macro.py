@@ -831,10 +831,19 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
         showlegend=False, hoverinfo="skip",
     ))
-    # 최고·평균·최저 값은 카드 글줄에 적는다 — 매크로 카드와 같은 크기로 맞추면서
-    # 오른쪽 라벨 자리(여백 62px)가 없어졌다. 선은 그대로 그린다.
-    for y, color, dash in ((hi, "#ef5350", "dash"), (mean, "#888888", "dot"), (lo, "#1565C0", "dash")):
+    # 선 옆에 값을 적는다 — 매크로 카드(_make_sparkline)와 같은 방식.
+    # 라벨은 xref="paper"라 축 범위 계산에 끼어들지 않는다(그래프 모양 불변).
+    band_notes = []
+    for y, color, dash, lbl, anchor in ((hi, "#ef5350", "dash", "최고", "bottom"),
+                                        (mean, "#888888", "dot", "평균", "bottom"),
+                                        (lo, "#1565C0", "dash", "최저", "top")):
         fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+        band_notes.append(dict(
+            xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anchor,
+            text=f"<b>{lbl}</b> {y:.2f}{unit}", showarrow=False,
+            font=dict(size=9.5, color=color),
+            bgcolor="rgba(255,255,255,0.72)", borderpad=1,
+        ))
     # 크기·여백·눈금은 위 시세 카드(_make_sparkline)와 같게 — 한 화면에서 나란히 보이도록.
     fig.update_layout(
         height=90, margin=dict(l=0, r=2, t=2, b=18),
@@ -843,6 +852,7 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
                    tickfont=dict(size=7, color="#aaa"), ticklen=0),
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
+        annotations=band_notes,
     )
     if has_vol:
         # 선은 위 60%에 오도록 아래쪽에 여유를 둔다(최저선이 거래량 면과 겹치지 않게).
@@ -874,21 +884,22 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
     badge = ""
     if pct <= 20:
         badge = ("<span style='background:#1565C0;color:#fff;font-size:9.5px;font-weight:700;"
-                 "padding:1px 5px;border-radius:3px;margin-left:6px;'>저점권</span>")
+                 "padding:1px 5px;border-radius:3px;'>저점권</span>")
     elif pct >= 80:
         badge = ("<span style='background:#ef5350;color:#fff;font-size:9.5px;font-weight:700;"
-                 "padding:1px 5px;border-radius:3px;margin-left:6px;'>고점권</span>")
+                 "padding:1px 5px;border-radius:3px;'>고점권</span>")
     clr = "#ef5350" if vs_mean > 0 else "#1565C0" if vs_mean < 0 else "#888"
+    # 매크로 카드와 같은 모양 — 제목·값·부가정보를 한 줄에, 아래 10px 띄움.
+    # 최고·평균·최저는 차트 안 선 옆으로 옮겼다(위 _make_band_chart).
     st.markdown(
-        f"<div style='font-size:11px;color:#888;'>{name}{badge}</div>"
-        f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{cur:.2f}{unit}</div>"
-        f"<div style='font-size:11.5px;'><span style='color:{clr};font-weight:600;'>"
-        f"평균 대비 {vs_mean:+.1f}%</span> <span style='color:#888;'>· {span_label} 백분위 "
-        f"{pct:.0f}% · {s.index[-1]:%m/%d} 기준</span></div>"
-        f"<div style='font-size:10px;margin-top:1px;'>"
-        f"<span style='color:#ef5350;'>최고 {s.max():.2f}</span> · "
-        f"<span style='color:#888;'>평균 {s.mean():.2f}</span> · "
-        f"<span style='color:#1565C0;'>최저 {s.min():.2f}</span></div>",
+        f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
+        f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+        f"<span style='font-size:11px;color:#888;white-space:nowrap;'>{name}</span>{badge}"
+        f"<span style='font-size:18px;font-weight:700;'>{cur:.2f}{unit}</span>"
+        f"<span style='font-size:11.5px;color:{clr};font-weight:600;white-space:nowrap;'>"
+        f"평균 대비 {vs_mean:+.1f}%</span>"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"{span_label} 백분위 {pct:.0f}% · {s.index[-1]:%m/%d} 기준</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value, foreign), use_container_width=True,
@@ -966,8 +977,18 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
         marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
         showlegend=False, hoverinfo="skip",
     ))
-    for y, color, dash in ((hi, "#ef5350", "dash"), (mean, "#888888", "dot"), (lo, "#1565C0", "dash")):
+    # 선 옆에 값을 적는다 — 다른 카드와 같은 방식(xref="paper"라 축에 영향 없음).
+    fg_notes = []
+    for y, color, dash, lbl, anc in ((hi, "#ef5350", "dash", "최고", "bottom"),
+                                     (mean, "#888888", "dot", "평균", "bottom"),
+                                     (lo, "#1565C0", "dash", "최저", "top")):
         fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+        fg_notes.append(dict(
+            xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anc,
+            text=f"<b>{lbl}</b> {y:.2f}%", showarrow=False,
+            font=dict(size=9.5, color=color),
+            bgcolor="rgba(255,255,255,0.72)", borderpad=1,
+        ))
     span = (hi - lo) or 1.0
     m = float(flow_m["foreign"].abs().max()) if has_flow else 1.0
     fig.update_layout(
@@ -980,6 +1001,7 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False,
                    range=[lo - span * 0.70, hi + span * 0.06] if has_flow else None),
         yaxis2=dict(overlaying="y", visible=False, fixedrange=True, range=[-m * 1.25, m * 5.0]),
+        annotations=fg_notes,
     )
     return fig
 
@@ -1028,15 +1050,19 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
                      f"<span style='color:{c(today)};'>{_fmt_krw_signed(today)}</span> · 20거래일 "
                      f"<span style='color:{c(s20)};'>{_fmt_krw_signed(s20)}</span></div>")
     chgs = " · ".join(x for x in (pp("1개월", chg_since(30)), pp("연초 대비", ytd())) if x)
+    # 다른 카드와 같은 모양 — 제목·값·증감을 한 줄에. 최고·평균·최저는
+    # 차트 안 선 옆으로 옮겼다(_make_foreign_chart). 순매수 줄은 그대로 둔다.
     st.markdown(
-        f"<div style='font-size:11px;color:#888;'>{label} 외국인 보유 비중</div>"
-        f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{cur:.2f}%</div>"
-        f"<div style='font-size:11.5px;'>{chgs} <span style='color:#888;'>· {h.index[-1]:%m/%d} 기준</span></div>"
-        f"<div style='font-size:10px;margin-top:1px;'>"
-        f"<span style='color:#ef5350;'>최고 {hs['ratio'].max():.2f}</span> · "
-        f"<span style='color:#888;'>평균 {hs['ratio'].mean():.2f}</span> · "
-        f"<span style='color:#1565C0;'>최저 {hs['ratio'].min():.2f}</span> ({span_label})</div>"
-        + flow_html,
+        f"<div style='padding:4px 0 2px;display:flex;align-items:baseline;"
+        f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+        f"<span style='font-size:11px;color:#888;white-space:nowrap;'>"
+        f"{label} 외국인 보유 비중</span>"
+        f"<span style='font-size:18px;font-weight:700;'>{cur:.2f}%</span>"
+        f"<span style='font-size:11.5px;white-space:nowrap;'>{chgs}</span>"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"{h.index[-1]:%m/%d} 기준</span></div>"
+        + flow_html
+        + "<div style='height:8px;'></div>",
         unsafe_allow_html=True,
     )
     flow_m = None
@@ -1176,8 +1202,8 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                 xref="paper", yref="y", x=0.004, y=yv,
                 xanchor="left", yanchor="bottom" if lbl == "최고" else "top",
                 text=f"<b>{lbl}</b> {format(yv, fmt)}{unit} {dt_:%y.%m.%d}",
-                showarrow=False, font=dict(size=7.5, color=c_),
-                bgcolor="rgba(255,255,255,0.62)", borderpad=1,
+                showarrow=False, font=dict(size=9.5, color=c_),
+                bgcolor="rgba(255,255,255,0.72)", borderpad=1,
             ))
 
     if bands:
@@ -1428,7 +1454,7 @@ def render_macro():
                     badge_html = (
                         f"<span style='background:{_clr};color:#fff;font-size:9.5px;"
                         f"font-weight:700;padding:1px 5px;border-radius:3px;"
-                        f"margin-left:6px;vertical-align:middle;'>{_txt}</span>"
+                        f"vertical-align:middle;'>{_txt}</span>"
                     )
                 # 값 · 증감 · 기준시각을 한 줄에. baseline 정렬이라 글자 크기가
                 # 달라도 밑선이 맞는다. 좁은 화면에서는 뒤(기준시각)부터 줄바꿈된다.
@@ -1437,17 +1463,17 @@ def render_macro():
                     meta = (f"<span style='font-size:10px;color:{update_clr};"
                             f"{'font-weight:600;' if update_bold else ''}"
                             f"margin-left:7px;white-space:nowrap;'>{update_txt}</span>")
+                # 지표명까지 같은 줄에 둔다 — 두 줄일 때 카드 머리가 차트보다
+                # 길어 보였다. 아래 여백(10px)은 글자와 차트가 붙어 보이던 것.
                 st.markdown(
-                    f"<div style='padding:4px 0 0;'>"
-                    f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>"
-                    f"{name}{badge_html}</div>"
-                    f"<div style='display:flex;align-items:baseline;flex-wrap:wrap;"
-                    f"column-gap:7px;row-gap:0;line-height:1.2;'>"
+                    f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
+                    f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+                    f"<span style='font-size:11px;color:#888;white-space:nowrap;'>"
+                    f"{name}</span>{badge_html}"
                     f"<span style='font-size:18px;font-weight:700;'>{val_str}</span>"
                     f"<span style='font-size:12px;color:{clr};white-space:nowrap;'>"
                     f"{arrow} {chg_p:+.2f}% 전일</span>"
-                    f"{meta}</div>"
-                    f"</div>",
+                    f"{meta}</div>",
                     unsafe_allow_html=True,
                 )
                 st.plotly_chart(
