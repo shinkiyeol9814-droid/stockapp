@@ -1161,11 +1161,24 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
     # 카드 글줄로 뺀다 — 90px 높이에 라벨까지 넣으면 선과 겹친다(지수 밴드
     # 차트에서 같은 이유로 내린 결정이다). 색·굵기도 그 차트와 맞춘다.
     hi_v, lo_v = float(prices.max()), float(prices.min())
+    extra_notes = []
     if hi_v != lo_v:
-        for yv, c_, d_ in ((hi_v, "#ef5350", "dash"), (lo_v, "#1565C0", "dash")):
+        hi_d, lo_d = prices.idxmax(), prices.idxmin()
+        for yv, dt_, c_, lbl in ((hi_v, hi_d, "#ef5350", "최고"),
+                                 (lo_v, lo_d, "#1565C0", "최저")):
             shapes.append(dict(type="line", xref="paper", yref="y", layer="below",
                                x0=0, x1=1, y0=yv, y1=yv,
-                               line=dict(color=c_, width=1, dash=d_)))
+                               line=dict(color=c_, width=1, dash="dash")))
+            # 라벨은 xref="paper"로 왼쪽 끝에 고정한다 — 데이터 좌표로 두면
+            # 축 범위 계산에 끼어들어 그래프 모양이 바뀐다. 선 바로 위/아래에
+            # 붙여 선과 겹치지 않게 한다(최고는 위, 최저는 아래).
+            extra_notes.append(dict(
+                xref="paper", yref="y", x=0.004, y=yv,
+                xanchor="left", yanchor="bottom" if lbl == "최고" else "top",
+                text=f"<b>{lbl}</b> {format(yv, fmt)}{unit} {dt_:%y.%m.%d}",
+                showarrow=False, font=dict(size=7.5, color=c_),
+                bgcolor="rgba(255,255,255,0.62)", borderpad=1,
+            ))
 
     if bands:
         # 띠는 월 구분선보다 먼저(=아래) 깔아야 선·격자가 그 위로 보인다.
@@ -1214,6 +1227,7 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                    showgrid=False, zeroline=False, fixedrange=True),
         yaxis=dict(range=[base_y, top_y], showticklabels=False,
                    showgrid=False, zeroline=False, fixedrange=True),
+        annotations=extra_notes,
     )
 
     # 💡 특이사항 배지 — 그래프 우측 상단에 paper 좌표로 띄운다.
@@ -1318,6 +1332,10 @@ def render_macro():
         full_map[nm] = ok(res[("full", nm)])
 
     for row_start in range(0, len(MARKET_ITEMS), 3):
+        if row_start:
+            # 줄 사이를 띄운다 — 붙여 두니 위 카드의 뉴스 줄과 아래 카드의
+            # 지표명이 한 덩어리로 읽혀서 어디까지가 한 카드인지 흐렸다.
+            st.markdown("<div style='height:22px;'></div>", unsafe_allow_html=True)
         cols = st.columns(3)
         for ci, (name, ticker, unit, fmt, mult) in enumerate(MARKET_ITEMS[row_start:row_start + 3]):
             hist = hists[name]
@@ -1371,24 +1389,18 @@ def render_macro():
                     val_str = f"{last:.2f} {unit}"
                 clr   = "#ef5350" if chg_p > 0 else "#1565C0" if chg_p < 0 else "#888"
                 arrow = "▲" if chg_p > 0 else "▼" if chg_p < 0 else "─"
-                update_html = ""
+                # 값·증감·기준시각을 한 줄에 놓는다(5.5.0) — 예전엔 세 줄이라
+                # 카드 머리가 차트보다 길었다. 여기서는 문구와 색만 정하고
+                # 조립은 아래 markdown에서 한 번에 한다.
+                update_txt, update_clr, update_bold = "", "#aaa", False
                 if is_stale_snapshot:
-                    update_html = (
-                        f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                        f"{hist.index[-1]:%m/%d} 종가 기준 (실시간 시세 지연)</div>"
-                    )
+                    update_txt = f"{hist.index[-1]:%m/%d} 종가 기준 (지연)"
                 elif is_cache_based and last_update:
                     if prev == last and len(hist) > 1:
                         prev_date = hist.index[-2].to_pydatetime()
-                        update_html = (
-                            f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                            f"{last_update:%m/%d %H:%M} 확인 ({prev_date:%m/%d} 이후 무변동)</div>"
-                        )
+                        update_txt = f"{last_update:%m/%d %H:%M} 확인 ({prev_date:%m/%d} 이후 무변동)"
                     else:
-                        update_html = (
-                            f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                            f"{last_update:%m/%d %H:%M} 기준</div>"
-                        )
+                        update_txt = f"{last_update:%m/%d %H:%M} 기준"
                 elif last_update:
                     age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
                     # 💡 예전엔 age_hours >= 24 만 보고 경고를 띄웠다. 그러면 금요일
@@ -1400,15 +1412,10 @@ def render_macro():
                     # (금→월 1일, 연휴 끼면 2일).
                     if _weekday_gap(last_update, datetime.now(_KST)) > 2:
                         age_str = f"{age_hours/24:.0f}일 전" if age_hours >= 48 else f"{age_hours:.0f}시간 전"
-                        update_html = (
-                            f"<div style='font-size:10px;color:#e65100;font-weight:600;margin-top:1px;'>"
-                            f"⚠️ {last_update:%m/%d %H:%M} 기준 ({age_str})</div>"
-                        )
+                        update_txt = f"⚠️ {last_update:%m/%d %H:%M} 기준 ({age_str})"
+                        update_clr, update_bold = "#e65100", True
                     else:
-                        update_html = (
-                            f"<div style='font-size:10px;color:#aaa;margin-top:1px;'>"
-                            f"{last_update:%m/%d %H:%M} 기준</div>"
-                        )
+                        update_txt = f"{last_update:%m/%d %H:%M} 기준"
                 # 💡 특이사항 배지를 차트 안(paper 우상단)에 뒀더니, 최근이 고점이면
                 # 선이 바로 그 자리로 올라와 겹쳤다 — 카드 헤더로 빼서 지표명 옆에 붙인다.
                 # 공포·탐욕 지수는 "몇 개월 만의 최저"보다 지금이 어느 구간인지가
@@ -1423,14 +1430,23 @@ def render_macro():
                         f"font-weight:700;padding:1px 5px;border-radius:3px;"
                         f"margin-left:6px;vertical-align:middle;'>{_txt}</span>"
                     )
+                # 값 · 증감 · 기준시각을 한 줄에. baseline 정렬이라 글자 크기가
+                # 달라도 밑선이 맞는다. 좁은 화면에서는 뒤(기준시각)부터 줄바꿈된다.
+                meta = ""
+                if update_txt:
+                    meta = (f"<span style='font-size:10px;color:{update_clr};"
+                            f"{'font-weight:600;' if update_bold else ''}"
+                            f"margin-left:7px;white-space:nowrap;'>{update_txt}</span>")
                 st.markdown(
-                    f"<div style='padding:4px 0 2px;'>"
+                    f"<div style='padding:4px 0 0;'>"
                     f"<div style='font-size:11px;color:#888;margin-bottom:1px;'>"
                     f"{name}{badge_html}</div>"
-                    f"<div style='font-size:18px;font-weight:700;line-height:1.2;'>{val_str}</div>"
-                    f"<div style='font-size:12px;color:{clr};margin-top:2px;'>"
-                    f"{arrow} {chg_p:+.2f}% 전일</div>"
-                    f"{update_html}"
+                    f"<div style='display:flex;align-items:baseline;flex-wrap:wrap;"
+                    f"column-gap:7px;row-gap:0;line-height:1.2;'>"
+                    f"<span style='font-size:18px;font-weight:700;'>{val_str}</span>"
+                    f"<span style='font-size:12px;color:{clr};white-space:nowrap;'>"
+                    f"{arrow} {chg_p:+.2f}% 전일</span>"
+                    f"{meta}</div>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -1441,13 +1457,10 @@ def render_macro():
                     # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
                 )
-                # 차트의 점선 두 개(최고·최저)가 각각 얼마이고 언제였는지.
-                # 공포·탐욕은 띠가 무슨 뜻인지도 함께 적는다.
-                st.markdown(
-                    _extremes_html(hist, unit, fmt, mult)
-                    + (_fng_legend_html() if ticker == "_FNG_" else ""),
-                    unsafe_allow_html=True,
-                )
+                # 최고·최저 값은 차트 안 점선 옆에 적는다(아래 _make_sparkline).
+                # 여기엔 공포·탐욕 띠의 뜻만 남긴다.
+                if ticker == "_FNG_":
+                    st.markdown(_fng_legend_html(), unsafe_allow_html=True)
 
                 news = news_map.get(ticker)
                 if news:
