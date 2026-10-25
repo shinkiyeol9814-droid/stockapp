@@ -834,9 +834,10 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
     # 선 옆에 값을 적는다 — 매크로 카드(_make_sparkline)와 같은 방식.
     # 라벨은 xref="paper"라 축 범위 계산에 끼어들지 않는다(그래프 모양 불변).
     band_notes = []
-    for y, color, dash, lbl, anchor in ((hi, "#ef5350", "dash", "최고", "bottom"),
+    # 최고·최저는 선 안쪽에 붙인다(바깥에 두면 차트 밖으로 나가 잘린다).
+    for y, color, dash, lbl, anchor in ((hi, "#ef5350", "dash", "최고", "top"),
                                         (mean, "#888888", "dot", "평균", "bottom"),
-                                        (lo, "#1565C0", "dash", "최저", "top")):
+                                        (lo, "#1565C0", "dash", "최저", "bottom")):
         fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
         band_notes.append(dict(
             xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anchor,
@@ -846,7 +847,7 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         ))
     # 크기·여백·눈금은 위 시세 카드(_make_sparkline)와 같게 — 한 화면에서 나란히 보이도록.
     fig.update_layout(
-        height=90, margin=dict(l=0, r=2, t=2, b=18),
+        height=96, margin=dict(l=0, r=2, t=8, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
@@ -979,9 +980,9 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
     ))
     # 선 옆에 값을 적는다 — 다른 카드와 같은 방식(xref="paper"라 축에 영향 없음).
     fg_notes = []
-    for y, color, dash, lbl, anc in ((hi, "#ef5350", "dash", "최고", "bottom"),
+    for y, color, dash, lbl, anc in ((hi, "#ef5350", "dash", "최고", "top"),
                                      (mean, "#888888", "dot", "평균", "bottom"),
-                                     (lo, "#1565C0", "dash", "최저", "top")):
+                                     (lo, "#1565C0", "dash", "최저", "bottom")):
         fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
         fg_notes.append(dict(
             xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anc,
@@ -992,7 +993,7 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
     span = (hi - lo) or 1.0
     m = float(flow_m["foreign"].abs().max()) if has_flow else 1.0
     fig.update_layout(
-        height=90, margin=dict(l=0, r=2, t=2, b=18), bargap=0.15,
+        height=96, margin=dict(l=0, r=2, t=8, b=18), bargap=0.15,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
@@ -1198,9 +1199,12 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
             # 라벨은 xref="paper"로 왼쪽 끝에 고정한다 — 데이터 좌표로 두면
             # 축 범위 계산에 끼어들어 그래프 모양이 바뀐다. 선 바로 위/아래에
             # 붙여 선과 겹치지 않게 한다(최고는 위, 최저는 아래).
+            # 라벨은 선 '안쪽'에 붙인다 — 최고를 선 위에 두면 축 위쪽 여백(10%)을
+            # 넘어 차트 밖으로 나가 잘렸다(사용자 제보). 안쪽이면 범위와 무관하게
+            # 항상 보인다. 배경이 반투명이라 선·면과 겹쳐도 읽힌다.
             extra_notes.append(dict(
                 xref="paper", yref="y", x=0.004, y=yv,
-                xanchor="left", yanchor="bottom" if lbl == "최고" else "top",
+                xanchor="left", yanchor="top" if lbl == "최고" else "bottom",
                 text=f"<b>{lbl}</b> {format(yv, fmt)}{unit} {dt_:%y.%m.%d}",
                 showarrow=False, font=dict(size=9.5, color=c_),
                 bgcolor="rgba(255,255,255,0.72)", borderpad=1,
@@ -1241,8 +1245,8 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
     # hovermode는 그대로 둬서 일자별 수치 툴팁은 계속 보인다
     # (staticPlot=True로 막으면 툴팁까지 죽으므로 절대 쓰지 않는다).
     fig.update_layout(
-        height=90,
-        margin=dict(l=0, r=2, t=2, b=18),
+        height=96,
+        margin=dict(l=0, r=2, t=8, b=18),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False,
