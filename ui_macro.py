@@ -1081,6 +1081,35 @@ def _render_valuation_band() -> None:
                                   volume=df["volume"], value=df["value"], foreign=df["foreign"])
 
 
+def _extremes_html(hist: pd.DataFrame, unit: str, fmt: str, mult: float = 1) -> str:
+    """표시 구간의 최고·최저와 그 날짜를 한 줄로. 차트의 점선 두 개와 짝이다."""
+    p = hist["price"] * mult
+    if len(p) < 2 or float(p.max()) == float(p.min()):
+        return ""
+    hi_i, lo_i = p.idxmax(), p.idxmin()
+    f = lambda v: format(float(v), fmt)
+    return (
+        f"<div style='font-size:10.5px;color:#9aa5b1;margin-top:1px;"
+        f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>"
+        f"<span style='color:#ef5350;'>최고 {f(p.max())}{unit}</span>"
+        f" {hi_i:%y.%m.%d} · "
+        f"<span style='color:#1565C0;'>최저 {f(p.min())}{unit}</span>"
+        f" {lo_i:%y.%m.%d}</div>"
+    )
+
+
+def _fng_legend_html() -> str:
+    """공포·탐욕 띠가 무슨 뜻인지 — 차트 밑에 색칩 + 구간."""
+    chips = "".join(
+        f"<span style='white-space:nowrap;margin-right:7px;'>"
+        f"<span style='display:inline-block;width:7px;height:7px;border-radius:2px;"
+        f"background:{color};margin-right:3px;vertical-align:middle;'></span>"
+        f"{label} {lo}~{hi}</span>"
+        for lo, hi, label, color, _fill in _FNG_BANDS)
+    return (f"<div style='font-size:9.5px;color:#9aa5b1;line-height:1.5;"
+            f"margin-top:1px;'>{chips}</div>")
+
+
 def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                     note: tuple | None = None, chg: float | None = None,
                     bands: list | None = None) -> go.Figure:
@@ -1127,6 +1156,16 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                     x0=dt, x1=dt, y0=0, y1=1,
                     line=dict(color="rgba(150,150,150,0.22)", width=1, dash="dot"),
                 ))
+
+    # 표시 구간의 최고·최저를 점선으로 긋는다. 값과 날짜는 차트에 적지 않고
+    # 카드 글줄로 뺀다 — 90px 높이에 라벨까지 넣으면 선과 겹친다(지수 밴드
+    # 차트에서 같은 이유로 내린 결정이다). 색·굵기도 그 차트와 맞춘다.
+    hi_v, lo_v = float(prices.max()), float(prices.min())
+    if hi_v != lo_v:
+        for yv, c_, d_ in ((hi_v, "#ef5350", "dash"), (lo_v, "#1565C0", "dash")):
+            shapes.append(dict(type="line", xref="paper", yref="y", layer="below",
+                               x0=0, x1=1, y0=yv, y1=yv,
+                               line=dict(color=c_, width=1, dash=d_)))
 
     if bands:
         # 띠는 월 구분선보다 먼저(=아래) 깔아야 선·격자가 그 위로 보인다.
@@ -1401,6 +1440,13 @@ def render_macro():
                     use_container_width=True,
                     # staticPlot은 False 유지 — True로 하면 마우스오버 툴팁까지 사라진다.
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False},
+                )
+                # 차트의 점선 두 개(최고·최저)가 각각 얼마이고 언제였는지.
+                # 공포·탐욕은 띠가 무슨 뜻인지도 함께 적는다.
+                st.markdown(
+                    _extremes_html(hist, unit, fmt, mult)
+                    + (_fng_legend_html() if ticker == "_FNG_" else ""),
+                    unsafe_allow_html=True,
                 )
 
                 news = news_map.get(ticker)
