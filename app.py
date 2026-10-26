@@ -230,45 +230,52 @@ render_version_badge()
 # 💡 상단 메뉴 고정 그리드 강제 (기기 폭에 따라 줄바꿈 위치가 달라지는 문제 방지)
 # option_menu는 iframe 컴포넌트라 CSS가 직접 안 닿으므로, window.parent로 넘어가
 # iframe 내부 문서에 <style>을 주입해 4개씩 고정 wrap 되도록 강제합니다.
-# (7개 항목 → 위 4개 + 아래 3개, 두 줄 모두 칸 폭 25%로 동일)
+# (8개 항목 → 위 4개 + 아래 4개, 칸 폭 25%)
+#
+# ⚠️ 배포 직후 메뉴가 "윗줄 4개만" 또는 "8개가 한 줄"로 보이던 문제(2026-10-26 원인 확인):
+#  · option_menu는 iframe 높이를 마운트·업데이트 순간에만 잰다(setFrameHeight, ResizeObserver 없음).
+#    우리 <style>이 그보다 늦게 들어가면 메뉴는 두 줄이 되는데 iframe은 한 줄 높이로 남아
+#    아랫줄이 잘린다 → "버튼 4개".
+#  · 예전 스크립트는 한 번 주입에 성공하면 감시를 멈췄다. 재배포 뒤 재연결 등으로 메뉴 iframe
+#    문서만 새로 만들어지면 아무도 다시 주입하지 않아 → "8개가 한 줄".
+# 그래서 감시를 멈추지 않고(가볍다: 0.4초마다 확인 몇 개), 스타일이 없으면 다시 넣고,
+# iframe 높이가 실제 내용과 다르면 직접 맞춘다.
 # ==========================================
 components.html("""
 <script>
 (function() {
-    // 모든 단계를 try/catch로 감싸 어느 한 줄에서 예외가 나도 스크립트 전체가
-    // 죽지 않고(=재시도 루프가 살아남고) 다음 tick에 다시 시도하도록 합니다.
-    function tryInject() {
+    function ensure() {
         try {
             var mainDoc = (window.parent || window).document;
             var frame = mainDoc.querySelector('iframe[title="streamlit_option_menu.option_menu"]');
-            if (!frame) return false;
+            if (!frame) return;
             var fdoc = frame.contentDocument;
-            if (!fdoc || !fdoc.head) return false;
-            if (fdoc.getElementById('__menu_grid_fix__')) return true;
-            var style = fdoc.createElement('style');
-            style.id = '__menu_grid_fix__';
-            style.textContent = `
-                ul.nav.nav-justified { flex-wrap: wrap !important; }
-                ul.nav.nav-justified > li.nav-item {
-                    flex: 0 0 25% !important;
-                    max-width: 25% !important;
-                    box-sizing: border-box !important;
-                }
-            `;
-            fdoc.head.appendChild(style);
-            return true;
-        } catch (e) {
-            return false;
-        }
+            if (!fdoc || !fdoc.head || !fdoc.body) return;
+            if (!fdoc.getElementById('__menu_grid_fix__')) {
+                var style = fdoc.createElement('style');
+                style.id = '__menu_grid_fix__';
+                style.textContent = `
+                    ul.nav.nav-justified { flex-wrap: wrap !important; }
+                    ul.nav.nav-justified > li.nav-item {
+                        flex: 0 0 25% !important;
+                        max-width: 25% !important;
+                        box-sizing: border-box !important;
+                    }
+                `;
+                fdoc.head.appendChild(style);
+            }
+            // 메뉴가 아직 그려지지 않았으면(로딩 중) 높이를 건드리지 않는다
+            if (!fdoc.querySelector('ul.nav li')) return;
+            var need = Math.ceil(fdoc.body.scrollHeight);
+            var cur = Math.round(frame.getBoundingClientRect().height);
+            if (need > 0 && Math.abs(need - cur) > 1) {
+                frame.style.height = need + 'px';
+                frame.setAttribute('height', need);
+            }
+        } catch (e) {}
     }
-    // option_menu 컴포넌트 프론트엔드 로딩이 느릴 수 있어(특히 모바일 콜드스타트)
-    // 재시도 횟수를 제한하지 않고 성공할 때까지 인터벌로 계속 시도합니다.
-    // 이 iframe 자체가 다음 rerun 때 교체되면서 인터벌도 함께 정리되므로 누수 걱정은 없습니다.
-    try {
-        var iv = setInterval(function() {
-            if (tryInject()) clearInterval(iv);
-        }, 300);
-    } catch (e) {}
+    ensure();
+    setInterval(ensure, 400);
 })();
 </script>
 """, height=0)

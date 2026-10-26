@@ -246,6 +246,10 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
 - **글자 기준은 14px**(`config.toml` `theme.baseFontSize`). 크기는 rem으로 잡아야 이 설정을 따른다.
 - **요소 간격은 전역 0.6rem**(app.py CSS). 빈칸을 만들려고 `st.markdown("<br>")`·`st.write("")`·
   구분선을 겹쳐 넣지 말 것 — 레포트 탭이 그렇게 배지와 첫 카드 사이에 130px 빈칸이 있었다.
+- **상단 메뉴(option_menu)의 4칸×2줄은 app.py 스크립트가 메뉴 iframe에 CSS를 넣어 만든다.** 그 컴포넌트는
+  iframe 높이를 마운트 순간에만 재므로(ResizeObserver 없음) CSS가 늦으면 아랫줄이 잘리고, 메뉴 iframe 문서가
+  새로 생기면 CSS가 사라져 한 줄이 된다(배포 직후 자주 보이던 증상). 그래서 감시를 멈추지 않고 0.4초마다
+  CSS 재주입 + iframe 높이를 내용에 맞춘다. 메뉴 항목 수를 바꾸면 25%(4칸) 폭도 같이 볼 것.
 - 작은 옵션(체크박스 등)을 한 줄에 둘 땐 `st.container(key="inline_…")` 안에 컬럼으로 — 전역 CSS가 nowrap.
 - **여러 건을 받는 로딩은 `run_with_progress({이름: 함수})`** — 병렬로 돌리고, 0.3초 넘게 걸릴 때만
   0~100% 진행률을 띄운다(캐시 적중 때는 안 띄워 자동 새로고침마다 번쩍이지 않게).
