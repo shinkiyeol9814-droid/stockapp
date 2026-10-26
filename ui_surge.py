@@ -277,13 +277,69 @@ def _render_table(rows) -> None:
                  height=min(len(df) * 35 + 38, 760))
 
 
-_SORTS = {
-    "기본": None,
-    "배수": "mult",
-    "등락률": "chg",
-    "거래대금": "value",
-    "회전율": "turn",
-}
+# ── 다중 정렬·필터 ──────────────────────────────────────────────────────────
+# 정렬 기준은 multiselect에서 고른 순서가 곧 우선순위다(예: 등급 높은순 → 등락률 높은순 =
+# 같은 별 안에서 많이 오른 순). 표 보기도 이 순서로 처음 그려지고, 머리글을 누르면 그 열로
+# 다시 정렬된다(st.dataframe 기본 동작).
+_SORT_FIELDS = {"등급": "grade", "등락률": "chg", "배수": "mult",
+                "거래대금": "value", "회전율": "turn", "포착 시각 수": "cnt"}
+_SORT_OPTS = [f"{name} {d}" for name in _SORT_FIELDS for d in ("높은순", "낮은순")]
+_GRADE_MIN = {"전체": 0, "★1+": 1, "★2+": 2, "★3": 3}
+_CHG_DIR = ["전체", "상승", "하락"]
+
+
+def _apply_sort(rows: list, slot: str, picks: list) -> None:
+    """기본 순서를 깐 뒤 고른 기준을 우선순위 낮은 것부터 안정 정렬로 덧씌운다."""
+    if slot == "all":
+        rows.sort(key=lambda r: (-r["cnt"], -r["mult"]))     # 여러 시각에 걸칠수록 위로
+    else:
+        rows.sort(key=lambda r: -r["mult"])
+    seen, keys = set(), []
+    for p in picks:                      # 같은 항목을 두 방향으로 고르면 먼저 고른 쪽만
+        name, d = p.rsplit(" ", 1)
+        if name not in seen:
+            seen.add(name)
+            keys.append((_SORT_FIELDS[name], d == "높은순"))
+    for field, desc in reversed(keys):
+        rows.sort(key=lambda r: r[field] or 0, reverse=desc)
+
+
+def _sort_filter_controls(slot: str):
+    """(정렬 기준 목록, 시장, 최소 등급, 등락 방향, 최소 포착 시각 수)."""
+    # ⚠️ 펼침 제목에 현재 상태를 넣으면 고를 때마다 제목이 바뀌어 펼침이 새 요소로 취급돼
+    # 닫혀 버린다(key를 줘도 마찬가지 — 하나 고를 때마다 다시 열어야 했다). 제목은 고정하고
+    # 지금 적용된 정렬·필터는 아래 요약 줄(_active_text)에 보인다.
+    with st.expander("정렬 · 필터", expanded=False, key="surge_sf"):
+        picks = st.multiselect(
+            "정렬 기준 (고른 순서가 우선순위)", _SORT_OPTS, key="surge_sortkeys",
+            placeholder="기본: 여러 시각에 걸친 순 → 배수 큰 순")
+        mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
+                                   key="surge_mkt") or "전체"
+        # 등급(4칸)과 등락(3칸)을 한 줄에 두면 휴대폰 폭(375px)에서 '하락'이 화면 밖으로 나가 따로 둔다
+        g = st.segmented_control("등급", list(_GRADE_MIN), default="전체", key="surge_fgrade") or "전체"
+        d = st.segmented_control("등락", _CHG_DIR, default="전체", key="surge_fchg") or "전체"
+        if slot == "all":
+            n = st.segmented_control("포착 시각 수", [1, 2, 3, 4], default=1, key="surge_fcnt",
+                                     format_func=lambda v: "전체" if v == 1 else f"{v}개 이상") or 1
+        else:
+            n = 1
+    disable_keyboard("surge_sortkeys")
+    return picks, mkt, g, d, n
+
+
+def _active_text(picks, mkt, g, d, n) -> str:
+    parts = []
+    if picks:
+        parts.append("정렬 " + " → ".join(picks))
+    if mkt != "전체":
+        parts.append(f"{mkt}만")
+    if g != "전체":
+        parts.append(f"등급 {g}")
+    if d != "전체":
+        parts.append(f"{d}만")
+    if n > 1:
+        parts.append(f"{n}개 시각 이상")
+    return " · ".join(parts)
 
 
 def render_surge():
@@ -315,14 +371,13 @@ def render_surge():
         return f"{d['d'][5:]} ({_WD[dd.weekday()]}) · {d['n'].get('all', 0)}종목"
 
     by_day = {d["d"]: d for d in days}
+    # 일자 · 시장 · 보기를 한 줄에 두면 휴대폰(375px)에서 '표/카드'가 화면 밖으로 나갔다.
+    # 시장은 필터라 '정렬 · 필터' 안으로 옮기고, 이 줄엔 일자와 보기만 둔다.
     with st.container(key="inline_surge_opts"):
-        c1, c2, c3 = st.columns([1.15, 1, 0.62], vertical_alignment="center")
+        c1, c3 = st.columns([1.6, 1], vertical_alignment="center")
         with c1:
             day = st.selectbox("일자", list(by_day), format_func=lambda d: _day_label(by_day[d]),
                                key="surge_day", label_visibility="collapsed")
-        with c2:
-            mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
-                                       key="surge_mkt", label_visibility="collapsed") or "전체"
         with c3:
             view = st.segmented_control("보기", ["표", "카드"], default="표",
                                         key="surge_view", label_visibility="collapsed") or "표"
@@ -342,23 +397,16 @@ def render_surge():
                                 label_visibility="collapsed") or "all"
 
     rows = _rows(doc, slot)
-    if mkt != "전체":
-        rows = [r for r in rows if r["st"].get("m") == ("K" if mkt == "코스피" else "Q")]
-
-    if view == "카드":
-        with st.container(key="inline_surge_sort"):
-            sort = st.segmented_control("정렬", list(_SORTS), default="기본", key="surge_sort",
-                                        label_visibility="collapsed") or "기본"
-    else:
-        # 표는 열 머리글을 눌러 정렬하므로 버튼을 두지 않는다(수집 사이트와 같은 방식).
-        sort = "기본"
-    key = _SORTS[sort]
-    if key:
-        rows.sort(key=lambda r: -(r[key] or 0))
-    elif slot == "all":
-        rows.sort(key=lambda r: (-r["cnt"], -r["mult"]))     # 여러 시각에 걸칠수록 위로
-    else:
-        rows.sort(key=lambda r: -r["mult"])
+    picks, mkt, glabel, chg_dir, cnt_min = _sort_filter_controls(slot)
+    gmin = _GRADE_MIN[glabel]
+    active = _active_text(picks, mkt, glabel, chg_dir, cnt_min)
+    total = len(rows)
+    rows = [r for r in rows
+            if (mkt == "전체" or r["st"].get("m") == ("K" if mkt == "코스피" else "Q"))
+            and (r["grade"] or 0) >= gmin
+            and (chg_dir == "전체" or ((r["chg"] or 0) > 0 if chg_dir == "상승" else (r["chg"] or 0) < 0))
+            and r["cnt"] >= cnt_min]
+    _apply_sort(rows, slot, picks)
 
     all4 = sum(1 for r in rows if r["cnt"] == len(SLOTS))
     taken = doc.get("slots", {}).get(slot, {}).get("t", "") if slot != "all" else ""
@@ -368,9 +416,12 @@ def render_surge():
     st.markdown(
         f"<div style='font-size:12.5px;color:#666;margin:2px 0 6px;'>"
         f"{LABEL[slot]} 포착 <b>{len(rows)}</b>종목"
+        + (f" (필터 전 {total})" if len(rows) != total else "")
         + (f" · 네 시각 모두 <b>{all4}</b>" if slot == "all" else "")
         + (f" · 수집 {html.escape(taken[11:16])}" if taken else "")
-        + f"{badge}</div>",
+        + f"{badge}"
+        + (f"<div style='color:#555;margin-top:2px;'>적용 중: {html.escape(active)}</div>" if active else "")
+        + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -380,12 +431,12 @@ def render_surge():
 
     if view == "표":
         _render_table(rows)
-        st.caption(f"열 머리글을 누르면 그 열로 정렬됩니다 · "
+        st.caption(f"정렬 · 필터 순서로 표시 · 열 머리글을 누르면 그 열로 다시 정렬 · "
                    f"시세는 네이버 금융 공개 데이터 · 수집 리포 [kosdaq-surge]({_SITE})")
         return
 
     # 같은 화면(일자·시각·시장·정렬)을 보는 동안만 '더 보기'가 누적된다
-    sig = (day, slot, mkt, sort)
+    sig = (day, slot, mkt, tuple(picks), gmin, chg_dir, cnt_min)
     if st.session_state.get("_surge_sig") != sig:
         st.session_state["_surge_sig"] = sig
         st.session_state["_surge_limit"] = _PAGE
