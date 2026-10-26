@@ -131,7 +131,9 @@ def _weekday_gap(then: datetime, now: datetime) -> int:
 # ── 데이터 함수 ───────────────────────────────────────────────────────────────
 # "max"는 화면 기간 선택에는 없다 — 마일스톤(N개월 최고/최저) 판정을 위해
 # 잘라내지 않은 전체 이력을 받을 때 쓰는 내부용 키.
-_PERIOD_DAYS = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "max": 100000}
+_PERIOD_DAYS = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "3y": 1095, "5y": 1825, "max": 100000}
+# 야후 history()는 "3y"를 받지 않는다(1y·2y·5y·10y만). 3년은 5년치를 받아 잘라 쓴다.
+_YF_PERIOD = {"3y": "5y"}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -178,12 +180,14 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
             # import까지 try 안에 둔다 — 밖에 두면 yfinance가 없거나 깨졌을 때
             # 예외가 그대로 올라가 매크로 탭 전체가 죽는다(폴백도 못 탄다).
             import yfinance as yf
-            hist = yf.Ticker(ticker).history(period=period)
+            hist = yf.Ticker(ticker).history(period=_YF_PERIOD.get(period, period))
             if hist.empty:
                 continue
             df = hist[["Close"]].rename(columns={"Close": "price"})
             if df.index.tz is not None:
                 df.index = df.index.tz_convert(None)
+            if period in _YF_PERIOD:
+                df = df[df.index >= df.index[-1] - pd.Timedelta(days=expected_days)]
             last_df = df
             span_days = (df.index[-1] - df.index[0]).days
             if span_days >= expected_days * 0.5:
@@ -1217,8 +1221,9 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                        fillcolor=fill, line=dict(width=0))
                   for lo, hi, _lbl, _c, fill in bands] + shapes
 
-    dtick = {"1mo": "W1", "3mo": "M1", "6mo": "M1", "1y": "M2"}.get(period, "M1")
-    tfmt  = "%d일" if period == "1mo" else "%m월"
+    dtick = {"1mo": "W1", "3mo": "M1", "6mo": "M1", "1y": "M2", "3y": "M6", "5y": "M12"}.get(period, "M1")
+    # 여러 해에 걸치면 "03월"만으로는 어느 해인지 몰라 연도를 넣는다
+    tfmt  = {"1mo": "%d일", "3y": "%y.%m", "5y": "%Y"}.get(period, "%m월")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -1288,9 +1293,12 @@ def render_macro():
     # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.
     # 수출입은 성격이 달라(정부 API · 월 단위 · 품목별) 별도 메뉴
     # (ui_trade.render_trade)로 분리했고, 이 탭은 시장 지표만 담당한다.
-    period_map = {"1개월": "1mo", "3개월": "3mo", "6개월": "6mo", "1년": "1y"}
-    sel_p = st.radio("기간", list(period_map.keys()), index=3,
-                      horizontal=True, key="macro_period")
+    # 2026-10-26: 3개월을 빼고 3년·5년 추가(사용자 요청). 리튬·DRAM·DDR4·공포탐욕처럼 자체 캐시로
+    # 쌓는 지표는 쌓인 만큼만 보인다(연방부채는 3년치). 키를 바꾼 건 예전 세션에 남은 "3개월"이
+    # 새 선택지에 없어서다.
+    period_map = {"1개월": "1mo", "6개월": "6mo", "1년": "1y", "3년": "3y", "5년": "5y"}
+    sel_p = st.radio("기간", list(period_map.keys()), index=2,
+                      horizontal=True, key="macro_period_v2")
     period = period_map[sel_p]
 
     # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
