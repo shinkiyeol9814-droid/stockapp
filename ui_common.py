@@ -40,13 +40,14 @@ def section_title(text: str) -> None:
 
 
 def run_with_progress(jobs: dict, label: str = "불러오는 중", max_workers: int = 12,
-                      show_after: float = 0.3) -> dict:
+                      show_after: float = 1.0) -> dict:
     """
     {이름: 인자 없는 함수}를 병렬로 돌려 {이름: 결과}를 돌려준다(예외는 결과 자리에 그대로).
     오래 걸리면 0~100% 진행률 막대를 띄우고, 끝나면 지운다.
 
     💡 show_after초 안에 다 끝나면(=전부 캐시 적중) 막대를 아예 안 띄운다 — 3분마다 도는
-    자동 새로고침 때마다 막대가 번쩍이면 오히려 거슬린다.
+    자동 새로고침 때마다 막대가 번쩍이면 오히려 거슬린다. 0.3초였는데 짧은 조회에도 막대가
+    떠 "느리다"는 인상을 줘서 1초로 늘렸다(2026-10-26, 탭 전환 오버레이를 없앤 날).
 
     st.cache_data 함수를 스레드에서 불러도 같은 캐시를 쓰도록 스크립트 실행 컨텍스트를 붙인다
     (안 붙이면 "missing ScriptRunContext" 경고가 쌓인다).
