@@ -62,7 +62,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `ui_report.py` | 레포트 탭 |
 | `new_high.py` | 신고가 탭 (아래에 섹터별 등락률 섹션. 종목별 뉴스 펼침은 2026-10-30 제거) |
 | `ui_sector.py` | 섹터별 등락률 (Top5 + 이슈 뉴스) — 2026-10-30부터 탭이 아니라 신고가 탭 아래 섹션(`render_sector_section`) |
-| `ui_company.py` | 기업분석 탭 — 노션 기업분석 DB로 가는 링크 버튼(노션은 iframe 불가). `NOTION_DB_URL` Secret이 있으면 우선 |
+| `ui_company.py` | 기업분석 탭 — Secret `NOTION_EMBED_URL`(노션 웹 게시 주소)이 있으면 `…notion.site/ebd/ID`로 바꿔 iframe으로 띄움. 노션에서 iframe을 허용하는 주소는 /ebd/뿐(헤더 실측). 없으면 새 탭 링크 버튼 |
 | `ui_trade.py` | 수출입 동향 탭 (관세청 품목별 실적) |
 | `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
@@ -381,6 +381,7 @@ Streamlit이 내려주는 index.html `<head>`에는 color-scheme 선언이 없�
 |----|------|
 | `GH_PAT` / `GITHUB_TOKEN` | DART 배치 요청(repository_dispatch) · `data/dart` 조회 |
 | `DATA_GO_KR_KEY` | 관세청 수출입 통계 API (수출입 탭) |
+| `NOTION_EMBED_URL` | 기업분석 탭에 띄울 노션 DB의 웹 게시 주소 (게시하면 공개라 코드 대신 여기) |
 
 > 텔레그램 시크릿은 앱에서 더 이상 쓰지 않는다 — 뷰어 탭을 없앴고,
 > 수집은 배치(`batch_*`)에서만 한다. 아래 Actions Secrets 참고.
