@@ -142,7 +142,7 @@ from ui_earnings import render_earnings_menu
 from ui_surge import render_surge
 from ui_macro import render_macro
 from ui_trade import render_trade
-from ui_sector import render_sector_menu
+from ui_company import render_company
 from streamlit_option_menu import option_menu
 from version_history import render_version_badge
 
@@ -169,9 +169,9 @@ menu = option_menu(
     menu_title=None,
     # 💡 2줄로 감싸지는 메뉴라(4개씩) 순서가 곧 화면 배치: 리스트의 앞 4개가
     # 윗줄, 뒤 4개가 아랫줄이 된다. 윗줄 = 가치평가/거래급증/레포트/수출입,
-    # 아랫줄 = 섹터별/신고가/실적/매크로.
-    options=["가치평가", "거래급증", "레포트", "수출입", "섹터별", "신고가", "실적", "매크로"],
-    icons=["graph-up-arrow", "lightning-charge", "newspaper", "box-seam", "pie-chart", "rocket", "bar-chart-line", "globe"],
+    # 아랫줄 = 기업분석/신고가/실적/매크로. (섹터별은 2026-10-30 신고가 탭 아래로 합쳤다)
+    options=["가치평가", "거래급증", "레포트", "수출입", "기업분석", "신고가", "실적", "매크로"],
+    icons=["graph-up-arrow", "lightning-charge", "newspaper", "box-seam", "journal-text", "rocket", "bar-chart-line", "globe"],
     default_index=default_menu_idx,
     orientation="horizontal",
     styles={
@@ -324,8 +324,8 @@ elif menu == "레포트":
     render_report_summary()
 
 
-elif menu == "섹터별":
-    render_sector_menu()
+elif menu == "기업분석":
+    render_company()
 
 elif menu == "신고가":
     render_new_high_menu()

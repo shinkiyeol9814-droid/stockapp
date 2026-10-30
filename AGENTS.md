@@ -60,8 +60,9 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `ui_macro.py` | 매크로 지표 탭 (환율/금리/원자재/메모리/미국부채) |
 | `ui_earnings.py` | 실적 탭 |
 | `ui_report.py` | 레포트 탭 |
-| `new_high.py` | 신고가 탭 |
-| `ui_sector.py` | 섹터별 등락률 탭 (Top5 + 이슈 뉴스) |
+| `new_high.py` | 신고가 탭 (아래에 섹터별 등락률 섹션. 종목별 뉴스 펼침은 2026-10-30 제거) |
+| `ui_sector.py` | 섹터별 등락률 (Top5 + 이슈 뉴스) — 2026-10-30부터 탭이 아니라 신고가 탭 아래 섹션(`render_sector_section`) |
+| `ui_company.py` | 기업분석 탭 — 노션 기업분석 DB로 가는 링크 버튼(노션은 iframe 불가). `NOTION_DB_URL` Secret이 있으면 우선 |
 | `ui_trade.py` | 수출입 동향 탭 (관세청 품목별 실적) |
 | `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |

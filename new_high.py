@@ -1,5 +1,6 @@
 import streamlit as st
 from ui_common import page_header, section_title
+from ui_sector import clear_sector_cache, render_sector_section
 import pandas as pd
 import json
 import os
@@ -55,9 +56,15 @@ def save_to_github(file_path, content, message):
         return False, f"통신 에러: {type(e).__name__}: {e}"
 
 def render_new_high_menu():
+    # 2026-10-30: 섹터별 탭을 이 탭 아래로 합쳤다(그 메뉴 자리는 기업분석). 새로고침은 섹터 캐시도 비운다.
     if page_header("신고가 트래킹", "newhigh"):
+        clear_sector_cache()
         st.rerun()
-            
+    _render_new_high_body()
+    render_sector_section()
+
+
+def _render_new_high_body():
     report_files = get_all_reports()
     if not report_files:
         st.warning("분석된 데이터가 없습니다. 장 마감 후 자동 배치가 실행될 때까지 기다려주세요.")
@@ -166,13 +173,3 @@ def render_new_high_menu():
                 st.success("✅ 변경사항이 안전하게 저장되었습니다!")
             else:
                 st.error(f"❌ 저장 실패: {error_msg}")
-
-    st.markdown("---")
-    section_title("주요 뉴스 모니터링")
-    for _, row in edited_df.iterrows():
-        original_row = next((item for item in report_data['results'] if item['코드'] == row['코드']), {})
-        corp_name_clean = original_row.get('종목명', '알 수 없음')
-        
-        with st.expander(f"[{corp_name_clean}] 주요 뉴스 살펴보기"):
-            news_md = original_row.get('뉴스목록', '관련 뉴스 없음')
-            st.markdown(news_md)
