@@ -61,6 +61,13 @@ jobs:
         continue-on-error: true
         run: python krx_listing.py
 
+      # 섹터별 등락률을 거래일마다 쌓는다(data/sector/daily). 최근 10일 중 빠진 날을 채우므로
+      # 하루 못 돌아도 다음 실행이 메운다. 실패해도 배치 전체는 세우지 않는다.
+      - name: Sector history
+        if: github.event.schedule != '0 23 * * 1-5'
+        continue-on-error: true
+        run: python sector_history.py
+
       - name: Commit and Push
         run: |
           git config --global user.name "GitHub Action Bot"
@@ -70,6 +77,7 @@ jobs:
           # 커밋에 끌려들어와, 5분마다 도는 급등 배치와 불필요하게 충돌했다.
           # 이 배치가 실제로 쓰는 경로만 스테이징한다.
           git add data/macro/ data/listing/
+          [ -d data/sector/daily ] && git add data/sector/daily/
           git commit -m "Auto-update: DRAM/DDR4/Lithium spot price & KRX listing" || { echo "No changes to commit"; exit 0; }
           # 💡 다른 배치가 그 사이 push 했으면 rebase 후 재시도한다.
           # 급등 배치가 5분 간격이라 몇 분 걸리는 배치는 경합이 흔하다.

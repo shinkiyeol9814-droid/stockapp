@@ -7,13 +7,13 @@ import streamlit as st
 from ui_common import section_title
 import pandas as pd
 import requests
-import io
 import re
 import html
 import urllib.parse
 import xml.etree.ElementTree as ET
 import concurrent.futures
 from krx_listing import fetch_krx_marcap
+import sector_history
 import os
 import json
 from datetime import datetime, timezone, timedelta
@@ -33,65 +33,13 @@ HEADERS = {
 #   시세     ← krx_listing.fetch_krx_marcap (종목별 등락률 / 시가총액)
 # 둘 다 이미 앱이 쓰던 소스라 새 의존이 늘지 않고, 네이버가 또 화면을 바꿔도
 # 영향을 받지 않는다.
-_KIND_URL = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
-# 구성 종목이 너무 적은 업종은 한 종목 급등에 업종 전체가 끌려가 순위가 무의미해진다.
-_MIN_MEMBERS = 3
-
-# 업종 분류 디스크 캐시(리포지토리에 커밋된 시드).
-# 💡 왜 필요한가 — KIND(kind.krx.co.kr)는 로컬에서는 잘 응답하지만 클라우드
-# 데이터센터 IP에서는 자주 막힌다. krx_listing.py가 KIND를 4순위 중 3번째로
-# 밀어두고 디스크 캐시를 최후 방어선으로 둔 것도 같은 이유다. 그런데 여기선
-# KIND 한 곳에만 의존해서, 그게 실패하면 _merged_quotes가 통째로 None이 되고
-# 섹터 탭이 "업종 데이터를 가져오지 못했습니다"로 죽었다. 시세(fetch_krx_marcap)는
-# GitHub raw 캐시 리포 폴백이 있어 살아남는데 업종만 폴백이 없던 비대칭.
-# 업종 분류는 상장/폐지 때만 바뀌어 며칠 지나도 무해하므로 캐시가 잘 맞는다.
-_INDUSTRY_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "data", "listing", "krx_industry.csv")
-
-
-def _industry_from_kind() -> dict | None:
-    """KIND 다운로드(EUC-KR) 파싱. 실패하면 None."""
-    try:
-        res = requests.get(_KIND_URL, headers=HEADERS, timeout=15)
-        res.encoding = "euc-kr"   # charset 헤더가 없어 명시하지 않으면 한글이 깨진다
-        df = pd.read_html(io.StringIO(res.text), header=0)[0]
-        df = df.rename(columns={"회사명": "Name", "종목코드": "Code", "업종": "업종명"})
-        if "Code" not in df.columns or "업종명" not in df.columns:
-            print(f"[ui_sector] KIND 컬럼 파싱 실패 (cols={list(df.columns)[:5]})")
-            return None
-        df["Code"] = df["Code"].astype(str).str.strip().str.zfill(6)
-        df["업종명"] = df["업종명"].astype(str).str.strip()
-        df = df[(df["Code"].str.len() == 6) & (~df["업종명"].isin(["", "nan"]))]
-        if len(df) < 1000:
-            print(f"[ui_sector] KIND 응답이 너무 짧음({len(df)}행) — 잘린 응답으로 보고 버림")
-            return None
-        return dict(zip(df["Code"], df["업종명"]))
-    except Exception as e:
-        print(f"[ui_sector] KIND 조회 실패: {type(e).__name__}: {e}")
-        return None
-
-
-def _industry_from_disk() -> dict | None:
-    try:
-        df = pd.read_csv(_INDUSTRY_CACHE, dtype={"Code": str})
-        df["Code"] = df["Code"].astype(str).str.zfill(6)
-        print(f"[ui_sector] 업종 디스크 캐시 사용 ({len(df)}종목)")
-        return dict(zip(df["Code"], df["업종명"].astype(str)))
-    except Exception as e:
-        print(f"[ui_sector] 업종 디스크 캐시 실패: {type(e).__name__}: {e}")
-        return None
-
-
-def _save_industry_to_disk(mapping: dict) -> None:
-    """KIND가 성공했을 때만 시드를 갱신. 실패해도 조회를 망치지 않는다."""
-    try:
-        os.makedirs(os.path.dirname(_INDUSTRY_CACHE), exist_ok=True)
-        # 코드순 정렬 고정 — 정렬하지 않으면 내용이 같아도 매번 전체 diff가 나
-        # 자동커밋이 불어난다 (krx_listing._save_to_disk와 같은 이유).
-        (pd.DataFrame(sorted(mapping.items()), columns=["Code", "업종명"])
-           .to_csv(_INDUSTRY_CACHE, index=False, encoding="utf-8"))
-    except Exception as e:
-        print(f"[ui_sector] 업종 캐시 저장 실패(무시): {type(e).__name__}: {e}")
+# 업종 분류(KIND → 커밋된 디스크 캐시 data/listing/krx_industry.csv)와 업종 집계는
+# sector_history.py로 옮겼다 — 날짜별로 쌓는 배치와 이 화면이 같은 계산을 써야 같은 날 숫자가
+# 맞는다. KIND는 클라우드 IP에서 자주 막혀 디스크 캐시가 최후 방어선이다.
+_MIN_MEMBERS = sector_history.MIN_MEMBERS
+_industry_from_kind = sector_history.industry_from_kind
+_industry_from_disk = sector_history.industry_from_disk
+_save_industry_to_disk = sector_history.save_industry_to_disk
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -131,39 +79,27 @@ def _merged_quotes():
 @st.cache_data(ttl=180, show_spinner=False)
 def get_sector_performance():
     """업종명 / 업종코드 / 등락률 / 상승·보합·하락 종목수. 실패하면 None."""
-    df = _merged_quotes()
-    if df is None or df.empty:
-        return None
     try:
-        rows = []
-        for name, g in df.groupby("업종명"):
-            if len(g) < _MIN_MEMBERS:
-                continue
-            w = g["Marcap"].sum()
-            # 시총가중 평균 — 업종 지수가 실제로 움직인 정도에 가깝다.
-            # 단순평균을 쓰면 소형주 몇 개가 업종 순위를 좌우한다.
-            rate = float((g["ChagesRatio"] * g["Marcap"]).sum() / w) if w else 0.0
-            rows.append({
-                "업종명": name,
-                "등락률": f"{rate:+.2f}%",
-                "등락률_num": round(rate, 2),
-                "전체": int(len(g)),
-                "상승": int((g["ChagesRatio"] > 0).sum()),
-                "보합": int((g["ChagesRatio"] == 0).sum()),
-                "하락": int((g["ChagesRatio"] < 0).sum()),
-                # 드릴다운 키. 예전엔 네이버 업종번호였는데 이제 업종명이 곧 키다.
-                "업종코드": name,
-            })
-        if not rows:
-            return None
-        out = (pd.DataFrame(rows)
-               .sort_values("등락률_num", ascending=False)
-               .reset_index(drop=True))
-        out.attrs["as_of"] = df.attrs.get("as_of", "")
+        q = fetch_krx_marcap()
+        rows = sector_history.compute_sector_table(q, _industry_map())
+        out = _rows_to_df(rows)
+        if out is not None:
+            out.attrs["as_of"] = q.attrs.get("as_of", "")
         return out
     except Exception as e:
         print(f"[ui_sector] 업종 집계 실패: {type(e).__name__}: {e}")
         return None
+
+
+def _rows_to_df(rows):
+    """sector_history 행([업종, 등락률, 종목수, 상승, 보합, 하락]) → 화면용 표. 비면 None."""
+    if not rows:
+        return None
+    return pd.DataFrame([{
+        "업종명": n, "등락률": f"{r:+.2f}%", "등락률_num": r, "전체": t,
+        "상승": u, "보합": f, "하락": d,
+        "업종코드": n,      # 드릴다운 키. 예전엔 네이버 업종번호였는데 이제 업종명이 곧 키다.
+    } for n, r, t, u, f, d in rows])
 
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -246,7 +182,7 @@ def get_sector_snapshot():
     now_txt = trade_day or datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
 
     if df is None or df.empty:
-        snap, saved = _load_snapshot()
+        snap, saved = _fallback()
         return (snap, saved, True) if snap is not None else (None, None, True)
 
     moved = int((df["등락률_num"] != 0).sum())
@@ -255,10 +191,25 @@ def get_sector_snapshot():
         return df, now_txt, False
 
     # 전 업종이 보합 = 장 시작 전(또는 휴장). 직전 스냅샷으로 대체한다.
-    snap, saved = _load_snapshot()
+    snap, saved = _fallback()
     if snap is not None:
         return snap, saved, True
     return df, now_txt, True
+
+
+def _fallback():
+    """
+    (표, 기준) — 디스크 스냅샷과 배치가 쌓은 마지막 거래일(sector_history) 중 더 최근 것.
+    스냅샷은 이 서버가 장중에 본 마지막 값이라 재배포·재시작 뒤엔 오래됐을 수 있다
+    (실제로 10/30 아침에 10/26 값을 '직전 장'으로 보여줬다 — 기록엔 10/29가 있었다).
+    """
+    snap, saved = _load_snapshot()
+    days = sector_history.saved_days()
+    if days and (snap is None or str(saved or "")[:10] < days[0]):
+        hist = _rows_to_df(sector_history.load_day(days[0]))
+        if hist is not None:
+            return hist, days[0]
+    return snap, saved
 
 
 def _fetch_news(sector_name: str, n: int):
@@ -323,6 +274,8 @@ def _spotlight_card(row, news):
             f'<a href="{html.escape(link)}" target="_blank" rel="noopener noreferrer" '
             f'style="color:#7a8794;text-decoration:none;">📰 {html.escape(title)}</a></div>'
         )
+    elif news is None:      # 지난 날짜 — 뉴스는 '지금' 기사라 붙이지 않는다
+        reason = ""
     else:
         reason = ('<div style="font-size:11.5px;color:#bbb;margin-top:3px;">'
                   '관련 뉴스 없음</div>')
@@ -360,8 +313,20 @@ def render_sector_section():
     st.caption("KRX 업종분류(KIND) × 종목별 종가 등락률을 시가총액으로 가중해 "
                f"직접 집계합니다 · 구성종목 {_MIN_MEMBERS}개 이상 업종만 · 3분 캐시")
 
-    with st.spinner("업종 데이터 로딩 중..."):
-        df, as_of, stale = get_sector_snapshot()
+    # 지난 거래일은 macro 배치가 data/sector/daily에 쌓아 둔다(sector_history.py, 2026-03-09~).
+    _WD = "월화수목금토일"
+    days = sector_history.saved_days()
+    day = st.selectbox(
+        "기준일", ["live"] + days, key="sector_day", label_visibility="collapsed", width=190,
+        format_func=lambda d: "최신 (3분마다 갱신)" if d == "live"
+        else f"{d} ({_WD[datetime.strptime(d, '%Y-%m-%d').weekday()]})")
+    disable_keyboard("sector_day")
+
+    if day == "live":
+        with st.spinner("업종 데이터 로딩 중..."):
+            df, as_of, stale = get_sector_snapshot()
+    else:
+        df, as_of, stale = _rows_to_df(sector_history.load_day(day)), day, False
 
     if df is None or df.empty:
         st.error("❌ 업종 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.")
@@ -389,10 +354,13 @@ def render_sector_section():
     top5 = df.head(5)
     bottom5 = df.tail(5).iloc[::-1]
 
-    # Top10의 헤드라인을 한 번에 병렬로 받아 카드에 같이 싣는다
+    # Top10의 헤드라인을 한 번에 병렬로 받아 카드에 같이 싣는다(최신일 때만)
     names = tuple(list(top5["업종명"]) + list(bottom5["업종명"]))
-    with st.spinner("업종 이슈 확인 중..."):
-        news_map = get_sector_news_bulk(names)
+    if day == "live":
+        with st.spinner("업종 이슈 확인 중..."):
+            news_map = get_sector_news_bulk(names)
+    else:
+        news_map = {n: None for n in names}
 
     c1, c2 = st.columns(2)
     with c1:
@@ -427,6 +395,9 @@ def render_sector_section():
 
     # 💡 소속 종목 드릴다운은 남겼지만 접어 뒀다 — "Top5만 표시" 요청에 맞게
     # 화면은 Top5 + 이슈로 끝나되, 특정 업종을 파보고 싶을 때는 열 수 있게.
+    # 종목 시세는 최신 것만 있어 지난 날짜에서는 보이지 않는다.
+    if day != "live":
+        return
     with st.expander("특정 업종의 소속 종목 보기", expanded=False):
         sel_name = st.selectbox("업종 선택", df["업종명"].tolist(), key="sector_pick")
         # 목록에서 고르기만 하므로 모바일 키패드를 막는다.
