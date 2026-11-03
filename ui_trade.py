@@ -14,7 +14,6 @@ import time
 import requests
 from requests.adapters import HTTPAdapter
 import html
-import concurrent.futures
 import statistics
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -33,6 +32,9 @@ _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 _NITEM_BASE = "https://apis.data.go.kr/1220000/nitemtrade/getNitemtradeList"
 
 _EMPTY = (0.0, 0.0, 0.0)          # [수출M, 수입M, 수출kg] 기본값
+# 이 탭은 진행률을 0.3초부터 띄운다(공용 기본 1초). 처음 조회는 66~90건이라 길고, 1초를 기다리면
+# 막대가 절반쯤 지나서야 잠깐 보였다. 캐시 적중이면 0.1초 안에 끝나 막대가 번쩍이지 않는다.
+_SHOW_AFTER = 0.3
 
 # 관세청 호출용 공용 세션. 앱은 미국(Streamlit Cloud)에서 돌고 API는 한국이라,
 # 호출마다 새로 연결하면 66번 모두 태평양 너머 TCP·TLS 핸드셰이크를 다시 한다.
@@ -157,7 +159,7 @@ def _fetch_theme(api_key, codes, months, keep=None, label="수출 데이터 불�
     jobs = {(c, a, b): (lambda c=c, a=a, b=b: _fetch_code_range_cached(api_key, c, a, b, keep))
             for c in codes for a, b in _year_windows(months)}
     # 동시 6개 — 12개면 초당 한도(429)에 더 자주 걸린다.
-    res = run_with_progress(jobs, label=label, max_workers=6)
+    res = run_with_progress(jobs, label=label, max_workers=6, show_after=_SHOW_AFTER)
     for (c, _a, _b), out in res.items():
         if isinstance(out, Exception):
             continue            # 이번 화면에선 빈 칸 — 캐시엔 안 남아 다음에 다시 받는다
@@ -239,50 +241,66 @@ def get_theme_trends(theme: str, n_months: int = 36, country=None):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _country_share_cached(api_key: str, code: str, a: str, b: str) -> dict:
+    """
+    코드 하나의 [a, b] 국가별 수출액 -> {국가코드: [국가명, 수출$]}. 요청 단위 캐시.
+    실패(429 재시도 후에도)는 예외로 — 예전엔 테마 전체를 통째로 캐시하면서 실패한 코드를
+    빈 값으로 1시간 붙잡았고, 동시 12개로 쏴서 429도 잦았다(AGENTS.md data.go.kr 한도).
+    """
+    for wait in (0.5, 1.0, 2.0, None):
+        r = _HTTP.get(
+            _NITEM_BASE,
+            params={"serviceKey": api_key, "strtYymm": a, "endYymm": b,
+                    "hsSgn": code, "numOfRows": 9999, "pageNo": 1},
+            timeout=25,
+        )
+        if r.status_code != 429 or wait is None:
+            break
+        time.sleep(wait)
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}")
+    acc = {}
+    for item in ET.fromstring(r.text).findall(".//item"):
+        if "." not in (item.findtext("year", "") or ""):
+            continue
+        cc = (item.findtext("statCd", "") or "").strip()
+        nm = (item.findtext("statCdCntnKor1", "") or "").strip()
+        if not cc or cc == "-" or not nm or nm == "-":
+            continue
+        v = float((item.findtext("expDlr", "0") or "0").replace(",", ""))
+        row = acc.setdefault(cc, [nm, 0.0])
+        row[1] += v
+    return acc
+
+
+def _country_jobs(api_key: str, theme: str, ref_months: int = 3) -> dict:
+    """대상국 옵션에 필요한 요청들 {("cty", 코드): 함수} — 최근 몇 달 합산(당월 제외)."""
+    items = TRADE_ITEMS.get(theme, {})
+    codes = sorted({c for codes, _ in items.values() for c in codes})
+    months = _month_list(ref_months + 1)[:-1]
+    a, b = months[0], months[-1]
+    return {("cty", c): (lambda c=c: _country_share_cached(api_key, c, a, b)) for c in codes}
+
+
 def get_country_options(theme: str, ref_months: int = 3):
     """
     테마 전체의 주요 수출 대상국 -> [(국가코드, "중국 (72%)"), ...] 비중 내림차순.
     최근 몇 달을 합산해 뽑는다 — 한 달만 보면 선적 시점 때문에 순위가 튄다.
+    요청은 코드 단위로 캐시돼 있어, render_trade가 미리 받아 두면 여기선 전부 캐시 적중이다.
     """
     api_key = st.secrets.get("DATA_GO_KR_KEY", "")
-    items = TRADE_ITEMS.get(theme, {})
-    if not api_key or not items:
+    if not api_key or not TRADE_ITEMS.get(theme):
         return []
-    codes = sorted({c for codes, _ in items.values() for c in codes})
-    months = _month_list(ref_months + 1)[:-1]      # 당월 제외
-    a, b = months[0], months[-1]
-
-    def _one(code):
-        acc = {}
-        try:
-            r = _HTTP.get(
-                _NITEM_BASE,
-                params={"serviceKey": api_key, "strtYymm": a, "endYymm": b,
-                        "hsSgn": code, "numOfRows": 9999, "pageNo": 1},
-                timeout=25,
-            )
-            if r.status_code != 200:
-                return acc
-            for item in ET.fromstring(r.text).findall(".//item"):
-                if "." not in (item.findtext("year", "") or ""):
-                    continue
-                cc = (item.findtext("statCd", "") or "").strip()
-                nm = (item.findtext("statCdCntnKor1", "") or "").strip()
-                if not cc or cc == "-" or not nm or nm == "-":
-                    continue
-                v = float((item.findtext("expDlr", "0") or "0").replace(",", ""))
-                row = acc.setdefault(cc, [nm, 0.0])
-                row[1] += v
-        except Exception as e:
-            print(f"[ui_trade] 국가옵션 {code} 조회 실패: {type(e).__name__}: {e}")
-        return acc
-
+    res = run_with_progress(_country_jobs(api_key, theme, ref_months),
+                            label="수출 대상국 확인 중", max_workers=6, show_after=_SHOW_AFTER)
     totals = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
-        for acc in ex.map(_one, codes):
-            for cc, (nm, v) in acc.items():
-                row = totals.setdefault(cc, [nm, 0.0])
-                row[1] += v
+    for key, acc in res.items():
+        if isinstance(acc, Exception):
+            print(f"[ui_trade] 국가옵션 {key[1]} 조회 실패: {type(acc).__name__}: {acc}")
+            continue
+        for cc, (nm, v) in acc.items():
+            row = totals.setdefault(cc, [nm, 0.0])
+            row[1] += v
 
     grand = sum(v[1] for v in totals.values())
     if grand <= 0:
@@ -294,6 +312,27 @@ def get_country_options(theme: str, ref_months: int = 3):
             break
         out.append((cc, f"{nm} ({pct:.0f}%)"))
     return out
+
+
+def _prefetch(theme: str) -> None:
+    """
+    첫 화면에 필요한 요청(대상국 옵션 + 전체 합계 추이)을 진행률 막대 하나로 한꺼번에 받는다.
+    예전엔 대상국 옵션을 진행률 없이 먼저 받고(그동안 화면이 멈춘 듯 보였다) 추이는 1초가
+    지나서야 막대가 떠 54%부터 잠깐 보였다(2026-11-03 실측). 결과는 요청 단위 캐시에 남아
+    아래 get_country_options·get_theme_trends가 그대로 꺼내 쓴다.
+    """
+    api_key = st.secrets.get("DATA_GO_KR_KEY", "")
+    items = TRADE_ITEMS.get(theme, {})
+    if not api_key or not items:
+        return
+    codes = sorted({c for codes, _ in items.values() for c in codes})
+    jobs = _country_jobs(api_key, theme)
+    for c in codes:
+        for a, b in _year_windows(_month_list(_MONTHS)):
+            # ⚠️ 인자를 _fetch_theme과 똑같이(keep=None까지 위치 인자로) 넘겨야 같은 캐시 키가 된다 —
+            # 생략하면 st.cache_data가 다른 호출로 보고 66건을 다시 받았다(실측).
+            jobs[(c, a, b)] = (lambda c=c, a=a, b=b: _fetch_code_range_cached(api_key, c, a, b, None))
+    run_with_progress(jobs, label="수출 데이터 불러오는 중", max_workers=6, show_after=_SHOW_AFTER)
 
 
 # ── 차트 ─────────────────────────────────────────────────────────────────────
@@ -506,7 +545,7 @@ _COLS = 3          # 카드 한 줄에 3개 (매크로 탭과 동일)
 def render_trade():
     if page_header("수출입 동향", "trade"):
         _fetch_code_range_cached.clear()
-        get_country_options.clear()
+        _country_share_cached.clear()
         st.rerun()
     st.caption(
         f"관세청 품목별 수출입실적 · 세부품목 {item_count()}개 · "
@@ -528,6 +567,7 @@ def render_trade():
     with c1:
         theme = st.selectbox("테마", themes(), key="trade_theme")
 
+    _prefetch(theme)            # 진행률은 셀렉터 줄 아래에 뜬다
     opts = get_country_options(theme)
     labels = ["전체"] + [lb for _, lb in opts]
     code_by_label = {lb: cc for cc, lb in opts}
