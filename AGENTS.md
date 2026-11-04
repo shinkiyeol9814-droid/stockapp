@@ -62,7 +62,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `ui_report.py` | 레포트 탭 |
 | `new_high.py` | 신고가 탭 (아래에 섹터별 등락률 섹션. 종목별 뉴스 펼침은 2026-10-30 제거) |
 | `ui_sector.py` | 섹터별 등락률 (Top5 + 이슈 뉴스) — 2026-10-30부터 탭이 아니라 신고가 탭 아래 섹션(`render_sector_section`) |
-| `ui_company.py` | 기업분석 탭 — Secret `NOTION_EMBED_URL`(노션 웹 게시 주소)이 있으면 `…notion.site/ebd/ID`로 바꿔 iframe으로 띄움. 노션에서 iframe을 허용하는 주소는 /ebd/뿐(헤더 실측). 노션 임베드 코드(`<iframe src=…>`) 통째로 넣어도 된다. 없으면 새 탭 링크 버튼, 값이 있는데 못 쓰면 이유(값은 숨김) |
+| `ui_company.py` | 기업분석 탭 — Secret `NOTION_EMBED_URL`(노션 웹 게시 주소)이 있으면 `…notion.site/ebd/ID`로 바꿔 iframe으로 띄움. 노션에서 iframe을 허용하는 주소는 /ebd/뿐(헤더 실측). 노션 앱이 JS 181개(약 18MB)를 실행해야 표가 떠서 느리다(캐시 있어도 약 2.5초) — iframe은 다른 출처라 진행 상황을 못 읽어 진행률은 경과 시간 추정 + load 후 0.9초에 100%. 노션 임베드 코드(`<iframe src=…>`) 통째로 넣어도 된다. 없으면 새 탭 링크 버튼, 값이 있는데 못 쓰면 이유(값은 숨김) |
 | `ui_trade.py` | 수출입 동향 탭 (관세청 품목별 실적) |
 | `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |

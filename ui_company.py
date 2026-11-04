@@ -13,9 +13,17 @@ NOTION_EMBED_URL에 둔다. 게시 페이지 주소(…notion.site/제목-ID)를
 노션 "임베드" 메뉴가 복사해 주는 <iframe src="…"> 코드 통째로 넣어도, ID가 하이픈 섞인
 UUID 꼴이어도 된다. 값이 있는데 못 쓰면 이유를 화면에 보인다(값 자체는 보이지 않는다).
 
+━━ 느린 건 노션 쪽이다 (2026-11-04 실측) ━━
+임베드 문서(19KB)는 CDN에서 0.1~0.2초에 오지만, 그 안에서 노션 앱이 JS 181개(풀면 약 18MB)를 받아
+실행한 뒤에야 DB 데이터(약 130KB)를 요청한다 — 캐시가 있어도 표가 뜨기까지 약 2.5초, 휴대폰·첫 방문은
+더 길다. JS는 1년 immutable 캐시라 미리 받아 두기(warm-up)는 첫 방문에만 효과가 있어 하지 않았다.
+iframe 안 진행 상황은 다른 출처라 읽을 수 없으므로, 진행률은 경과 시간으로 추정해 올리다가(최대 95%)
+iframe load 뒤 데이터 요청 몫(0.9초)을 더 기다려 100%로 닫는다.
+
 Secrets가 없으면 새 탭으로 여는 버튼만 보인다(NOTION_DB_URL, 없으면 아래 기본 링크 —
 워크스페이스 링크라 로그인한 본인만 열린다).
 """
+import html
 import re
 
 import streamlit as st
@@ -64,6 +72,38 @@ def _why_not(raw: str) -> str:
     return "노션 웹 게시 주소(<code>https://….notion.site/…</code>) 형태가 아닙니다."
 
 
+_FRAME_H = 900
+
+# 진행률 모양은 st.progress(run_with_progress)와 같게 — 글자 + 얇은 빨간 막대.
+# 막대는 iframe 위에 겹쳐 띄우고 끝나면 사라져, 화면이 아래로 밀리지 않는다.
+_FRAME_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;background:#fff;}
+#wrap{position:relative;}
+#nf{display:block;width:100%;height:__H__px;border:0;}
+#prog{position:absolute;left:0;right:0;top:0;padding:10px 2px;background:#fff;transition:opacity .3s;
+  font:14px "Source Sans Pro","Source Sans 3",-apple-system,"Malgun Gothic",sans-serif;color:#31333f;}
+#track{height:.5rem;border-radius:.5rem;background:#f0f2f6;margin-top:6px;overflow:hidden;}
+#bar{height:100%;width:0;background:#ff4b4b;border-radius:.5rem;transition:width .2s linear;}
+</style></head><body><div id="wrap">
+<iframe id="nf" src="__SRC__" allow="fullscreen" referrerpolicy="no-referrer-when-downgrade"></iframe>
+<div id="prog"><span id="lbl">노션 기업분석 DB 불러오는 중 0%</span><div id="track"><div id="bar"></div></div></div>
+</div><script>
+const t0 = performance.now(), bar = document.getElementById("bar"), lbl = document.getElementById("lbl"),
+      prog = document.getElementById("prog");
+let done = false;
+function set(p) { bar.style.width = p + "%"; lbl.textContent = "노션 기업분석 DB 불러오는 중 " + Math.floor(p) + "%"; }
+(function tick() {
+  if (done) return;
+  set(95 * (1 - Math.exp(-(performance.now() - t0) / 2500)));   // 2.5초 60% · 5초 82% · 8초 91%
+  setTimeout(tick, 150);
+})();
+document.getElementById("nf").addEventListener("load", () => setTimeout(() => {
+  done = true; set(100);
+  setTimeout(() => { prog.style.opacity = 0; setTimeout(() => prog.remove(), 300); }, 250);
+}, 900));                                                        // load 뒤 DB 데이터 요청 몫(실측 0.8초)
+</script></body></html>"""
+
+
 def render_company():
     page_header("기업분석", "company", refresh=False)
     raw = _secret("NOTION_EMBED_URL")
@@ -72,7 +112,9 @@ def render_company():
 
     if embed:
         # 노션 화면을 그대로 띄운다. 스크롤은 iframe 안에서 — 높이를 화면에 가깝게 잡는다.
-        components.iframe(embed, height=900, scrolling=True)
+        # 같은 html이면 다시 실행돼도 컴포넌트가 그대로 남아 노션을 다시 불러오지 않는다.
+        components.html(_FRAME_HTML.replace("__H__", str(_FRAME_H)).replace("__SRC__", html.escape(embed)),
+                        height=_FRAME_H)
         st.link_button("노션에서 열기 (편집)", open_url, icon=":material/open_in_new:")
         return
 
