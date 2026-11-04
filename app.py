@@ -90,12 +90,14 @@ st.markdown("""
             flex: 0 0 auto !important; width: auto !important; min-width: 0 !important;
         }
 
-        /* 3-2. 거래급증 일자·시각 줄 — 시각 버튼("종합 (113)")을 작게 촘촘히 (ui_surge). */
-        .st-key-surge_bar [data-testid="stButtonGroup"] button {
+        /* 3-2. 거래급증 일자·시각 줄 — 시각 버튼("종합 (113)")을 작게 촘촘히 (ui_surge, 투신 수급 줄도 같게). */
+        .st-key-surge_bar [data-testid="stButtonGroup"] button,
+        .st-key-flow_bar [data-testid="stButtonGroup"] button {
             padding: 0.15rem 0.5rem !important;
             min-height: 2rem !important;
         }
-        .st-key-surge_bar [data-testid="stButtonGroup"] button p {
+        .st-key-surge_bar [data-testid="stButtonGroup"] button p,
+        .st-key-flow_bar [data-testid="stButtonGroup"] button p {
             font-size: 0.78rem !important;
         }
 

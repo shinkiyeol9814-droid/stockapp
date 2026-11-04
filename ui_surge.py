@@ -13,7 +13,15 @@ ui_surge.py — 거래대금 급증 스크리너 탭.
 일자 파일 구조(kosdaq-surge/surge/screen.py):
   slots.{slot}.hits.{코드} = [배수, 시장 내 대금순위, 등급, 현재가, 등락률, 거래대금(억), 회전율%]
   stocks.{코드} = {n, m(K/Q), p, c, v(억), cap(억), turn, news[제목,언론사,URL,시각], k[[시,고,저,종]...]}
+
+━━ 투신 수급 화면 (2026-11-04, 같은 리포의 '투신 수급' 탭을 옮긴 것) ━━
+시총 300억~1조에서 투신이 많이 산 종목(오늘 많이 산)·연속 순매수 종목을 KRX 장 마감 뒤 확정치로 뽑은
+결과(data/flow/index.json, data/flow/{기준일}.json — 구조는 kosdaq-surge/surge/flow.py 머리말)를 그린다.
+  stocks.{코드} = {n, m, p 종가, c 등락률, cap 시총(억), net 그날 순매수(억), pct 시총 대비(%),
+                   bd 매수일 수, st 연속 매수일, sum 누적(억), s 일별 순매수(억) 오래된 순,
+                   t/k 1이면 '오늘 많이 산'/'연속 순매수', ohlc 3개월 일봉}
 """
+import base64
 import html
 
 import pandas as pd
@@ -60,6 +68,17 @@ def _get_index():
 def _get_day(day: str, updated: str):
     """일자 파일. updated를 키에 넣어, 새 수집이 올라오면(색인 갱신) 자동으로 다시 받는다."""
     return _fetch(f"days/{day}.json")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_flow_index():
+    """투신 수급 일자 목록 {ver, updated, days: [{d, t, k}]} — 최신 일자가 앞."""
+    return _fetch("flow/index.json")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_flow_day(day: str, updated: str):
+    return _fetch(f"flow/{day}.json")
 
 
 # ── 화면 조각 ────────────────────────────────────────────────────────────────
@@ -255,11 +274,212 @@ def _active_text(picks, mkt, g, d, n) -> str:
     return " · ".join(parts)
 
 
+# ── 투신 수급 ────────────────────────────────────────────────────────────────
+# 원본 화면(kosdaq-surge docs/app.js renderFlow)과 같은 열·같은 기본 순서(시총 대비 큰 순).
+_FTABS = {"t": "오늘 많이 산", "k": "연속 순매수"}
+# 시총 대비 단계 — box_pct(설정, 0.3%) 이상 연하게, 0.5% 중간, 1% 진하게. 원본 app.js PILL과 같은 값.
+_PILL = (0.5, 1.0)
+_PILL_STYLE = {1: "background-color:rgba(239,83,80,0.14);color:#c62828;font-weight:600",
+               2: "background-color:rgba(239,83,80,0.7);color:#fff;font-weight:600",
+               3: f"background-color:{_UP};color:#fff;font-weight:700"}
+_FLOW_SORT = {"시총 대비": "pct", "순매수": "net", "매수일": "bd", "연속": "st",
+              "누적": "sum", "등락률": "c", "시총": "cap"}
+_FLOW_SORT_OPTS = [f"{name} {d}" for name in _FLOW_SORT for d in ("높은순", "낮은순")]
+
+
+def _flow_rules_html(c: dict) -> str:
+    eok = lambda w: f"{w / 1e8:,.0f}"
+    pill = lambda t, txt: (f"<span style='{_PILL_STYLE[t]};padding:1px 7px;border-radius:999px;'>"
+                           f"{txt}</span>")
+    box = c.get("box_pct", 0.3)
+    return (
+        f'<div style="font-size:12.5px;color:#555;line-height:1.6;">'
+        f'시가총액 <b>{eok(c["min_mcap"])}억 ~ {eok(c["max_mcap"])}억</b> 종목만 본다. 투신 순매수는 KRX '
+        f'투자자별 순매수(기관 중 투자신탁)의 장 마감 뒤 확정치다.'
+        f'<div style="margin-top:4px;"><b>오늘 많이 산</b> — 기준일 투신 순매수가 시가총액의 '
+        f'<b>{c["min_pct"]:g}%</b> 이상.</div>'
+        f'<div><b>연속 순매수</b> — 기준일까지 <b>{c["streak"]}일</b> 이상 연속 순매수, 또는 최근 '
+        f'<b>{c["days"]}거래일</b> 중 <b>{c["buy_days"]}일</b> 이상 순매수(그 기간 누적도 순매수).</div>'
+        f'<div style="margin-top:4px;">막대는 최근 {c["days"]}거래일 투신 순매수 — 위로 빨강은 순매수, '
+        f'아래로 파랑은 순매도. 시총 대비는 {pill(1, f"{box:g}%")} '
+        f'{pill(2, f"{_PILL[0]:g}%")} {pill(3, f"{_PILL[1]:g}%")} 이상으로 나눠 진하게.</div></div>'
+    )
+
+
+def _flow_bars_uri(s: list):
+    """최근 N거래일 투신 순매수 막대(위 빨강·아래 파랑) SVG — 원본 flowBars와 같은 모양.
+    st.dataframe은 셀에 HTML을 못 넣고 BarChartColumn은 한 색이라, 이미지(data URI)로 넣는다."""
+    if not s:
+        return None
+    W, H = 90, 26
+    step = W / len(s)
+    bw = max(2, step * 0.66)
+    m = max(abs(v) for v in s) or 1
+    mid = H / 2
+    rects = []
+    for i, v in enumerate(s):
+        h = max(1 if v else 0, abs(v) / m * (mid - 1))
+        x = i * step + (step - bw) / 2
+        rects.append(f'<rect x="{x:.1f}" y="{(mid - h if v > 0 else mid):.1f}" width="{bw:.1f}" '
+                     f'height="{h:.1f}" fill="{_UP if v > 0 else _DOWN}"/>')
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">'
+           f'<line x1="0" x2="{W}" y1="{mid}" y2="{mid}" stroke="#d9dde3" stroke-width="1"/>'
+           + "".join(rects) + "</svg>")
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+
+def _pill_tier(p: float, box: float) -> int:
+    p = round(p, 2)          # 보이는 숫자(소수 둘째)로 단계를 정한다 — 원본과 같게
+    return 3 if p >= _PILL[1] else 2 if p >= _PILL[0] else 1 if p >= box else 0
+
+
+def _render_flow_table(rows: list, nd: int, box: float) -> None:
+    df = pd.DataFrame([{
+        "종목": (f"https://finance.naver.com/item/main.naver?code={r['code']}"
+                 f"#{str(r.get('n') or r['code'])}"),
+        "추이": _flow_bars_uri(r.get("s")),
+        "3개월": [k[3] for k in (r.get("ohlc") or [])] or None,
+        "순매수(억)": float(r.get("net") or 0),
+        "시총 대비": float(r.get("pct") or 0),
+        "매수일": int(r.get("bd") or 0),
+        "연속": float(r["st"]) if r.get("st") else None,      # 0일은 빈칸(원본은 '–')
+        "누적(억)": float(r.get("sum") or 0),
+        "종가": float(r.get("p") or 0),
+        "등락률": float(r.get("c") or 0),
+        "시총(억)": float(r.get("cap") or 0),
+    } for r in rows])
+    cc = st.column_config
+    cfg = {
+        "종목": cc.LinkColumn("종목", display_text=_NAME_FROM_URL, width=110,
+                             help="누르면 네이버 금융 종목 페이지가 열립니다"),
+        "추이": cc.ImageColumn("투신 순매수 추이", width=100,
+                              help=f"최근 {nd}거래일 — 위 빨강 순매수, 아래 파랑 순매도"),
+        "3개월": cc.LineChartColumn("3개월 종가"),
+        "순매수(억)": cc.NumberColumn("순매수(억)", format="%+,.1f", width="small"),
+        "시총 대비": cc.NumberColumn("시총 대비", format="%.2f%%", width="small"),
+        "매수일": cc.NumberColumn("매수일", format=f"%d/{nd}", width="small",
+                                help=f"최근 {nd}거래일 중 투신이 순매수한 날"),
+        "연속": cc.NumberColumn("연속", format="%d일", width="small"),
+        "누적(억)": cc.NumberColumn("누적(억)", format="%+,.1f", width="small"),
+        "종가": cc.NumberColumn("종가", format="%,d", width="small"),
+        "등락률": cc.NumberColumn("등락률", format="%+.2f%%", width="small"),
+        "시총(억)": cc.NumberColumn("시총(억)", format="%,d", width="small"),
+    }
+
+    def pct_style(v):
+        t = _pill_tier(v, box)
+        return _PILL_STYLE[t] if t else f"color:{_clr(v)}"
+
+    styled = (df.style
+              .map(lambda v: f"color:{_clr(v)};font-weight:700", subset=["순매수(억)"])
+              .map(lambda v: f"color:{_clr(v)}", subset=["누적(억)"])
+              .map(lambda v: f"color:{_clr(v)};font-weight:600", subset=["등락률"])
+              .map(pct_style, subset=["시총 대비"])
+              .map(lambda v: "font-weight:700" if v == v and v else "", subset=["연속"]))
+    st.dataframe(styled, column_config=cfg, hide_index=True, use_container_width=True,
+                 height=min(len(df) * 35 + 38, 760))
+
+
+def _render_flow() -> None:
+    try:
+        fidx = _get_flow_index()
+    except Exception as e:
+        st.error(f"❌ 투신 수급 데이터를 가져오지 못했습니다: {type(e).__name__}")
+        return
+    fdays = fidx.get("days") or []
+    if not fdays:
+        st.info("아직 모인 투신 수급 데이터가 없습니다.")
+        return
+    st.caption(f"KRX 투자자별 순매수(투신) 장 마감 뒤 확정치 · 갱신 {fidx.get('updated', '-')}")
+
+    from datetime import date
+    by_day = {d["d"]: d for d in fdays}
+
+    # 건수는 옆 목록 버튼에 있다 — 여기 넣으면 목록을 바꿔도 선택 상자 글자가 바로 안 바뀌었다
+    def _day_label(d):
+        return f"{d[5:]} ({_WD[date.fromisoformat(d).weekday()]})"
+
+    # 일자 선택 + 목록 버튼 한 줄 — 거래대금 급증 화면의 surge_bar와 같은 모양(app.py CSS 3-2)
+    with st.container(key="flow_bar", horizontal=True, vertical_alignment="center", gap="small"):
+        day = st.selectbox("기준일", list(by_day), format_func=_day_label, key="flow_day",
+                           label_visibility="collapsed", width=130)
+        try:
+            f = _get_flow_day(day, fidx.get("updated", ""))
+        except Exception as e:
+            st.error(f"❌ {day} 데이터를 가져오지 못했습니다: {type(e).__name__}")
+            return
+        stocks = f.get("stocks", {})
+        counts = {k: sum(1 for x in stocks.values() if x.get(k)) for k in _FTABS}
+        tab = st.segmented_control("목록", list(_FTABS), default="t", key="flow_tab",
+                                   format_func=lambda k: f"{_FTABS[k]} ({counts[k]})",
+                                   label_visibility="collapsed") or "t"
+    disable_keyboard("flow_day")
+
+    c = f.get("criteria", {})
+    if c:
+        with st.expander("투신 수급 기준", expanded=False):
+            st.markdown(_flow_rules_html(c), unsafe_allow_html=True)
+
+    # 제목 고정 — 이유는 _sort_filter_controls 참고
+    with st.expander("정렬 · 필터", expanded=False, key="flow_sf"):
+        picks = st.multiselect("정렬 기준 (고른 순서가 우선순위)", _FLOW_SORT_OPTS, key="flow_sortkeys",
+                               placeholder="기본: 시총 대비 순매수 큰 순")
+        mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
+                                   key="flow_mkt") or "전체"
+    disable_keyboard("flow_sortkeys")
+
+    rows = [{"code": code, **x} for code, x in stocks.items() if x.get(tab)]
+    total = len(rows)
+    if mkt != "전체":
+        rows = [r for r in rows if r.get("m") == ("K" if mkt == "코스피" else "Q")]
+    rows.sort(key=lambda r: -(r.get("pct") or 0))
+    seen, keys = set(), []
+    for p in picks:
+        name, d = p.rsplit(" ", 1)
+        if name not in seen:
+            seen.add(name)
+            keys.append((_FLOW_SORT[name], d == "높은순"))
+    for field, desc in reversed(keys):
+        rows.sort(key=lambda r: r.get(field) or 0, reverse=desc)
+
+    nd = len(f.get("days") or [])
+    base = f.get("d", day)
+    wd = _WD[date.fromisoformat(base).weekday()]
+    active = " · ".join((["정렬 " + " → ".join(picks)] if picks else [])
+                        + ([f"{mkt}만"] if mkt != "전체" else []))
+    st.markdown(
+        f"<div style='font-size:12.5px;color:#666;margin:2px 0 6px;'>"
+        f"{_FTABS[tab]} <b>{len(rows)}</b>종목"
+        + (f" (필터 전 {total})" if len(rows) != total else "")
+        + f" · 기준일 {base[5:]} ({wd}) 장 마감 뒤 확정치"
+        + (f"<div style='color:#c98a00;margin-top:2px;'>아직 {nd}거래일치만 모였다 — "
+           f"매수일·연속일은 {nd}일 안에서 센 값이다.</div>" if nd < c.get("days", nd) else "")
+        + (f"<div style='color:#555;margin-top:2px;'>적용 중: {html.escape(active)}</div>" if active else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    if not rows:
+        st.info("이 조건에 해당하는 종목이 없습니다.")
+        return
+    _render_flow_table(rows, nd, c.get("box_pct", 0.3))
+    st.caption(f"정렬 · 필터 순서로 표시 · 열 머리글을 누르면 그 열로 다시 정렬 · "
+               f"투신 순매수는 KRX 정보데이터시스템 확정치 · 수집 리포 [kosdaq-surge]({_SITE})")
+
+
 def render_surge():
     if page_header("거래대금 급증 스크리너", "surge"):
         _get_index.clear()
         _get_day.clear()
+        _get_flow_index.clear()
+        _get_flow_day.clear()
         st.rerun()
+
+    # 원본 사이트처럼 두 화면 — 거래대금 급증(장중 4번) / 투신 수급(장 마감 뒤 하루 1번)
+    view = st.segmented_control("화면", ["거래대금 급증", "투신 수급"], default="거래대금 급증",
+                                key="surge_view", label_visibility="collapsed") or "거래대금 급증"
+    if view == "투신 수급":
+        _render_flow()
+        return
 
     try:
         idx = _get_index()

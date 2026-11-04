@@ -226,6 +226,9 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
 (`st-key-surge_bar`)라 휴대폰에선 다음 줄로 내려가고, 글자·여백 축소는 app.py 전역 CSS 3-2.
 정렬·필터는 '정렬 · 필터' 펼침 하나에 모은다(다중 정렬은 multiselect 고른 순서가 우선순위). 펼침 **제목은 고정** —
 상태를 제목에 넣으면 고를 때마다 펼침이 닫힌다. 적용 상태는 요약 줄 '적용 중:'에 보인다.
+같은 탭의 **투신 수급** 화면(2026-11-04)은 그 리포의 `docs/data/flow/index.json`·`flow/{기준일}.json`을 읽는다
+(구조는 그쪽 `surge/flow.py` 머리말). 열·기본 순서(시총 대비 큰 순)·알약 단계(0.3/0.5/1%)는 원본 `app.js`와 같게 —
+알약은 Styler 셀 배경, 순매수 추이 막대는 빨강/파랑이 필요해 SVG data URI를 `ImageColumn`에 넣는다(BarChartColumn은 한 색).
 
 ### 캐시 전략
 
