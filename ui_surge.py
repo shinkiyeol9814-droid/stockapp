@@ -215,7 +215,11 @@ def _render_table(rows) -> None:
 # 다시 정렬된다(st.dataframe 기본 동작).
 _SORT_FIELDS = {"등급": "grade", "등락률": "chg", "배수": "mult",
                 "거래대금": "value", "회전율": "turn", "포착 시각 수": "cnt"}
-_SORT_OPTS = [f"{name} {d}" for name in _SORT_FIELDS for d in ("높은순", "낮은순")]
+# '상승 종목 먼저'는 등락률 > 0인 종목을 한 덩어리로 위에 올린다(그 안의 순서는 뒤 기준이 정함).
+_UP_FIRST = "상승 종목 먼저"
+_SORT_OPTS = [_UP_FIRST] + [f"{name} {d}" for name in _SORT_FIELDS for d in ("높은순", "낮은순")]
+# 기본 정렬(2026-11-04 사용자 요청): 오른 종목 중 등급 높은 것 → 그 안에서 많이 오른 순이 맨 위
+_SORT_DEFAULT = [_UP_FIRST, "등급 높은순", "등락률 높은순"]
 _GRADE_MIN = {"전체": 0, "★1+": 1, "★2+": 2, "★3": 3}
 _CHG_DIR = ["전체", "상승", "하락"]
 
@@ -228,12 +232,15 @@ def _apply_sort(rows: list, slot: str, picks: list) -> None:
         rows.sort(key=lambda r: -r["mult"])
     seen, keys = set(), []
     for p in picks:                      # 같은 항목을 두 방향으로 고르면 먼저 고른 쪽만
+        if p == _UP_FIRST:
+            keys.append((lambda r: (r["chg"] or 0) > 0, True))
+            continue
         name, d = p.rsplit(" ", 1)
         if name not in seen:
             seen.add(name)
-            keys.append((_SORT_FIELDS[name], d == "높은순"))
-    for field, desc in reversed(keys):
-        rows.sort(key=lambda r: r[field] or 0, reverse=desc)
+            keys.append(((lambda f: lambda r: r[f] or 0)(_SORT_FIELDS[name]), d == "높은순"))
+    for key, desc in reversed(keys):
+        rows.sort(key=key, reverse=desc)
 
 
 def _sort_filter_controls(slot: str):
@@ -243,14 +250,12 @@ def _sort_filter_controls(slot: str):
     # 지금 적용된 정렬·필터는 아래 요약 줄(_active_text)에 보인다.
     with st.expander("정렬 · 필터", expanded=False, key="surge_sf"):
         picks = st.multiselect(
-            "정렬 기준 (고른 순서가 우선순위)", _SORT_OPTS, key="surge_sortkeys",
-            placeholder="기본: 여러 시각에 걸친 순 → 배수 큰 순")
+            "정렬 기준 (고른 순서가 우선순위)", _SORT_OPTS, default=_SORT_DEFAULT, key="surge_sortkeys",
+            placeholder="모두 지우면: 여러 시각에 걸친 순 → 배수 큰 순")
         mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
                                    key="surge_mkt") or "전체"
         # 등급(4칸)과 등락(3칸)을 한 줄에 두면 휴대폰 폭(375px)에서 '하락'이 화면 밖으로 나가 따로 둔다
-        # 기본은 ★1 이상(2026-11-04 사용자 요청) — 별 없는 종목은 배수만 크고 시장 전체로는 작은 거래다.
-        # 선택된 버튼을 다시 눌러 끄면 None → '전체'.
-        g = st.segmented_control("등급", list(_GRADE_MIN), default="★1+", key="surge_fgrade") or "전체"
+        g = st.segmented_control("등급", list(_GRADE_MIN), default="전체", key="surge_fgrade") or "전체"
         d = st.segmented_control("등락", _CHG_DIR, default="전체", key="surge_fchg") or "전체"
         if slot == "all":
             n = st.segmented_control("포착 시각 수", [1, 2, 3, 4], default=1, key="surge_fcnt",
