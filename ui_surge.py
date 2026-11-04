@@ -248,7 +248,9 @@ def _sort_filter_controls(slot: str):
         mkt = st.segmented_control("시장", ["전체", "코스피", "코스닥"], default="전체",
                                    key="surge_mkt") or "전체"
         # 등급(4칸)과 등락(3칸)을 한 줄에 두면 휴대폰 폭(375px)에서 '하락'이 화면 밖으로 나가 따로 둔다
-        g = st.segmented_control("등급", list(_GRADE_MIN), default="전체", key="surge_fgrade") or "전체"
+        # 기본은 ★1 이상(2026-11-04 사용자 요청) — 별 없는 종목은 배수만 크고 시장 전체로는 작은 거래다.
+        # 선택된 버튼을 다시 눌러 끄면 None → '전체'.
+        g = st.segmented_control("등급", list(_GRADE_MIN), default="★1+", key="surge_fgrade") or "전체"
         d = st.segmented_control("등락", _CHG_DIR, default="전체", key="surge_fchg") or "전체"
         if slot == "all":
             n = st.segmented_control("포착 시각 수", [1, 2, 3, 4], default=1, key="surge_fcnt",
