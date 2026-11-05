@@ -1,0 +1,22 @@
+{
+ "code": "0035S0",
+ "corp_name": "빅웨이브로보틱스",
+ "errors": {},
+ "inventory_q": {
+  "corp_name": "빅웨이브로보틱스",
+  "rows": []
+ },
+ "inventory_y": {
+  "corp_name": "빅웨이브로보틱스",
+  "rows": []
+ },
+ "reports": {
+  "corp_name": "빅웨이브로보틱스",
+  "backlog": [],
+  "util": [],
+  "dropped": 0,
+  "parsed": {},
+  "pending": 0
+ },
+ "updated_at": "2026-11-05T20:52:52+09:00"
+}
