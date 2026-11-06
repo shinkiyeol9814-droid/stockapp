@@ -315,16 +315,30 @@ def render_sector_section():
 
     # 지난 거래일은 macro 배치가 data/sector/daily에 쌓아 둔다(sector_history.py, 2026-03-09~).
     _WD = "월화수목금토일"
-    days = sector_history.saved_days()
+
+    def _dated(d: str, suffix: str = "") -> str:
+        try:
+            return f"{d} ({_WD[datetime.strptime(d, '%Y-%m-%d').weekday()]}){suffix}"
+        except ValueError:
+            return d + suffix
+
+    # 💡 "최신"이라고만 적어 두면 그게 오늘인지 직전 장인지 알 수 없다 — 실제
+    # 기준일을 라벨에 적는다. 그 날짜는 데이터가 알려주므로(as_of) 셀렉터보다
+    # 먼저 받아야 한다. 3분 캐시라 과거 날짜를 고른 뒤에도 비용은 거의 없다.
+    with st.spinner("업종 데이터 로딩 중..."):
+        live_df, live_as_of, live_stale = get_sector_snapshot()
+    live_day = str(live_as_of or "")[:10]
+    live_label = _dated(live_day, " · 최신") if len(live_day) == 10 else "최신 (3분마다 갱신)"
+
+    # 같은 날이 저장 파일에도 있으면 두 줄로 보인다 — 둘 다 그날 종가라 하나만 둔다.
+    days = [d for d in sector_history.saved_days() if d != live_day]
     day = st.selectbox(
-        "기준일", ["live"] + days, key="sector_day", label_visibility="collapsed", width=190,
-        format_func=lambda d: "최신 (3분마다 갱신)" if d == "live"
-        else f"{d} ({_WD[datetime.strptime(d, '%Y-%m-%d').weekday()]})")
+        "기준일", ["live"] + days, key="sector_day", label_visibility="collapsed", width=230,
+        format_func=lambda d: live_label if d == "live" else _dated(d))
     disable_keyboard("sector_day")
 
     if day == "live":
-        with st.spinner("업종 데이터 로딩 중..."):
-            df, as_of, stale = get_sector_snapshot()
+        df, as_of, stale = live_df, live_as_of, live_stale
     else:
         df, as_of, stale = _rows_to_df(sector_history.load_day(day)), day, False
 
