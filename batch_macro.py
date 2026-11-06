@@ -25,6 +25,7 @@ _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 _SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
 _INFLATION_CACHE = os.path.join(_MACRO_DIR, "us_inflation.json")
+_COMPARE_DIR     = os.path.join(_MACRO_DIR, "compare")
 
 # 미국 연방부채는 스크래핑이 아니라 재무부 공식 API로 받는다 — 키가 필요 없고
 # 1993년부터 일별 전체 이력이 나온다. 그래서 리튬/DRAM처럼 "오늘 값만 긁어
@@ -393,6 +394,77 @@ def fetch_us_inflation() -> dict:
     return out
 
 
+# S&P 500 지수 · 미국채 10년 금리 일별 종가 — 매크로 탭의 비교 차트용.
+#
+# 왜 market_cache.json에 안 넣는가: 그 파일은 400일만 보관하는데(화면 차트가
+# 최대 1년) 비교 차트는 10년까지 본다. 8개 티커 전부를 10년으로 늘리면 한 파일이
+# 매일 전부 바뀌어 커밋마다 수백 KB가 쌓인다.
+#
+# 그래서 index_val과 같은 **연도별 파일**로 쪼갠다 — 올해 파일만 바뀌므로 커밋
+# 증가분이 하루 수십 KB가 아니라 거의 0이다. 날짜도 index_val처럼 문자열로 둔다
+# (epoch_ms UTC 자정 규칙을 또 신경 쓸 필요가 없다).
+#
+# 코스피는 여기서 받지 않는다 — index_val이 2006년부터 일별 종가를 이미 갖고 있다.
+_COMPARE_TICKERS = {"sp500": "^GSPC", "ust10y": "^TNX"}
+
+
+def update_compare_series(period: str = "2y") -> bool:
+    """
+    연도별 파일에 누적. 내용이 바뀐 연도 파일만 다시 쓴다.
+
+    period는 기본 2y — 정기 실행은 최근 구간만 메우면 된다. 전체 이력을 처음
+    심을 때만 "15y"로 한 번 돌린다(값은 확정된 과거라 다시 받을 일이 없다).
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("[compare] yfinance 미설치 — 건너뜀")
+        return False
+
+    fresh = {}
+    for key, tk in _COMPARE_TICKERS.items():
+        try:
+            hist = yf.Ticker(tk).history(period=period)
+            c = hist["Close"].dropna() if not hist.empty else None
+            if c is None or c.empty:
+                print(f"[compare] {tk}: 빈 응답")
+                continue
+            fresh[key] = {ts.date().isoformat(): round(float(v), 4) for ts, v in c.items()}
+            print(f"[compare] {tk}: {len(fresh[key])}건 (최신 {c.iloc[-1]:.3f})")
+        except Exception as e:
+            print(f"[compare] {tk} 실패: {type(e).__name__}: {e}")
+    if not fresh:
+        return False
+
+    years = {d[:4] for rows in fresh.values() for d in rows}
+    os.makedirs(_COMPARE_DIR, exist_ok=True)
+    changed = False
+    for y in sorted(years):
+        path = os.path.join(_COMPARE_DIR, f"{y}.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cur = json.load(f)
+            if not isinstance(cur, dict):
+                cur = {}
+        except Exception:
+            cur = {}
+        merged = {}
+        for key in _COMPARE_TICKERS:
+            by_date = {d: v for d, v in cur.get(key, [])}
+            by_date.update({d: v for d, v in fresh.get(key, {}).items() if d[:4] == y})
+            if by_date:
+                merged[key] = [[d, by_date[d]] for d in sorted(by_date)]
+        if not merged or merged == cur:
+            continue
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(merged, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, path)
+        changed = True
+        print(f"[compare] {y}.json 갱신 ({sum(len(v) for v in merged.values())}건)")
+    return changed
+
+
 def _merge_market(path: str, fresh: dict, keep_days: int = _MARKET_KEEP_DAYS) -> bool:
     """
     기존 파일과 병합해 저장. 일부 티커만 실패해도 나머지 이력은 지키고,
@@ -470,5 +542,6 @@ if __name__ == "__main__":
                                          _SP500_KEEP_DAYS)
         updated["inflation"] = _merge_market(_INFLATION_CACHE, fetch_us_inflation(),
                                              _INFLATION_KEEP_DAYS)
+        updated["compare"] = update_compare_series()
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

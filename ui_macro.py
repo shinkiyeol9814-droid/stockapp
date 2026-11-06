@@ -26,6 +26,7 @@ _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 _SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
 _INFLATION_CACHE = os.path.join(_MACRO_DIR, "us_inflation.json")
+_COMPARE_DIR     = os.path.join(_MACRO_DIR, "compare")
 
 _USDEBT_API = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -1161,6 +1162,156 @@ def _render_valuation_band() -> None:
     _render_sp500_band(years, span_label)
 
 
+_COMPARE_PERIODS = {"1년": 1, "3년": 3, "5년": 5, "10년": 10}
+
+# 선 색은 '계열 구분'이지 등락 표시가 아니다 — 코스피는 한국 시장색 빨강, S&P는
+# 밴드 차트와 같은 파랑 계열, 금리는 성격이 달라(오른쪽 축) 회색 점선으로 낮춘다.
+_CMP_KOSPI = "#ef5350"
+_CMP_SP500 = "#1565C0"
+_CMP_YIELD = "#7E8A93"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_compare_series() -> dict:
+    """
+    {"sp500": Series, "ust10y": Series} — batch_macro가 받아 둔 연도별 파일.
+
+    코스피는 여기서 읽지 않는다 — index_val이 일별 종가를 이미 갖고 있어서
+    _get_index_valuation()을 그대로 쓴다(같은 값을 두 번 저장하지 않는다).
+    """
+    rows = {"sp500": {}, "ust10y": {}}
+    try:
+        names = sorted(os.listdir(_COMPARE_DIR))
+    except Exception:
+        return {}
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(_COMPARE_DIR, fn), "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            continue
+        for key in rows:
+            for d, v in (raw or {}).get(key, []):
+                rows[key][d] = v
+    out = {}
+    for key, by_date in rows.items():
+        if not by_date:
+            continue
+        s = pd.Series(by_date, dtype=float)
+        s.index = pd.to_datetime(s.index)
+        out[key] = s.sort_index()
+    return out
+
+
+def _make_compare_chart(kospi: pd.Series, sp500: pd.Series, yld: pd.Series) -> go.Figure:
+    """
+    지수 둘은 기간 시작을 100으로 되맞춰(rebase) 왼쪽 축에, 금리는 %라 오른쪽 축에.
+
+    💡 되맞추지 않으면 코스피 5,383과 S&P 7,353이 한 축에 겹쳐 '수준'만 보이고
+    '얼마나 올랐나'가 안 보인다. 비교의 목적은 후자다.
+    """
+    fig = go.Figure()
+    for s, name, color in ((kospi, "코스피", _CMP_KOSPI), (sp500, "S&P 500", _CMP_SP500)):
+        if s is None or s.empty:
+            continue
+        base = float(s.iloc[0])
+        if not base:
+            continue
+        fig.add_trace(go.Scatter(
+            x=s.index, y=(s / base * 100).values, mode="lines", name=name,
+            line=dict(color=color, width=1.6),
+            hovertemplate=f"<b>{name}</b> %{{y:.1f}} "
+                          "(%{customdata:,.2f})<extra></extra>",
+            customdata=s.values,
+        ))
+    if yld is not None and not yld.empty:
+        fig.add_trace(go.Scatter(
+            x=yld.index, y=yld.values, mode="lines", name="미국채 10년", yaxis="y2",
+            line=dict(color=_CMP_YIELD, width=1.3, dash="dot"),
+            hovertemplate="<b>미국채 10년</b> %{y:.2f}%<extra></extra>",
+        ))
+    fig.add_hline(y=100, line=dict(color="#ddd", width=1))
+    # 매크로 탭 정책: 축을 fixedrange로 잠그고 툴팁만 남긴다(staticPlot 금지 —
+    # 드래그와 함께 마우스오버 수치까지 죽는다). AGENTS.md '차트 설정' 참고.
+    fig.update_layout(
+        height=330, margin=dict(l=0, r=0, t=26, b=18),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
+                    font=dict(size=10.5), bgcolor="rgba(0,0,0,0)"),
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=8.5, color="#aaa"), ticklen=0),
+        yaxis=dict(title=dict(text="시작=100", font=dict(size=9, color="#999")),
+                   showgrid=True, gridcolor="rgba(0,0,0,0.05)", zeroline=False,
+                   fixedrange=True, tickfont=dict(size=8.5, color="#aaa")),
+        yaxis2=dict(title=dict(text="금리 %", font=dict(size=9, color=_CMP_YIELD)),
+                    overlaying="y", side="right", showgrid=False, zeroline=False,
+                    fixedrange=True, tickfont=dict(size=8.5, color=_CMP_YIELD)),
+    )
+    return fig
+
+
+def _render_compare_section() -> None:
+    section_title("지수 · 금리 비교")
+    data = _get_compare_series()
+    val = _get_index_valuation()
+    kospi_all = val.get("KOSPI", {}).get("close") if isinstance(val.get("KOSPI"), pd.DataFrame) else None
+    if not data and kospi_all is None:
+        st.caption("비교용 데이터를 아직 받지 못했습니다 (매일 배치가 수집).")
+        return
+    span_label = st.radio("비교 기간", list(_COMPARE_PERIODS), index=1,
+                          horizontal=True, key="macro_cmp_span")
+    years = _COMPARE_PERIODS[span_label]
+
+    sp500, yld = data.get("sp500"), data.get("ust10y")
+    ends = [s.index[-1] for s in (kospi_all, sp500, yld) if s is not None and not s.empty]
+    if not ends:
+        st.caption("비교용 데이터를 아직 받지 못했습니다.")
+        return
+    start = max(ends) - pd.DateOffset(years=years)
+    cut = lambda s: s[s.index >= start].dropna() if s is not None else None
+    kospi, sp500, yld = cut(kospi_all), cut(sp500), cut(yld)
+
+    st.plotly_chart(_make_compare_chart(kospi, sp500, yld), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+
+    # 숫자로도 한 줄 — 눈으로 "같이 움직이나"를 보고 나면 다음 질문이 "얼마나"다.
+    bits = []
+    for s, name in ((kospi, "코스피"), (sp500, "S&P 500")):
+        if s is not None and len(s) > 1 and float(s.iloc[0]):
+            chg = (float(s.iloc[-1]) / float(s.iloc[0]) - 1) * 100
+            clr = "#ef5350" if chg > 0 else "#1565C0" if chg < 0 else "#888"
+            bits.append(f"<b>{name}</b> <span style='color:{clr};font-weight:600;'>"
+                        f"{chg:+.1f}%</span>")
+    if yld is not None and len(yld) > 1:
+        d = float(yld.iloc[-1]) - float(yld.iloc[0])
+        clr = "#ef5350" if d > 0 else "#1565C0" if d < 0 else "#888"
+        bits.append(f"<b>미국채 10년</b> {yld.iloc[-1]:.2f}% "
+                    f"<span style='color:{clr};font-weight:600;'>({d:+.2f}%p)</span>")
+    # 일간 변동률의 상관 — 수준이 아니라 '같이 흔들리는 정도'를 본다.
+    #
+    # ⚠️ 같은 날짜끼리 비교하면 안 된다. 코스피는 15:30(KST)에 끝나 미국장이
+    # 열리기도 전이라, 코스피 당일 등락은 미국의 '전날' 종가에 반응한 결과다.
+    # 같은 날로 맞춰 재면 상관이 0.11로 나오고(실측: 3년 +0.111, 5년 +0.115),
+    # S&P를 하루 밀어 맞추면 0.32로 세 배가 된다(3년 +0.320, 5년 +0.326).
+    # 전자를 화면에 적으면 "두 시장은 거의 무관하다"로 잘못 읽힌다.
+    if kospi is not None and sp500 is not None and not kospi.empty and not sp500.empty:
+        both = pd.concat([kospi.pct_change(), sp500.pct_change().shift(1)],
+                         axis=1).dropna()
+        if len(both) > 30:
+            bits.append("코스피~S&P 전일 상관 "
+                        f"<b>{both.corr().iloc[0, 1]:.2f}</b>")
+    if bits:
+        st.markdown(f"<div style='font-size:11.5px;color:#666;margin-top:-4px;'>"
+                    f"{span_label} · " + " · ".join(bits) + "</div>", unsafe_allow_html=True)
+    st.caption("두 지수는 기간 시작을 100으로 맞춘 상대 수익률(왼쪽 축), 금리는 실제 % (오른쪽 축) · "
+               "마우스를 올리면 괄호에 지수 원래 값 · 상관은 코스피 당일과 S&P 직전 거래일을 "
+               "맞춰 낸 값(코스피가 15:30에 끝나 미국장 전이라 같은 날끼리는 비교가 안 된다) · "
+               "코스피는 KRX 종가, S&P 500·미국채 10년은 야후 종가")
+
+
 _INFLATION_PERIODS = {"3년": 3, "10년": 10, "전체": None}
 
 # (키, 표시 이름, 목표치). 목표 2%는 연준의 물가 목표 — 코어 PCE가 그 대상 지표이고,
@@ -1731,9 +1882,10 @@ def render_macro():
                         unsafe_allow_html=True,
                     )
 
-    # 물가는 월 단위라 위 시세 카드의 기간 라디오(1개월~5년)와 성격이 다르다 —
-    # 자체 기간(3년/10년/전체)을 가진 별도 섹션으로 맨 아래에 둔다. 위를 밀어내면
+    # 비교·물가는 월/다년 단위라 위 시세 카드의 기간 라디오(1개월~5년)와 성격이
+    # 다르다 — 각자 기간 선택을 가진 별도 섹션으로 아래에 둔다. 위를 밀어내면
     # 매일 보는 환율·DRAM 카드가 내려가서 맨 아래가 맞다.
+    _render_compare_section()
     _render_inflation_section()
 
 
