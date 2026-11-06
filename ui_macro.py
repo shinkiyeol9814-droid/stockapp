@@ -1369,6 +1369,11 @@ def render_macro():
         last_prev_map[nm] = ok(res[("lp", nm)], (None, None, None))
         full_map[nm] = ok(res[("full", nm)])
 
+    # 코스피·코스닥 밸류에이션 밴드를 맨 위로 — 국내 지수가 먼저 눈에 들어와야
+    # 한다는 요청(2026-11-06). 시세 카드는 그 아래로 내려간다.
+    _render_valuation_band()
+    section_title("시장 지표")
+
     for row_start in range(0, len(MARKET_ITEMS), 3):
         if row_start:
             # 줄 사이를 띄운다 — 붙여 두니 위 카드의 뉴스 줄과 아래 카드의
@@ -1513,6 +1518,5 @@ def render_macro():
                         unsafe_allow_html=True,
                     )
 
-    _render_valuation_band()
 
 

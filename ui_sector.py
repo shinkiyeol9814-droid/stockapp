@@ -393,32 +393,31 @@ def render_sector_section():
             pass
         return ""
 
-    # 💡 소속 종목 드릴다운은 남겼지만 접어 뒀다 — "Top5만 표시" 요청에 맞게
-    # 화면은 Top5 + 이슈로 끝나되, 특정 업종을 파보고 싶을 때는 열 수 있게.
-    # 종목 시세는 최신 것만 있어 지난 날짜에서는 보이지 않는다.
+    # 💡 접어 두지 않고 바로 보여준다(2026-11-06) — 한 번 더 눌러야 나오는 게
+    # 번거롭다는 요청. 종목 시세는 최신 것만 있어 지난 날짜에서는 생략한다.
     if day != "live":
         return
-    with st.expander("특정 업종의 소속 종목 보기", expanded=False):
-        sel_name = st.selectbox("업종 선택", df["업종명"].tolist(), key="sector_pick")
-        # 목록에서 고르기만 하므로 모바일 키패드를 막는다.
-        disable_keyboard("sector_pick")
-        sel_no = df[df["업종명"] == sel_name].iloc[0]["업종코드"]
+    section_title("업종별 소속 종목")
+    sel_name = st.selectbox("업종 선택", df["업종명"].tolist(), key="sector_pick")
+    # 목록에서 고르기만 하므로 모바일 키패드를 막는다.
+    disable_keyboard("sector_pick")
+    sel_no = df[df["업종명"] == sel_name].iloc[0]["업종코드"]
 
-        if not sel_no or (isinstance(sel_no, float) and pd.isna(sel_no)):
-            st.warning("이 업종은 종목 상세를 가져올 수 없습니다.")
-            return
+    if not sel_no or (isinstance(sel_no, float) and pd.isna(sel_no)):
+        st.warning("이 업종은 종목 상세를 가져올 수 없습니다.")
+        return
 
-        with st.spinner(f"{sel_name} 종목 로딩 중..."):
-            stock_df = get_sector_stocks(sel_no)
+    with st.spinner(f"{sel_name} 종목 로딩 중..."):
+        stock_df = get_sector_stocks(sel_no)
 
-        if stock_df is None or stock_df.empty:
-            st.error("❌ 종목 데이터를 가져오지 못했습니다.")
-            return
+    if stock_df is None or stock_df.empty:
+        st.error("❌ 종목 데이터를 가져오지 못했습니다.")
+        return
 
-        stock_display = stock_df[["종목명", "현재가", "등락률"]].copy()
-        stock_display["현재가"] = stock_display["현재가"].map(
-            lambda v: f"{int(v):,}원" if pd.notna(v) else "-"
-        )
-        st.dataframe(stock_display.style.map(_color_change, subset=["등락률"]),
-                     use_container_width=True, hide_index=True,
-                     height=min(400, 40 + 35 * len(stock_display)))
+    stock_display = stock_df[["종목명", "현재가", "등락률"]].copy()
+    stock_display["현재가"] = stock_display["현재가"].map(
+        lambda v: f"{int(v):,}원" if pd.notna(v) else "-"
+    )
+    st.dataframe(stock_display.style.map(_color_change, subset=["등락률"]),
+                 use_container_width=True, hide_index=True,
+                 height=min(400, 40 + 35 * len(stock_display)))
