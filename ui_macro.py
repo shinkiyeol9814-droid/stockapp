@@ -997,10 +997,14 @@ def _get_foreign_holding() -> dict:
 
 def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figure:
     """
-    외국인 보유 비중 선(위 60%) + 월별 외국인 순매수 막대(아래 40%, 순매수 빨강 / 순매도 파랑).
-    "얼마나 들고 있나"(선)와 "지금 사나 파나"(막대)를 한 장에서 같이 본다.
+    외국인 보유 금액 선(위 60%, 아래 옅게 채움) + 월별 외국인 순매수 막대(아래 40%).
+
+    예전엔 비중(%)을 그렸는데 사용자가 금액 추이를 원했다(2026-11-07). 같은 파일의
+    'forn'(외국인 보유분 시가총액)을 조 단위로 그대로 쓰고, 비중은 마우스오버에 남긴다.
+    ⚠️ 금액은 보유 주식 수뿐 아니라 주가로도 움직인다 — 지수와 닮은 모양이 나오는 건
+    그 때문이고, '외국인이 더 샀다'로 읽으면 안 된다. 그걸 보는 건 아래 순매수 막대다.
     """
-    s = h["ratio"]
+    s = h["forn"] / 1e12
     hi, mean, lo = float(s.max()), float(s.mean()), float(s.min())
     fig = go.Figure()
     has_flow = flow_m is not None and not flow_m.empty and float(flow_m["foreign"].abs().max()) > 0
@@ -1012,12 +1016,22 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
             customdata=[[_fmt_krw_signed(a)] for a in flow_m["foreign"]],
             showlegend=False, hovertemplate="%{x|%Y-%m} 외국인 순매수 <b>%{customdata[0]}</b><extra></extra>",
         ))
+    # 선 아래를 옅게 채운다 — 밴드·시세 카드와 같은 모양. "tonexty"는 바로 앞
+    # 트레이스까지 채우므로 바닥선을 선 '직전'에 둔다(순매수 막대가 앞에 오면 그쪽으로 채워진다).
+    span = (hi - lo) or abs(hi) or 1.0
+    base_y = lo - span * (0.70 if has_flow else 0.12)
+    top_y = hi + span * 0.06
+    fig.add_trace(go.Scatter(
+        x=s.index, y=[base_y] * len(s), mode="lines", line=dict(width=0),
+        showlegend=False, hoverinfo="skip",
+    ))
     fig.add_trace(go.Scatter(
         x=s.index, y=s.values, mode="lines",
         line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
-        customdata=[[f"{v / 1e12:,.0f}조", f"{c / 1e12:,.0f}조"] for v, c in zip(h["forn"], h["cap"])],
-        hovertemplate=("%{x|%Y-%m-%d}<br><b>보유 비중 %{y:.2f}%</b>"
-                       "<br>외국인 보유 %{customdata[0]} / 시총 %{customdata[1]}<extra></extra>"),
+        fill="tonexty", fillcolor=_LINE_FILL,
+        customdata=[[f"{r:.2f}", f"{c / 1e12:,.0f}"] for r, c in zip(h["ratio"], h["cap"])],
+        hovertemplate=("%{x|%Y-%m-%d}<br><b>외국인 보유 %{y:,.0f}조</b>"
+                       "<br>비중 %{customdata[0]}% / 시총 %{customdata[1]}조<extra></extra>"),
     ))
     fig.add_trace(go.Scatter(
         x=[s.index[-1]], y=[s.values[-1]], mode="markers",
@@ -1032,21 +1046,20 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
         fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
         fg_notes.append(dict(
             xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anc,
-            text=f"<b>{lbl}</b> {y:.2f}%", showarrow=False,
+            text=f"<b>{lbl}</b> {y:,.0f}조", showarrow=False,
             font=dict(size=9.5, color=color),
             bgcolor="rgba(255,255,255,0.72)", borderpad=1,
         ))
-    span = (hi - lo) or 1.0
     m = float(flow_m["foreign"].abs().max()) if has_flow else 1.0
     fig.update_layout(
         height=96, margin=dict(l=0, r=2, t=8, b=18), bargap=0.15,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
-        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="'%y",
-                   tickfont=dict(size=9, color="#888"), ticklen=0),
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
         # 선은 위 60%(거래량과 같은 배치), 막대는 0을 가운데 둔 아래 40% — 순매도도 아래로 그려진다.
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False,
-                   range=[lo - span * 0.70, hi + span * 0.06] if has_flow else None),
+                   range=[base_y, top_y]),
         yaxis2=dict(overlaying="y", visible=False, fixedrange=True, range=[-m * 1.25, m * 5.0]),
         annotations=fg_notes,
     )
@@ -1056,33 +1069,35 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
 def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, years: int | None,
                          span_label: str) -> None:
     """
-    외국인 보유 비중(시가총액 기준) — 얼마나 들고 있고, 지금 사는지 파는지.
+    외국인 보유 금액(시가총액 기준) — 얼마를 들고 있고, 지금 사는지 파는지.
 
-    선은 foreign_holding.py가 KRX 종목별 외국인 보유량을 합산한 비중(과거는 주 단위,
+    선은 foreign_holding.py가 KRX 종목별 외국인 보유량을 합산한 금액(과거는 주 단위,
     최근은 일 단위). 막대는 index_val의 일별 외국인 순매수를 월 합계로 묶은 것.
+    비중(%)은 숫자로만 옆에 적는다 — 그래프는 금액으로 봐 달라는 요청(2026-11-07).
     """
     h = _get_foreign_holding().get(idx)
     if h is None or h.empty:
-        st.markdown(f"<div style='font-size:11px;color:#888;'>{label} 외국인 보유 비중</div>"
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{label} 외국인 보유액</div>"
                     f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
                     unsafe_allow_html=True)
         return
     hs = h if not years else h[h.index >= h.index[-1] - pd.DateOffset(years=years)]
-    cur = float(h["ratio"].iloc[-1])
+    cur = float(h["forn"].iloc[-1]) / 1e12
+    cur_ratio = float(h["ratio"].iloc[-1])
 
     def chg_since(days):
         past = h[h.index <= h.index[-1] - pd.Timedelta(days=days)]
-        return cur - float(past["ratio"].iloc[-1]) if not past.empty else None
+        return cur - float(past["forn"].iloc[-1]) / 1e12 if not past.empty else None
 
     def ytd():
         past = h[h.index < pd.Timestamp(h.index[-1].year, 1, 1)]
-        return cur - float(past["ratio"].iloc[-1]) if not past.empty else None
+        return cur - float(past["forn"].iloc[-1]) / 1e12 if not past.empty else None
 
     def c(v):
         return "#ef5350" if (v or 0) > 0 else "#1565C0" if (v or 0) < 0 else "#888"
 
     def pp(name, v):
-        return "" if v is None else f"<span style='color:{c(v)};font-weight:600;'>{name} {v:+.2f}%p</span>"
+        return "" if v is None else f"<span style='color:{c(v)};font-weight:600;'>{name} {v:+,.0f}조</span>"
 
     # 오늘 순매수(네이버 실시간, 잠정) + 최근 20거래일 누적(확정)
     flow_html = ""
@@ -1103,8 +1118,10 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
         f"<div style='padding:4px 0 2px;display:flex;align-items:baseline;"
         f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
         f"<span style='font-size:11px;color:#888;white-space:nowrap;'>"
-        f"{label} 외국인 보유 비중</span>"
-        f"<span style='font-size:18px;font-weight:700;'>{cur:.2f}%</span>"
+        f"{label} 외국인 보유액</span>"
+        f"<span style='font-size:18px;font-weight:700;'>{cur:,.0f}조</span>"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"시총 대비 {cur_ratio:.2f}%</span>"
         f"<span style='font-size:11.5px;white-space:nowrap;'>{chgs}</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
         f"{h.index[-1]:%m/%d} 기준</span></div>"
@@ -1179,7 +1196,7 @@ def _render_valuation_band() -> None:
         today_html = _index_today_html(idx, label, df)
         if today_html:
             st.markdown(today_html, unsafe_allow_html=True)
-        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 지수당 한 줄: PER · PBR · 외국인 보유 비중.
+        # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 지수당 한 줄: PER · PBR · 외국인 보유액.
         cols = st.columns(3)
         with cols[2]:
             _render_foreign_card(idx, label, df, years, span_label)
@@ -1243,41 +1260,69 @@ def _get_compare_series() -> dict:
     return out
 
 
-def _make_compare_chart(kospi: pd.Series, sp500: pd.Series, yld: pd.Series) -> go.Figure:
-    """
-    지수 둘은 실제 지수값으로 왼쪽 축에, 금리는 %라 오른쪽 축에.
+_YIELD_HI = 4.6                        # 사용자가 지목한 기준선(2026-11-07)
+_YIELD_BAND = "rgba(126,138,147,0.17)"  # 그 위 구간 배경 — 계열색과 안 섞이게 회색
 
-    💡 처음엔 시작=100으로 되맞춰 그렸는데(상대 수익률), 사용자가 지수 그대로를
-    원했다(2026-11-06). 마침 코스피 5,383과 S&P 7,353은 자릿수가 같아 한 축에
-    겹쳐도 둘 다 읽힌다 — 자릿수가 크게 벌어지는 조합이면 다시 생각해야 한다.
-    등락률은 차트 아래 한 줄로 따로 적는다.
+
+def _yield_runs(yld: pd.Series, thr: float = _YIELD_HI, limit: int = 150):
+    """금리가 thr 이상인 연속 구간 [(시작, 끝), ...]. 배경을 칠하는 데 쓴다."""
+    runs, start, prev = [], None, None
+    for d, v in yld.items():
+        hot = bool(v >= thr)
+        if hot and start is None:
+            start = d
+        elif not hot and start is not None:
+            runs.append((start, prev))
+            start = None
+        prev = d
+    if start is not None:
+        runs.append((start, prev))
+    return runs[-limit:]
+
+
+def _make_rate_chart(s: pd.Series, name: str, color: str, yld: pd.Series | None) -> go.Figure:
+    """
+    지수 하나(왼쪽 축) + 미국채 10년 금리(오른쪽 축). 금리 4.6% 이상 구간은 배경을 칠한다.
+
+    💡 처음엔 코스피·S&P·금리를 한 장에 겹쳐 그렸는데, 사용자가 '지수 하나당 금리 하나'로
+    나눠 보길 원했다(2026-11-07). 한 장에 선이 셋이면 어느 지수가 금리에 반응했는지가
+    서로 가린다 — 나누면 같은 금리 곡선을 두 번 그리는 대신 비교가 또렷해진다.
     """
     fig = go.Figure()
-    x_idx = next((t.index for t in (kospi, sp500, yld) if t is not None and not t.empty), None)
-    for s, name, color in ((kospi, "코스피", _CMP_KOSPI), (sp500, "S&P 500", _CMP_SP500)):
-        if s is None or s.empty:
-            continue
-        fig.add_trace(go.Scatter(
-            x=s.index, y=s.values, mode="lines", name=name,
-            line=dict(color=color, width=1.6),
-            hovertemplate=f"<b>{name}</b> %{{y:,.2f}}<extra></extra>",
-        ))
+    # 배경 먼저(layer="below") — 선과 격자 아래에 깔린다.
+    if yld is not None and not yld.empty:
+        for x0, x1 in _yield_runs(yld):
+            fig.add_vrect(x0=x0, x1=x1 + pd.Timedelta(days=1),
+                          fillcolor=_YIELD_BAND, line_width=0, layer="below")
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines", name=name,
+        line=dict(color=color, width=1.6),
+        hovertemplate=f"<b>{name}</b> %{{y:,.2f}}<extra></extra>",
+    ))
     if yld is not None and not yld.empty:
         fig.add_trace(go.Scatter(
             x=yld.index, y=yld.values, mode="lines", name="미국채 10년", yaxis="y2",
             line=dict(color=_CMP_YIELD, width=1.3, dash="dot"),
             hovertemplate="<b>미국채 10년</b> %{y:.2f}%<extra></extra>",
         ))
+        # 기준선 — add_hline은 기본 축(y)에 걸려서 보조축엔 shape으로 직접 넣는다.
+        fig.add_shape(type="line", xref="paper", x0=0, x1=1, yref="y2",
+                      y0=_YIELD_HI, y1=_YIELD_HI,
+                      line=dict(color=_CMP_YIELD, width=1, dash="dash"))
+        fig.add_annotation(xref="paper", x=0.997, xanchor="right", yref="y2",
+                           y=_YIELD_HI, yanchor="bottom", text=f"<b>{_YIELD_HI}%</b>",
+                           showarrow=False, font=dict(size=9, color=_CMP_YIELD),
+                           bgcolor="rgba(255,255,255,0.72)", borderpad=1)
     # 매크로 탭 정책: 축을 fixedrange로 잠그고 툴팁만 남긴다(staticPlot 금지 —
     # 드래그와 함께 마우스오버 수치까지 죽는다). AGENTS.md '차트 설정' 참고.
     fig.update_layout(
-        height=330, margin=dict(l=0, r=0, t=26, b=18),
+        height=300, margin=dict(l=0, r=0, t=26, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
                     font=dict(size=10.5), bgcolor="rgba(0,0,0,0)"),
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
-                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(x_idx)),
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
         yaxis=dict(title=dict(text="지수", font=dict(size=9, color="#999")),
                    showgrid=True, gridcolor="rgba(0,0,0,0.05)", zeroline=False,
                    fixedrange=True, tickfont=dict(size=9, color="#888"),
@@ -1289,6 +1334,46 @@ def _make_compare_chart(kospi: pd.Series, sp500: pd.Series, yld: pd.Series) -> g
     return fig
 
 
+def _sign_color(v) -> str:
+    return "#ef5350" if (v or 0) > 0 else "#1565C0" if (v or 0) < 0 else "#888"
+
+
+def _rate_summary_html(s: pd.Series, name: str, yld: pd.Series | None, span_label: str) -> str:
+    """차트 아래 두 줄 — 기간 등락률, 그리고 금리 4.6% 위/아래에서의 일평균 등락."""
+    bits = []
+    if len(s) > 1 and float(s.iloc[0]):
+        chg = (float(s.iloc[-1]) / float(s.iloc[0]) - 1) * 100
+        bits.append(f"<b>{name}</b> <span style='color:{_sign_color(chg)};font-weight:600;'>"
+                    f"{chg:+.1f}%</span>")
+    if yld is not None and len(yld) > 1:
+        d = float(yld.iloc[-1]) - float(yld.iloc[0])
+        bits.append(f"<b>미국채 10년</b> {float(yld.iloc[-1]):.2f}% "
+                    f"<span style='color:{_sign_color(d)};font-weight:600;'>({d:+.2f}%p)</span>")
+    head = " · ".join(bits)
+    out = (f"<div style='font-size:11.5px;color:#666;margin-top:-4px;'>"
+           f"{span_label} · {head}</div>")
+    # 금리 4.6% 위/아래를 나눠 '그 구간에서 지수가 어땠나'를 일평균으로 비교한다.
+    # 누적으로 적으면 구간 길이가 달라 비교가 안 된다(42일 vs 203일).
+    if yld is None or yld.empty:
+        return out
+    # 금리는 미국 거래일, 코스피는 한국 거래일이라 날짜가 어긋난다 — 합집합에서
+    # 앞으로 채운 뒤 지수 날짜에 맞춘다(reindex 후 ffill은 NaN만 남아 안 된다).
+    y = yld.reindex(s.index.union(yld.index)).ffill().reindex(s.index)
+    both = pd.concat([s.pct_change() * 100, y], axis=1).dropna()
+    both.columns = ["chg", "y"]
+    parts = []
+    for d_, lbl in ((both[both["y"] >= _YIELD_HI], f"{_YIELD_HI}% 이상"),
+                    (both[both["y"] < _YIELD_HI], f"{_YIELD_HI}% 미만")):
+        if d_.empty:
+            continue
+        m = float(d_["chg"].mean())
+        parts.append(f"금리 {lbl} {len(d_)}일 <span style='color:{_sign_color(m)};"
+                     f"font-weight:600;'>일평균 {m:+.2f}%</span>")
+    if parts:
+        out += "<div style='font-size:11.5px;color:#666;'>" + " · ".join(parts) + "</div>"
+    return out
+
+
 def _render_compare_section() -> None:
     data = _get_compare_series()
     val = _get_index_valuation()
@@ -1298,7 +1383,7 @@ def _render_compare_section() -> None:
         st.caption("비교용 데이터를 아직 받지 못했습니다 (매일 배치가 수집).")
         return
     span_label = section_title_select("지수 · 금리 비교", _COMPARE_PERIODS,
-                                      key="cmp", index=1)
+                                      key="cmp", index=0)
     years = _COMPARE_PERIODS[span_label]
 
     sp500, yld = data.get("sp500"), data.get("ust10y")
@@ -1310,22 +1395,19 @@ def _render_compare_section() -> None:
     cut = lambda s: s[s.index >= start].dropna() if s is not None else None
     kospi, sp500, yld = cut(kospi_all), cut(sp500), cut(yld)
 
-    st.plotly_chart(_make_compare_chart(kospi, sp500, yld), use_container_width=True,
-                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+    cfg = {"displayModeBar": False, "scrollZoom": False, "staticPlot": False}
+    for col, (s, name, color) in zip(st.columns(2),
+                                     ((kospi, "코스피", _CMP_KOSPI),
+                                      (sp500, "S&P 500", _CMP_SP500))):
+        with col:
+            if s is None or s.empty:
+                st.caption(f"{name} 데이터를 아직 받지 못했습니다.")
+                continue
+            st.plotly_chart(_make_rate_chart(s, name, color, yld),
+                            use_container_width=True, config=cfg)
+            st.markdown(_rate_summary_html(s, name, yld, span_label),
+                        unsafe_allow_html=True)
 
-    # 숫자로도 한 줄 — 눈으로 "같이 움직이나"를 보고 나면 다음 질문이 "얼마나"다.
-    bits = []
-    for s, name in ((kospi, "코스피"), (sp500, "S&P 500")):
-        if s is not None and len(s) > 1 and float(s.iloc[0]):
-            chg = (float(s.iloc[-1]) / float(s.iloc[0]) - 1) * 100
-            clr = "#ef5350" if chg > 0 else "#1565C0" if chg < 0 else "#888"
-            bits.append(f"<b>{name}</b> <span style='color:{clr};font-weight:600;'>"
-                        f"{chg:+.1f}%</span>")
-    if yld is not None and len(yld) > 1:
-        d = float(yld.iloc[-1]) - float(yld.iloc[0])
-        clr = "#ef5350" if d > 0 else "#1565C0" if d < 0 else "#888"
-        bits.append(f"<b>미국채 10년</b> {yld.iloc[-1]:.2f}% "
-                    f"<span style='color:{clr};font-weight:600;'>({d:+.2f}%p)</span>")
     # 일간 변동률의 상관 — 수준이 아니라 '같이 흔들리는 정도'를 본다.
     #
     # ⚠️ 같은 날짜끼리 비교하면 안 된다. 코스피는 15:30(KST)에 끝나 미국장이
@@ -1337,12 +1419,9 @@ def _render_compare_section() -> None:
         both = pd.concat([kospi.pct_change(), sp500.pct_change().shift(1)],
                          axis=1).dropna()
         if len(both) > 30:
-            bits.append("코스피~S&P 전일 상관 "
-                        f"<b>{both.corr().iloc[0, 1]:.2f}</b>")
-    if bits:
-        st.markdown(f"<div style='font-size:11.5px;color:#666;margin-top:-4px;'>"
-                    f"{span_label} · " + " · ".join(bits) + "</div>", unsafe_allow_html=True)
-
+            st.markdown("<div style='font-size:11.5px;color:#666;margin-top:2px;'>"
+                        f"코스피~S&P 전일 상관 <b>{both.corr().iloc[0, 1]:.2f}</b></div>",
+                        unsafe_allow_html=True)
 
 
 _INFLATION_PERIODS = {"3년": 3, "10년": 10, "전체": None}
@@ -1663,7 +1742,9 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
 # ── 렌더링 ────────────────────────────────────────────────────────────────────
 def render_macro():
     # 새로고침은 원래 탭 맨 아래에 화면 폭 막대로 있었다 — 제목 옆 작은 버튼으로 옮겼다.
-    if page_header("매크로 지표", "macro"):
+    # 제목 줄은 지웠다(2026-11-07 요청) — 상단 메뉴가 이미 어느 탭인지 알려준다.
+    # 새로고침 버튼은 남겨야 해서 빈 제목으로 같은 줄만 그린다.
+    if page_header("", "macro"):
         _get_price_history.clear()
         _get_lithium_price_history.clear()
         _get_dram_price_history.clear()
@@ -1674,7 +1755,6 @@ def render_macro():
         _get_flow_live.clear()
         _get_foreign_holding.clear()
         st.rerun()
-    st.caption("5분 자동갱신")
 
     # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.
     # 수출입은 성격이 달라(정부 API · 월 단위 · 품목별) 별도 메뉴
@@ -1906,7 +1986,8 @@ def render_macro():
     # 다르다 — 각자 기간 선택을 가진 별도 섹션으로 아래에 둔다. 위를 밀어내면
     # 매일 보는 환율·DRAM 카드가 내려가서 맨 아래가 맞다.
     _render_compare_section()
-    _render_inflation_section()
+    # 경제 지표(미국 물가)는 화면에서 뺐다(2026-11-07 요청). 수집(batch_macro)과
+    # _render_inflation_section()은 그대로 둔다 — 다시 넣을 땐 이 줄만 되살리면 된다.
 
 
 
