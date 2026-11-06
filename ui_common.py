@@ -39,6 +39,29 @@ def section_title(text: str) -> None:
     st.markdown(f"<div class='sec-title'>{html.escape(text)}</div>", unsafe_allow_html=True)
 
 
+def section_title_select(title: str, options, key: str, index: int = 0,
+                         width: int = 104):
+    """
+    소제목 + 바로 옆 작은 선택 상자. 고른 값을 돌려준다.
+
+    기간 선택을 라디오로 깔면 보기(3~5개)가 한 줄을 통째로 먹고 'OO 기간'이라는
+    라벨 줄까지 붙어, 화면 하나에 섹션이 서넛 있으면 선택지가 내용보다 많아 보인다.
+    제목 옆 선택 상자는 지금 값만 한 칸으로 보여준다.
+
+    휴대폰에서도 한 줄로 유지되도록 컨테이너 키(inline_*)에 전역 CSS가 nowrap을 건다.
+    """
+    opts = list(options)
+    with st.container(key=f"inline_sec_{key}"):
+        c1, c2 = st.columns([1, 0.1], vertical_alignment="center")
+        with c1:
+            st.markdown(f"<div class='sec-title'>{html.escape(title)}</div>",
+                        unsafe_allow_html=True)
+        with c2:
+            sel = st.selectbox(title, opts, index=index, key=f"secsel_{key}",
+                               label_visibility="collapsed", width=width)
+    return sel
+
+
 def run_with_progress(jobs: dict, label: str = "불러오는 중", max_workers: int = 12,
                       show_after: float = 1.0) -> dict:
     """

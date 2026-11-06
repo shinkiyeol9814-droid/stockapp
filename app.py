@@ -90,6 +90,19 @@ st.markdown("""
             flex: 0 0 auto !important; width: auto !important; min-width: 0 !important;
         }
 
+        /* 3-1b. 소제목 옆 기간 선택(st-key-inline_sec_*) — 제목 줄 높이를 넘지 않게
+           낮고 작게. 라디오를 쓰면 보기 전부가 한 줄을 먹어 선택지가 내용보다 많아 보인다. */
+        [class*="st-key-inline_sec_"] .sec-title { margin: 0 !important; }
+        [class*="st-key-inline_sec_"] { margin: 14px 0 4px; }
+        [class*="st-key-inline_sec_"] div[data-baseweb="select"] > div {
+            min-height: 1.75rem !important;
+            padding-top: 0 !important; padding-bottom: 0 !important;
+        }
+        [class*="st-key-inline_sec_"] div[data-baseweb="select"] div {
+            font-size: 0.78rem !important;
+        }
+        [class*="st-key-inline_sec_"] [data-testid="stSelectbox"] { margin-bottom: 0 !important; }
+
         /* 3-2. 거래급증 일자·시각 줄 — 시각 버튼("종합 (113)")을 작게 촘촘히 (ui_surge, 투신 수급 줄도 같게). */
         .st-key-surge_bar [data-testid="stButtonGroup"] button,
         .st-key-flow_bar [data-testid="stButtonGroup"] button {

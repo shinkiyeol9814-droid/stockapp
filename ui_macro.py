@@ -15,7 +15,8 @@ import html
 import urllib.parse
 
 import lithium_source
-from ui_common import page_header, section_title, run_with_progress
+from ui_common import (page_header, section_title, section_title_select,
+                       run_with_progress)
 
 _MACRO_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "macro")
 _LITHIUM_CACHE = os.path.join(_MACRO_DIR, "lithium_cache.json")
@@ -694,6 +695,31 @@ _BAND_PERIODS = {"5년": 5, "10년": 10, "전체": None}
 # 적혀 있었지만 plotly.js는 CSS 변수를 못 읽어 기본 1번 색 #636EFA(남보라)로 그리고 있었다
 # (2026-10-21 브라우저 실측 rgb(99,110,250)). 실제로 보이던 색을 양쪽에 명시한다.
 _VALUATION_LINE = "#636EFA"
+# 매크로 탭의 모든 선은 이 한 가지 색이다(2026-11-06 사용자 요청).
+# 예전엔 시세 카드만 전일대비로 빨강/파랑을 칠했는데, 같은 화면에서 지수 밴드는
+# 보라, 시세는 빨강/파랑이라 "색이 뜻을 갖는 건가"로 읽혀 오히려 헷갈렸다.
+# 증감은 숫자(텍스트)에서 빨강/파랑으로 계속 구분하므로 정보가 사라지지 않는다.
+_LINE_FILL = "rgba(99,110,250,0.13)"
+
+
+def _year_ticks(idx) -> dict:
+    """
+    x축 연도 눈금 — 기간 길이에 맞춰 간격을 정한다.
+
+    💡 plotly 자동 눈금은 10년 구간에서 '20·'25 둘만 찍어 "몇 년치인지" 읽히지
+    않았다(사용자 지적 2026-11-06). 폭이 좁은 카드라 2년 간격이 상한이다.
+    """
+    try:
+        yrs = (idx[-1] - idx[0]).days / 365.25
+    except Exception:
+        return dict(tickformat="'%y")
+    if yrs <= 1.6:
+        return dict(tickformat="%m월", dtick="M2")
+    if yrs <= 4:
+        return dict(tickformat="'%y.%m", dtick="M6")
+    if yrs <= 13:
+        return dict(tickformat="'%y", dtick="M24")
+    return dict(tickformat="'%y", dtick="M60")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -827,10 +853,21 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
             extra += "<br>거래량 %{customdata[1]} · 대금 %{customdata[2]}"
         if float(fo.abs().max()) > 0:
             extra += "<br>외국인 %{customdata[3]}"
+    # 선 아래를 옅게 채운다 — 시세 카드와 같은 모양(2026-11-06 요청).
+    # "tonexty"는 바로 앞 트레이스까지 채우므로, 바닥선을 선 '직전'에 둔다
+    # (거래량 트레이스가 앞에 오면 그쪽으로 채워진다).
+    span_ = (hi - lo) or abs(hi) or 1.0
+    base_y = lo - span_ * (0.70 if has_vol else 0.12)
+    top_y = hi + span_ * 0.06
+    fig.add_trace(go.Scatter(
+        x=s.index, y=[base_y] * len(s), mode="lines", line=dict(width=0),
+        showlegend=False, hoverinfo="skip",
+    ))
     fig.add_trace(go.Scatter(
         x=s.index, y=s.values, mode="lines", customdata=cd,
         # 가치평가 탭 밴드 차트의 주가·당일Val 선과 같은 색·굵기.
         line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
+        fill="tonexty", fillcolor=_LINE_FILL,
         hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}" + unit + "</b>" + extra + "<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -857,16 +894,17 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
         height=96, margin=dict(l=0, r=2, t=8, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
-        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
-                   tickfont=dict(size=7, color="#aaa"), ticklen=0),
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
         annotations=band_notes,
     )
+    # 범위를 항상 명시한다 — 자동으로 두면 채움의 바닥이 그날 값에 따라 들쭉날쭉해진다.
+    # 거래량이 있으면 선이 위 60%에 오도록 아래를 더 비운다(최저선이 면과 겹치지 않게).
+    fig.update_layout(yaxis=dict(range=[base_y, top_y], showgrid=False, zeroline=False,
+                                 fixedrange=True, showticklabels=False))
     if has_vol:
-        # 선은 위 60%에 오도록 아래쪽에 여유를 둔다(최저선이 거래량 면과 겹치지 않게).
-        span = (hi - lo) or abs(hi) or 1.0
         fig.update_layout(
-            yaxis=dict(range=[lo - span * 0.70, hi + span * 0.06]),
             yaxis2=dict(overlaying="y", range=[0, float(vol.max()) * 2.5], visible=False,
                         fixedrange=True),
         )
@@ -887,6 +925,7 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
                     unsafe_allow_html=True)
         return
     cur = float(s.iloc[-1])
+    # 백분위는 고점권/저점권 배지로만 쓴다 — 숫자까지 적으면 한 줄이 길어진다(2026-11-06 요청).
     pct = float((s < cur).mean() * 100)          # 기간 중 지금보다 낮았던 날의 비율
     vs_mean = (cur / float(s.mean()) - 1) * 100
     badge = ""
@@ -907,7 +946,7 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
         f"<span style='font-size:11.5px;color:{clr};font-weight:600;white-space:nowrap;'>"
         f"평균 대비 {vs_mean:+.1f}%</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{span_label} 백분위 {pct:.0f}% · {s.index[-1]:%m/%d} 기준</span></div>",
+        f"{s.index[-1]:%m/%d}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value, foreign), use_container_width=True,
@@ -1003,8 +1042,8 @@ def _make_foreign_chart(h: pd.DataFrame, flow_m: pd.DataFrame | None) -> go.Figu
         height=96, margin=dict(l=0, r=2, t=8, b=18), bargap=0.15,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
-        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
-                   tickfont=dict(size=7, color="#aaa"), ticklen=0),
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="'%y",
+                   tickfont=dict(size=9, color="#888"), ticklen=0),
         # 선은 위 60%(거래량과 같은 배치), 막대는 0을 가운데 둔 아래 40% — 순매도도 아래로 그려진다.
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False,
                    range=[lo - span * 0.70, hi + span * 0.06] if has_flow else None),
@@ -1128,16 +1167,13 @@ def _render_sp500_band(years, span_label: str) -> None:
 
 def _render_valuation_band() -> None:
     data = _get_index_valuation()
-    section_title("지수 밸류에이션 밴드")
     if not data:
+        section_title("지수 밸류에이션 밴드")
         st.caption("코스피·코스닥 PER·PBR 데이터를 아직 받지 못했습니다 (평일 18:30 배치가 수집).")
         return
-    span_label = st.radio("밴드 기간", list(_BAND_PERIODS), index=1,
-                          horizontal=True, key="macro_band_span")
+    span_label = section_title_select("지수 밸류에이션 밴드", _BAND_PERIODS,
+                                      key="band", index=1)
     years = _BAND_PERIODS[span_label]
-    st.caption("KRX 후행 PER·PBR (직전 4개 분기 실적 기준) · 선은 선택한 기간의 최고·평균·최저 · "
-               "백분위 = 기간 중 지금보다 낮았던 날의 비율 · 코스닥 PER은 이익이 0에 가까웠던 "
-               "해(2006~2010, 2014)에 비거나 수백 배로 튀어 '전체' 기간에선 PBR이 더 믿을 만하다")
     for idx, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
         df = data.get(idx)
         today_html = _index_today_html(idx, label, df)
@@ -1164,10 +1200,12 @@ def _render_valuation_band() -> None:
 
 _COMPARE_PERIODS = {"1년": 1, "3년": 3, "5년": 5, "10년": 10}
 
-# 선 색은 '계열 구분'이지 등락 표시가 아니다 — 코스피는 한국 시장색 빨강, S&P는
-# 밴드 차트와 같은 파랑 계열, 금리는 성격이 달라(오른쪽 축) 회색 점선으로 낮춘다.
-_CMP_KOSPI = "#ef5350"
-_CMP_SP500 = "#1565C0"
+# 여기서도 빨강/파랑을 쓰지 않는다 — 계열 구분으로 칠한 색이라도 이 앱에서
+# 빨강·파랑은 '올랐다/내렸다'로 읽히기 때문이다(2026-11-06 요청). 코스피는 다른
+# 차트와 같은 색, S&P는 그와 확실히 구분되는 호박색, 금리는 성격이 달라
+# (오른쪽 축) 회색 점선으로 낮춘다.
+_CMP_KOSPI = _VALUATION_LINE
+_CMP_SP500 = "#E8870B"
 _CMP_YIELD = "#7E8A93"
 
 
@@ -1207,24 +1245,22 @@ def _get_compare_series() -> dict:
 
 def _make_compare_chart(kospi: pd.Series, sp500: pd.Series, yld: pd.Series) -> go.Figure:
     """
-    지수 둘은 기간 시작을 100으로 되맞춰(rebase) 왼쪽 축에, 금리는 %라 오른쪽 축에.
+    지수 둘은 실제 지수값으로 왼쪽 축에, 금리는 %라 오른쪽 축에.
 
-    💡 되맞추지 않으면 코스피 5,383과 S&P 7,353이 한 축에 겹쳐 '수준'만 보이고
-    '얼마나 올랐나'가 안 보인다. 비교의 목적은 후자다.
+    💡 처음엔 시작=100으로 되맞춰 그렸는데(상대 수익률), 사용자가 지수 그대로를
+    원했다(2026-11-06). 마침 코스피 5,383과 S&P 7,353은 자릿수가 같아 한 축에
+    겹쳐도 둘 다 읽힌다 — 자릿수가 크게 벌어지는 조합이면 다시 생각해야 한다.
+    등락률은 차트 아래 한 줄로 따로 적는다.
     """
     fig = go.Figure()
+    x_idx = next((t.index for t in (kospi, sp500, yld) if t is not None and not t.empty), None)
     for s, name, color in ((kospi, "코스피", _CMP_KOSPI), (sp500, "S&P 500", _CMP_SP500)):
         if s is None or s.empty:
             continue
-        base = float(s.iloc[0])
-        if not base:
-            continue
         fig.add_trace(go.Scatter(
-            x=s.index, y=(s / base * 100).values, mode="lines", name=name,
+            x=s.index, y=s.values, mode="lines", name=name,
             line=dict(color=color, width=1.6),
-            hovertemplate=f"<b>{name}</b> %{{y:.1f}} "
-                          "(%{customdata:,.2f})<extra></extra>",
-            customdata=s.values,
+            hovertemplate=f"<b>{name}</b> %{{y:,.2f}}<extra></extra>",
         ))
     if yld is not None and not yld.empty:
         fig.add_trace(go.Scatter(
@@ -1232,7 +1268,6 @@ def _make_compare_chart(kospi: pd.Series, sp500: pd.Series, yld: pd.Series) -> g
             line=dict(color=_CMP_YIELD, width=1.3, dash="dot"),
             hovertemplate="<b>미국채 10년</b> %{y:.2f}%<extra></extra>",
         ))
-    fig.add_hline(y=100, line=dict(color="#ddd", width=1))
     # 매크로 탭 정책: 축을 fixedrange로 잠그고 툴팁만 남긴다(staticPlot 금지 —
     # 드래그와 함께 마우스오버 수치까지 죽는다). AGENTS.md '차트 설정' 참고.
     fig.update_layout(
@@ -1242,27 +1277,28 @@ def _make_compare_chart(kospi: pd.Series, sp500: pd.Series, yld: pd.Series) -> g
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
                     font=dict(size=10.5), bgcolor="rgba(0,0,0,0)"),
         xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
-                   tickfont=dict(size=8.5, color="#aaa"), ticklen=0),
-        yaxis=dict(title=dict(text="시작=100", font=dict(size=9, color="#999")),
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(x_idx)),
+        yaxis=dict(title=dict(text="지수", font=dict(size=9, color="#999")),
                    showgrid=True, gridcolor="rgba(0,0,0,0.05)", zeroline=False,
-                   fixedrange=True, tickfont=dict(size=8.5, color="#aaa")),
+                   fixedrange=True, tickfont=dict(size=9, color="#888"),
+                   tickformat=",.0f"),
         yaxis2=dict(title=dict(text="금리 %", font=dict(size=9, color=_CMP_YIELD)),
                     overlaying="y", side="right", showgrid=False, zeroline=False,
-                    fixedrange=True, tickfont=dict(size=8.5, color=_CMP_YIELD)),
+                    fixedrange=True, tickfont=dict(size=9, color=_CMP_YIELD)),
     )
     return fig
 
 
 def _render_compare_section() -> None:
-    section_title("지수 · 금리 비교")
     data = _get_compare_series()
     val = _get_index_valuation()
     kospi_all = val.get("KOSPI", {}).get("close") if isinstance(val.get("KOSPI"), pd.DataFrame) else None
     if not data and kospi_all is None:
+        section_title("지수 · 금리 비교")
         st.caption("비교용 데이터를 아직 받지 못했습니다 (매일 배치가 수집).")
         return
-    span_label = st.radio("비교 기간", list(_COMPARE_PERIODS), index=1,
-                          horizontal=True, key="macro_cmp_span")
+    span_label = section_title_select("지수 · 금리 비교", _COMPARE_PERIODS,
+                                      key="cmp", index=1)
     years = _COMPARE_PERIODS[span_label]
 
     sp500, yld = data.get("sp500"), data.get("ust10y")
@@ -1306,10 +1342,7 @@ def _render_compare_section() -> None:
     if bits:
         st.markdown(f"<div style='font-size:11.5px;color:#666;margin-top:-4px;'>"
                     f"{span_label} · " + " · ".join(bits) + "</div>", unsafe_allow_html=True)
-    st.caption("두 지수는 기간 시작을 100으로 맞춘 상대 수익률(왼쪽 축), 금리는 실제 % (오른쪽 축) · "
-               "마우스를 올리면 괄호에 지수 원래 값 · 상관은 코스피 당일과 S&P 직전 거래일을 "
-               "맞춰 낸 값(코스피가 15:30에 끝나 미국장 전이라 같은 날끼리는 비교가 안 된다) · "
-               "코스피는 KRX 종가, S&P 500·미국채 10년은 야후 종가")
+
 
 
 _INFLATION_PERIODS = {"3년": 3, "10년": 10, "전체": None}
@@ -1399,8 +1432,8 @@ def _make_inflation_chart(s: pd.Series, target: float | None) -> go.Figure:
         height=96, margin=dict(l=0, r=2, t=8, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="x",
-        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
-                   tickfont=dict(size=7, color="#aaa"), ticklen=0),
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
         yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
         annotations=notes,
     )
@@ -1431,7 +1464,6 @@ def _render_inflation_card(name: str, yoy: pd.Series, target: float | None,
         else:
             badge = ("<span style='background:#2E7D32;color:#fff;font-size:9.5px;font-weight:700;"
                      "padding:1px 5px;border-radius:3px;'>목표권</span>")
-    pct = float((yoy < cur).mean() * 100)
     st.markdown(
         f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
         f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
@@ -1440,7 +1472,7 @@ def _render_inflation_card(name: str, yoy: pd.Series, target: float | None,
         f"<span style='font-size:11.5px;color:{clr};font-weight:600;white-space:nowrap;'>"
         f"전월 {mom:+.2f}%p</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{span_label} 백분위 {pct:.0f}% · {yoy.index[-1]:%Y-%m} 기준</span></div>",
+        f"{yoy.index[-1]:%Y-%m}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_inflation_chart(yoy, target), use_container_width=True,
@@ -1449,16 +1481,14 @@ def _render_inflation_card(name: str, yoy: pd.Series, target: float | None,
 
 def _render_inflation_section() -> None:
     data = _get_us_inflation()
-    section_title("경제 지표")
     if not data:
+        section_title("경제 지표")
         st.caption("미국 물가 데이터를 아직 받지 못했습니다 (매일 배치가 FRED에서 수집).")
         return
-    span_label = st.radio("물가 기간", list(_INFLATION_PERIODS), index=1,
-                          horizontal=True, key="macro_infl_span")
+    span_label = section_title_select("경제 지표", _INFLATION_PERIODS, key="infl", index=1)
     years = _INFLATION_PERIODS[span_label]
-    st.caption("전년 동월 대비(YoY) · 월 단위 발표라 시세 카드의 기간과 따로 움직인다 · "
-               "초록 점선은 연준 물가 목표 2%(코어 PCE가 그 대상 지표) · "
-               "백분위 = 기간 중 지금보다 낮았던 달의 비율 · 출처 FRED")
+    # 값이 "+3.72%"라 무엇 대비인지는 한 줄 남긴다 — 이것까지 빼면 수치가 모호해진다.
+    st.caption("전년 동월 대비 · 초록 점선은 연준 목표 2%")
     # ⚠️ PMI는 없다 — ISM은 2016년 FRED에서 API까지 삭제됐고(NAPM 404 실측),
     # S&P Global PMI는 PMI®가 등록상표로 시계열 재배포가 안 되며, DBnomics의
     # ISM/pmi는 2025-09부터 값이 깨진 채 갱신이 멈췄다. batch_macro 쪽 주석 참고.
@@ -1508,24 +1538,17 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                     note: tuple | None = None, chg: float | None = None,
                     bands: list | None = None) -> go.Figure:
     """
-    chg: 전일대비 등락률(%). 선 색을 이걸로 정한다.
-
-    💡 예전엔 '표시 기간의 첫 값 대비 현재'로 색을 정했다(last >= first).
-    그러면 같은 카드 안에서 기준이 둘이 된다 — 숫자 배지는 전일대비인데
-    선 색은 기간 전체 방향이라, 어제 내렸는데 선은 빨강인 카드가 생기고
-    기간(1년/3개월)을 바꾸면 선 색만 뒤집혔다. 배지와 같은 기준으로 맞춘다.
+    chg: 전일대비 등락률(%). 지금은 선 색에 쓰지 않는다(아래 색 주석 참고).
+    호출부 호환과 과거 맥락을 위해 인자는 남겨 둔다.
     """
     prices = hist["price"]
     last  = float(prices.iloc[-1])
     if chg is None:      # 호출부가 전일대비를 못 넘긴 경우의 보수적 기본값
         chg = last - float(prices.iloc[-2]) if len(prices) > 1 else 0.0
-    if chg > 0:
-        color, fill_c = "#ef5350", "rgba(239,83,80,0.12)"
-    elif chg < 0:
-        color, fill_c = "#1565C0", "rgba(21,101,192,0.12)"
-    else:
-        # 보합은 배지(─)와 같은 회색. 빨강/파랑 중 하나로 찍으면 없는 방향을 만든다.
-        color, fill_c = "#9e9e9e", "rgba(158,158,158,0.12)"
+    # 선 색은 지수 밴드와 같은 한 가지 색으로 고정한다(2026-11-06 요청).
+    # 예전엔 전일대비로 빨강/파랑을 칠했는데, 바로 위 지수 밴드는 보라라서
+    # 한 화면에 기준이 둘이 됐다. 증감 방향은 카드 헤더 숫자가 색으로 말한다.
+    color, fill_c = _VALUATION_LINE, _LINE_FILL
 
     if bands:
         # 공포·탐욕처럼 눈금 자체에 의미가 있는 지표는 축을 0~100으로 고정한다.
@@ -1621,7 +1644,7 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
         shapes=shapes,
         hovermode="x",
         xaxis=dict(showticklabels=True, tickformat=tfmt, dtick=dtick,
-                   tickfont=dict(size=7, color="#aaa"), ticklen=0,
+                   tickfont=dict(size=9, color="#888"), ticklen=0,
                    showgrid=False, zeroline=False, fixedrange=True),
         yaxis=dict(range=[base_y, top_y], showticklabels=False,
                    showgrid=False, zeroline=False, fixedrange=True),
@@ -1651,7 +1674,7 @@ def render_macro():
         _get_flow_live.clear()
         _get_foreign_holding.clear()
         st.rerun()
-    st.caption("시장 지표 5분 자동갱신")
+    st.caption("5분 자동갱신")
 
     # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.
     # 수출입은 성격이 달라(정부 API · 월 단위 · 품목별) 별도 메뉴
@@ -1663,11 +1686,8 @@ def render_macro():
     # 요청(2026-11-06). 밴드는 자체 기간 선택(밴드 기간)을 쓰므로 아래 '기간'
     # 라디오와 무관하고, 그 라디오는 '시장 지표' 카드에만 걸리니 소제목 뒤에 둔다.
     _render_valuation_band()
-    section_title("시장 지표")
-
     period_map = {"1개월": "1mo", "6개월": "6mo", "1년": "1y", "3년": "3y", "5년": "5y"}
-    sel_p = st.radio("기간", list(period_map.keys()), index=2,
-                      horizontal=True, key="macro_period_v2")
+    sel_p = section_title_select("시장 지표", period_map, key="mkt", index=2)
     period = period_map[sel_p]
 
     # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
