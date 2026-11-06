@@ -6,6 +6,7 @@ ui_macro.py의 _get_*_price_history()는 화면 표시용으로 오늘자 현재
 이 스크립트는 GitHub Actions에서 매일 실행되어 오늘자 값을 각 캐시 JSON에
 append하고 커밋되도록 한다 (커밋/푸시는 워크플로우 쪽에서 처리).
 """
+import html as html_mod
 import json
 import os
 import re
@@ -22,6 +23,7 @@ _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
+_SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
 
 # 미국 연방부채는 스크래핑이 아니라 재무부 공식 API로 받는다 — 키가 필요 없고
 # 1993년부터 일별 전체 이력이 나온다. 그래서 리튬/DRAM처럼 "오늘 값만 긁어
@@ -286,7 +288,56 @@ def fetch_market_series() -> dict:
     return out
 
 
-def _merge_market(path: str, fresh: dict) -> bool:
+# ── S&P 500 밸류에이션 (multpl) ──────────────────────────────────────────────
+# 코스피·코스닥 밴드와 같은 화면을 미국 지수로도 보려는 것. KRX처럼 일별을 주는
+# 공개 소스가 없어 multpl.com을 쓴다 — PER은 월간(1871~), PBR은 분기(1999~)다.
+# 나스닥·다우는 무료 이력 소스가 없어 넣지 않는다(현재값만 있고 과거가 없다).
+#
+# ⚠️ 값 칸에 `&#x2002;`(엔스페이스) 같은 엔티티가 섞여 온다. 태그만 걷어내고
+# 숫자를 찾으면 그 안의 "2002"를 값으로 집는다(실제로 PBR 106행 중 다수가
+# 2002.0으로 들어왔다). 엔티티를 먼저 푼 다음 숫자를 찾아야 한다.
+_SP500_PAGES = {
+    "per": "s-p-500-pe-ratio/table/by-month",
+    "pbr": "s-p-500-price-to-book/table/by-quarter",
+}
+_SP500_ROW = re.compile(
+    r"<td[^>]*>\s*([A-Z][a-z]{2}\s+\d{1,2},\s*\d{4})\s*</td>\s*<td[^>]*>(.*?)</td>", re.S)
+_SP500_NUM = re.compile(r"-?\d+(?:\.\d+)?")
+_SP500_KEEP_DAYS = 365 * 40
+
+
+def fetch_sp500_valuation() -> dict:
+    """{"per": [[epoch_ms, 값], ...], "pbr": [...]}. 실패한 항목은 빼고 돌려준다."""
+    out = {}
+    for key, path in _SP500_PAGES.items():
+        try:
+            r = requests.get(f"https://www.multpl.com/{path}", headers=_UA_HEADERS, timeout=25)
+            if r.status_code != 200:
+                print(f"[sp500] {key}: HTTP {r.status_code}")
+                continue
+            i = r.text.find("<table")
+            body = r.text[i:r.text.find("</table>", i)] if i >= 0 else ""
+            rows = []
+            for d, cell in _SP500_ROW.findall(body):
+                txt = html_mod.unescape(re.sub(r"<[^>]+>", " ", cell)).replace(",", "")
+                m = _SP500_NUM.search(txt)
+                if not m:
+                    continue
+                try:
+                    dt = datetime.strptime(re.sub(r"\s+", " ", d), "%b %d, %Y").date()
+                except ValueError:
+                    continue
+                rows.append([_date_to_ms(dt), round(float(m.group()), 4)])
+            if rows:
+                rows.sort()
+                out[key] = rows
+                print(f"[sp500] {key}: {len(rows)}건 (최신 {rows[-1][1]})")
+        except Exception as e:
+            print(f"[sp500] {key} 실패: {type(e).__name__}: {e}")
+    return out
+
+
+def _merge_market(path: str, fresh: dict, keep_days: int = _MARKET_KEEP_DAYS) -> bool:
     """
     기존 파일과 병합해 저장. 일부 티커만 실패해도 나머지 이력은 지키고,
     받아온 날짜는 덮어쓴다(장중에 받은 값이 종가로 정정될 수 있다).
@@ -301,7 +352,7 @@ def _merge_market(path: str, fresh: dict) -> bool:
     except Exception:
         cur = {}
 
-    cutoff = _date_to_ms(datetime.now(KST).date() - timedelta(days=_MARKET_KEEP_DAYS))
+    cutoff = _date_to_ms(datetime.now(KST).date() - timedelta(days=keep_days))
     merged = dict(cur)
     for tk, rows in fresh.items():
         by_ts = {int(ts): v for ts, v in cur.get(tk, []) if isinstance(ts, (int, float))}
@@ -359,5 +410,7 @@ if __name__ == "__main__":
         updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
         updated["market"] = _merge_market(_MARKET_CACHE, fetch_market_series())
         updated["fng"] = _merge_list(_FNG_CACHE, fetch_fng_series(), _FNG_KEEP_DAYS)
+        updated["sp500"] = _merge_market(_SP500_CACHE, fetch_sp500_valuation(),
+                                         _SP500_KEEP_DAYS)
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

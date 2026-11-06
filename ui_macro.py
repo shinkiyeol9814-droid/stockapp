@@ -24,6 +24,7 @@ _DDR4_CACHE    = os.path.join(_MACRO_DIR, "ddr4_cache.json")
 _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
+_SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
 
 _USDEBT_API = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -1078,6 +1079,51 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_sp500_valuation() -> dict:
+    """
+    S&P 500 PER·PBR — batch_macro가 multpl에서 받아 둔 파일.
+
+    코스피처럼 일별이 아니다: PER은 월간(1871~), PBR은 분기(1999~)다. 미국
+    지수는 KRX 같은 일별 공개 소스가 없어서 이게 최선이고, 화면에도 그렇게 적는다.
+    """
+    try:
+        with open(_SP500_CACHE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return {}
+    out = {}
+    for key, rows in (raw or {}).items():
+        if not rows:
+            continue
+        df = pd.DataFrame(rows, columns=["ts", "v"])
+        df["date"] = pd.to_datetime(df["ts"], unit="ms")
+        out[key] = df.set_index("date")["v"].sort_index()
+    return out
+
+
+def _render_sp500_band(years, span_label: str) -> None:
+    """코스피·코스닥 아래에 같은 모양으로 한 줄. 세 번째 칸은 비운다(수급 자료 없음)."""
+    data = _get_sp500_valuation()
+    if not data:
+        return
+    st.markdown(
+        "<div style='font-size:1.0rem;font-weight:700;margin:2px 0 1px;'>S&amp;P 500"
+        "<span style='font-size:11px;font-weight:400;color:#888;margin-left:7px;'>"
+        "PER 월간 · PBR 분기 (multpl)</span></div>",
+        unsafe_allow_html=True)
+    cols = st.columns(3)
+    for col, (field, title) in zip(cols[:2], (("per", "PER"), ("pbr", "PBR"))):
+        with col:
+            s_ = data.get(field)
+            if s_ is None or s_.empty:
+                _render_band_card(f"S&P 500 {title}", pd.Series(dtype=float), "배", span_label)
+                continue
+            if years:
+                s_ = s_[s_.index >= s_.index[-1] - pd.DateOffset(years=years)]
+            _render_band_card(f"S&P 500 {title}", s_, "배", span_label)
+
+
 def _render_valuation_band() -> None:
     data = _get_index_valuation()
     section_title("지수 밸류에이션 밴드")
@@ -1110,6 +1156,8 @@ def _render_valuation_band() -> None:
                 _render_band_card(f"{label} {title}", s, unit, span_label,
                                   close=df["close"], index_name=label,
                                   volume=df["volume"], value=df["value"], foreign=df["foreign"])
+
+    _render_sp500_band(years, span_label)
 
 
 def _extremes_html(hist: pd.DataFrame, unit: str, fmt: str, mult: float = 1) -> str:
@@ -1296,6 +1344,12 @@ def render_macro():
     # 2026-10-26: 3개월을 빼고 3년·5년 추가(사용자 요청). 리튬·DRAM·DDR4·공포탐욕처럼 자체 캐시로
     # 쌓는 지표는 쌓인 만큼만 보인다(연방부채는 3년치). 키를 바꾼 건 예전 세션에 남은 "3개월"이
     # 새 선택지에 없어서다.
+    # 코스피·코스닥 밴드를 맨 위로 — 국내 지수가 먼저 눈에 들어와야 한다는
+    # 요청(2026-11-06). 밴드는 자체 기간 선택(밴드 기간)을 쓰므로 아래 '기간'
+    # 라디오와 무관하고, 그 라디오는 '시장 지표' 카드에만 걸리니 소제목 뒤에 둔다.
+    _render_valuation_band()
+    section_title("시장 지표")
+
     period_map = {"1개월": "1mo", "6개월": "6mo", "1년": "1y", "3년": "3y", "5년": "5y"}
     sel_p = st.radio("기간", list(period_map.keys()), index=2,
                       horizontal=True, key="macro_period_v2")
@@ -1368,11 +1422,6 @@ def render_macro():
         hists[nm] = ok(res[("hist", nm)])
         last_prev_map[nm] = ok(res[("lp", nm)], (None, None, None))
         full_map[nm] = ok(res[("full", nm)])
-
-    # 코스피·코스닥 밸류에이션 밴드를 맨 위로 — 국내 지수가 먼저 눈에 들어와야
-    # 한다는 요청(2026-11-06). 시세 카드는 그 아래로 내려간다.
-    _render_valuation_band()
-    section_title("시장 지표")
 
     for row_start in range(0, len(MARKET_ITEMS), 3):
         if row_start:
