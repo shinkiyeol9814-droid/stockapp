@@ -24,6 +24,7 @@ _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 _SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
+_INFLATION_CACHE = os.path.join(_MACRO_DIR, "us_inflation.json")
 
 # 미국 연방부채는 스크래핑이 아니라 재무부 공식 API로 받는다 — 키가 필요 없고
 # 1993년부터 일별 전체 이력이 나온다. 그래서 리튬/DRAM처럼 "오늘 값만 긁어
@@ -337,6 +338,61 @@ def fetch_sp500_valuation() -> dict:
     return out
 
 
+# 미국 물가 — FRED의 CSV 엔드포인트. API 키가 필요 없고(fredgraph.csv는 공개),
+# 1947년부터 전체 이력이 한 번에 나온다. yfinance처럼 Streamlit Cloud에서
+# 막힐 위험을 피하려고 여기서 받아 파일로 커밋하고, 앱은 그 파일만 읽는다.
+#
+# ⚠️ PMI는 여기 없다 — 무료로 제대로 받을 경로가 없다. ISM은 2016년 6월 FRED에서
+# 22개 계열이 API까지 삭제됐고(NAPM·NAPMPMI 모두 404 실측), S&P Global PMI는
+# PMI®가 등록상표로 보도자료만 공개돼 시계열 재배포가 안 된다. DBnomics의
+# ISM/pmi는 2025-09부터 값이 11.1·10.0처럼 깨져 있고(50 기준 지수에 불가능한 값)
+# indexed_at이 2026-01-07에서 멈춘 방치된 피드다. 제조업 설문이 필요하면
+# 필라델피아(GACDFSA066MSFRBPHI)·댈러스(BACTSAMFRBDAL) 연준 지수가 무료로
+# 살아 있지만 50이 아니라 0 기준 확산지수라 PMI처럼 읽을 수 없다.
+#
+# 레벨(지수값)을 그대로 저장한다 — YoY 계산은 앱에서 한다. 정의를 바꿔도
+# 다시 받을 필요가 없고, 레벨이 원본이라 검증도 쉽다.
+_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
+_INFLATION_SERIES = {
+    "cpi":      "CPIAUCSL",   # 소비자물가 (계절조정, 1947~)
+    "core_cpi": "CPILFESL",   # 식품·에너지 제외 (1957~)
+    "ppi":      "PPIFIS",     # 생산자물가 최종수요 (2009~)
+    "core_pce": "PCEPILFE",   # 연준이 목표로 보는 지표 (1959~)
+}
+_INFLATION_KEEP_DAYS = 365 * 40
+
+
+def fetch_us_inflation() -> dict:
+    """{"cpi": [[epoch_ms, 지수], ...], ...}. 실패한 항목은 빼고 돌려준다."""
+    out = {}
+    for key, sid in _INFLATION_SERIES.items():
+        try:
+            r = requests.get(_FRED_CSV.format(sid), headers=_UA_HEADERS, timeout=25)
+            if r.status_code != 200:
+                print(f"[inflation] {key}({sid}): HTTP {r.status_code}")
+                continue
+            rows = []
+            for line in r.text.splitlines()[1:]:
+                parts = line.strip().split(",")
+                if len(parts) < 2 or parts[1] in (".", ""):
+                    continue          # FRED는 결측을 "."으로 준다
+                try:
+                    d = datetime.strptime(parts[0].strip(), "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                try:
+                    rows.append([_date_to_ms(d), round(float(parts[1]), 4)])
+                except ValueError:
+                    continue
+            if rows:
+                rows.sort()
+                out[key] = rows
+                print(f"[inflation] {key}({sid}): {len(rows)}건 (최신 {rows[-1][1]})")
+        except Exception as e:
+            print(f"[inflation] {key} 실패: {type(e).__name__}: {e}")
+    return out
+
+
 def _merge_market(path: str, fresh: dict, keep_days: int = _MARKET_KEEP_DAYS) -> bool:
     """
     기존 파일과 병합해 저장. 일부 티커만 실패해도 나머지 이력은 지키고,
@@ -412,5 +468,7 @@ if __name__ == "__main__":
         updated["fng"] = _merge_list(_FNG_CACHE, fetch_fng_series(), _FNG_KEEP_DAYS)
         updated["sp500"] = _merge_market(_SP500_CACHE, fetch_sp500_valuation(),
                                          _SP500_KEEP_DAYS)
+        updated["inflation"] = _merge_market(_INFLATION_CACHE, fetch_us_inflation(),
+                                             _INFLATION_KEEP_DAYS)
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

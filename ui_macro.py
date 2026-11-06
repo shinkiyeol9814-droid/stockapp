@@ -25,6 +25,7 @@ _USDEBT_CACHE  = os.path.join(_MACRO_DIR, "us_debt_cache.json")
 _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 _SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
+_INFLATION_CACHE = os.path.join(_MACRO_DIR, "us_inflation.json")
 
 _USDEBT_API = (
     "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -1160,6 +1161,169 @@ def _render_valuation_band() -> None:
     _render_sp500_band(years, span_label)
 
 
+_INFLATION_PERIODS = {"3년": 3, "10년": 10, "전체": None}
+
+# (키, 표시 이름, 목표치). 목표 2%는 연준의 물가 목표 — 코어 PCE가 그 대상 지표이고,
+# CPI는 대중이 보는 숫자다. PPI는 목표가 없는 지표라 None.
+_INFLATION_ITEMS = [
+    ("cpi",      "미국 CPI",         2.0),
+    ("core_cpi", "미국 코어 CPI",     2.0),
+    ("ppi",      "미국 PPI 최종수요",  None),
+    ("core_pce", "미국 코어 PCE",     2.0),
+]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_us_inflation() -> dict:
+    """
+    batch_macro가 FRED에서 받아 둔 물가 지수(레벨). {키: Series}.
+
+    💡 파일에는 지수 레벨만 들어 있고 YoY는 여기서 계산한다 — 정의를 바꿔도
+    다시 받을 필요가 없다. 월 단위라 '1개월' 같은 짧은 기간은 의미가 없어서
+    시세 카드의 기간 라디오를 쓰지 않고 자체 기간(3년/10년/전체)을 둔다.
+    """
+    try:
+        with open(_INFLATION_CACHE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return {}
+    out = {}
+    for key, rows in (raw or {}).items():
+        if not rows:
+            continue
+        df = pd.DataFrame(rows, columns=["ts", "v"])
+        df["date"] = pd.to_datetime(df["ts"], unit="ms")
+        out[key] = df.set_index("date")["v"].sort_index()
+    return out
+
+
+def _yoy(s: pd.Series) -> pd.Series:
+    """
+    전년 동월 대비 %.
+
+    ⚠️ s.shift(12)를 그냥 쓰면 안 된다 — shift는 12개월이 아니라 12'행'을 민다.
+    CPI·코어 CPI는 2025년 10월분이 미국 연방정부 셧다운으로 아예 발표되지 않아
+    공식 계열에 그 달이 없고(실측: 478개월 중 2025-10 결측), 그대로 shift하면
+    2026-09가 2025-09이 아니라 2025-08과 비교되어 CPI YoY가 3.72% 대신
+    4.02%로 나온다. 그래서 빠진 달을 NaN으로 채운 월 인덱스에 맞춘 뒤 민다 —
+    비교 대상이 없는 달은 NaN이 되어 화면에서 조용히 빠진다.
+    """
+    full = s.reindex(pd.date_range(s.index[0], s.index[-1], freq="MS"))
+    return ((full / full.shift(12) - 1) * 100).dropna()
+
+
+def _make_inflation_chart(s: pd.Series, target: float | None) -> go.Figure:
+    hi, lo = float(s.max()), float(s.min())
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
+        hovertemplate="%{x|%Y-%m}<br><b>%{y:+.2f}%</b><extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[s.index[-1]], y=[s.values[-1]], mode="markers",
+        marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
+        showlegend=False, hoverinfo="skip",
+    ))
+    # 라벨은 xref="paper"라 축 범위 계산에 끼어들지 않는다(밴드 차트와 같은 방식).
+    # 최고는 선 아래, 최저는 선 위에 붙인다 — 바깥에 두면 차트 밖으로 나가 잘린다.
+    notes = []
+    lines = [(hi, "#ef5350", "dash", "최고", "top"),
+             (lo, "#1565C0", "dash", "최저", "bottom")]
+    if target is not None:
+        lines.append((target, "#2E7D32", "dot", "목표", "bottom"))
+    for y, color, dash, lbl, anchor_ in lines:
+        fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+        notes.append(dict(
+            xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anchor_,
+            text=f"<b>{lbl}</b> {y:+.1f}%", showarrow=False,
+            font=dict(size=9.5, color=color),
+            bgcolor="rgba(255,255,255,0.72)", borderpad=1,
+        ))
+    # 0% 선 — 마이너스(디플레) 구간을 눈으로 구분할 수 있게.
+    if lo < 0:
+        fig.add_hline(y=0, line=dict(color="#ccc", width=1))
+    # 크기·여백은 시세 카드(_make_sparkline)·밴드 카드와 같게 맞춘다.
+    fig.update_layout(
+        height=96, margin=dict(l=0, r=2, t=8, b=18),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x",
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True, tickformat="%y",
+                   tickfont=dict(size=7, color="#aaa"), ticklen=0),
+        yaxis=dict(showgrid=False, zeroline=False, fixedrange=True, showticklabels=False),
+        annotations=notes,
+    )
+    return fig
+
+
+def _render_inflation_card(name: str, yoy: pd.Series, target: float | None,
+                           span_label: str) -> None:
+    if len(yoy) < 13:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
+                    unsafe_allow_html=True)
+        return
+    cur = float(yoy.iloc[-1])
+    mom = cur - float(yoy.iloc[-2])          # 전월 발표치 대비 가속/감속(%p)
+    # 색 규칙(AGENTS.md): 상승·양수 = 빨강, 하락·음수 = 파랑. 물가에서는
+    # "가속"이 빨강이 되는데, 한국 시장 색 규칙을 지표마다 뒤집지 않는다.
+    clr = "#ef5350" if mom > 0 else "#1565C0" if mom < 0 else "#888"
+    badge = ""
+    if target is not None:
+        gap = cur - target
+        if gap >= 0.5:
+            badge = ("<span style='background:#ef5350;color:#fff;font-size:9.5px;font-weight:700;"
+                     f"padding:1px 5px;border-radius:3px;'>목표 +{gap:.1f}%p</span>")
+        elif gap <= -0.5:
+            badge = ("<span style='background:#1565C0;color:#fff;font-size:9.5px;font-weight:700;"
+                     f"padding:1px 5px;border-radius:3px;'>목표 {gap:.1f}%p</span>")
+        else:
+            badge = ("<span style='background:#2E7D32;color:#fff;font-size:9.5px;font-weight:700;"
+                     "padding:1px 5px;border-radius:3px;'>목표권</span>")
+    pct = float((yoy < cur).mean() * 100)
+    st.markdown(
+        f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
+        f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+        f"<span style='font-size:11px;color:#888;white-space:nowrap;'>{name}</span>{badge}"
+        f"<span style='font-size:18px;font-weight:700;'>{cur:+.2f}%</span>"
+        f"<span style='font-size:11.5px;color:{clr};font-weight:600;white-space:nowrap;'>"
+        f"전월 {mom:+.2f}%p</span>"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"{span_label} 백분위 {pct:.0f}% · {yoy.index[-1]:%Y-%m} 기준</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(_make_inflation_chart(yoy, target), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+
+
+def _render_inflation_section() -> None:
+    data = _get_us_inflation()
+    section_title("경제 지표")
+    if not data:
+        st.caption("미국 물가 데이터를 아직 받지 못했습니다 (매일 배치가 FRED에서 수집).")
+        return
+    span_label = st.radio("물가 기간", list(_INFLATION_PERIODS), index=1,
+                          horizontal=True, key="macro_infl_span")
+    years = _INFLATION_PERIODS[span_label]
+    st.caption("전년 동월 대비(YoY) · 월 단위 발표라 시세 카드의 기간과 따로 움직인다 · "
+               "초록 점선은 연준 물가 목표 2%(코어 PCE가 그 대상 지표) · "
+               "백분위 = 기간 중 지금보다 낮았던 달의 비율 · 출처 FRED")
+    # ⚠️ PMI는 없다 — ISM은 2016년 FRED에서 API까지 삭제됐고(NAPM 404 실측),
+    # S&P Global PMI는 PMI®가 등록상표로 시계열 재배포가 안 되며, DBnomics의
+    # ISM/pmi는 2025-09부터 값이 깨진 채 갱신이 멈췄다. batch_macro 쪽 주석 참고.
+    cols = st.columns(3)
+    for i, (key, name, target) in enumerate(_INFLATION_ITEMS):
+        with cols[i % 3]:
+            s = data.get(key)
+            if s is None or s.empty:
+                _render_inflation_card(name, pd.Series(dtype=float), target, span_label)
+                continue
+            yoy = _yoy(s)
+            if years:
+                yoy = yoy[yoy.index >= yoy.index[-1] - pd.DateOffset(years=years)]
+            _render_inflation_card(name, yoy, target, span_label)
+
+
 def _extremes_html(hist: pd.DataFrame, unit: str, fmt: str, mult: float = 1) -> str:
     """표시 구간의 최고·최저와 그 날짜를 한 줄로. 차트의 점선 두 개와 짝이다."""
     p = hist["price"] * mult
@@ -1566,6 +1730,11 @@ def render_macro():
                         f"style='color:#555;text-decoration:none;'>{html.escape(title)}</a></div>",
                         unsafe_allow_html=True,
                     )
+
+    # 물가는 월 단위라 위 시세 카드의 기간 라디오(1개월~5년)와 성격이 다르다 —
+    # 자체 기간(3년/10년/전체)을 가진 별도 섹션으로 맨 아래에 둔다. 위를 밀어내면
+    # 매일 보는 환율·DRAM 카드가 내려가서 맨 아래가 맞다.
+    _render_inflation_section()
 
 
 

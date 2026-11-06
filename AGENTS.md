@@ -57,7 +57,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `ui_common.py` | **탭 공용 UI: `page_header`(제목+작은 새로고침) · `section_title` · `run_with_progress`(병렬 조회+0~100% 진행률)** |
 | `valuation.py` | 가치평가 탭 UI + 공유 데이터 함수(`get_hybrid_financials` 등) |
 | `ui_surge.py` | **거래대금 급증 스크리너 탭 — 별도 리포 `kosdaq-surge`가 만든 JSON을 읽어 그리기만 함** |
-| `ui_macro.py` | 매크로 지표 탭 (환율/금리/원자재/메모리/미국부채) |
+| `ui_macro.py` | 매크로 지표 탭 (지수 밴드/환율/금리/원자재/메모리/미국부채/미국 물가) |
 | `ui_earnings.py` | 실적 탭 |
 | `ui_report.py` | 레포트 탭 |
 | `new_high.py` | 신고가 탭 (아래에 섹터별 등락률 섹션. 종목별 뉴스 펼침은 2026-10-30 제거) |
@@ -127,6 +127,7 @@ data/
   macro/index_val/{연도}.json     # 코스피·코스닥 일별 (2006~, 한 줄에 하루, 올해 파일만 바뀜)
                                   #   [날짜, PER, PBR, 종가, 거래량, 거래대금, 외국인, 기관, 개인 순매수]
                                   #   16시 전엔 오늘 줄을 안 받는다(장중 미확정 값 방지)
+  macro/us_inflation.json       # 미국 CPI·코어CPI·PPI·코어PCE 지수 레벨 (FRED, 40년치)
   macro/foreign_hold/{연도}.json  # 외국인 보유 비중 [날짜, 비중%, 외국인보유 시총, 시가총액] (2006~ 주 단위, 이후 일 단위)
   sector/daily/{YYYY-MM-DD}.json  # 섹터별 등락률 [업종, 등락률%, 종목수, 상승, 보합, 하락] (2026-03-09~, 하루 한 파일·다시 안 씀,
                                   #   시세는 fdr 캐시 리포 날짜별 CSV — 그 리포가 2026-03-08부터라 그 전은 없다. 보존 기간 정리 대상 아님)
@@ -194,6 +195,32 @@ Streamlit Cloud에서는 `opendart.fss.or.kr` 연결이 막혀 있다(TCP 연결
   updated_at을 올린다(앱의 반영 감지가 이 값을 본다).
 - 끝에 `::notice title=DART batch::` 요약(건수·소요·느린 종목)을 남긴다 — 로그는 관리자만 볼 수
   있지만 annotation은 공개 API로 읽힌다.
+
+### 미국 물가 (`경제 지표` 섹션) — PMI은 넣을 수 없다
+`batch_macro.fetch_us_inflation()`이 FRED의 **CSV 엔드포인트**(`fredgraph.csv?id=…`)로 받는다.
+키가 필요 없고 전체 이력이 한 번에 나온다. 앱(`ui_macro._render_inflation_section`)은 파일만 읽는다 —
+Yahoo가 Cloud에서 막힌 것과 같은 위험을 피하고, 월 단위라 배치가 자연스럽다.
+
+파일에는 **지수 레벨만** 저장하고 YoY는 앱에서 계산한다(정의를 바꿔도 다시 받을 필요가 없다).
+
+> ⚠️ **YoY를 `s.shift(12)`로 계산하지 말 것.** shift는 12개월이 아니라 12*행*을 민다.
+> CPI·코어 CPI는 **2025년 10월분이 미국 연방정부 셧다운으로 발표되지 않아** 공식 계열에
+> 그 달이 아예 없다(실측: 478개월 중 2025-10 결측). 그대로 shift하면 2026-09가 2025-09이
+> 아니라 2025-08과 비교되어 CPI YoY가 3.72%여야 할 자리에 **4.02%**가 나온다.
+> `_yoy()`는 빠진 달을 NaN으로 채운 월 인덱스(`freq="MS"`)에 맞춘 뒤 민다.
+
+**PMI는 무료로 제대로 받을 경로가 없다.** 셋 다 실측으로 막힌 것을 확인했다:
+- **ISM**: 2016년 6월 FRED에서 22개 계열이 API까지 삭제 — `NAPM`·`NAPMPMI`·`NAPMNOI` 모두 404.
+- **S&P Global**: `PMI®`가 Markit 등록상표. 보도자료 본문만 공개돼 시계열 재배포가 안 된다.
+- **DBnomics `ISM/pmi`**: 2025-09부터 값이 11.1·10.0으로 깨졌다(50 기준 지수에 불가능).
+  `indexed_at`이 2026-01-07에서 멈춘 방치된 피드 — 붙이면 화면에 "PMI 10.3"이 뜬다.
+
+대체는 필라델피아(`GACDFSA066MSFRBPHI`, 1968~)·댈러스(`BACTSAMFRBDAL`, 2004~) 연준 제조업지수.
+무료이고 현재값까지 살아 있지만 **50이 아니라 0 기준 확산지수**라 PMI처럼 읽을 수 없다.
+
+한국 CPI·PPI는 **ECOS(한국은행) 무료 키가 필요하다.** FRED의 OECD 한국 계열은 전부 중단됐고
+(`KORCPIALLMINMEI`가 2023-11에서 끊김, `KORCPALTT01GYM`·`KORPPIIAMINMEI`는 404),
+ECOS의 `sample` 키는 **1회 10건 제한**(`ERROR-301`)이라 시계열에 못 쓴다.
 
 ### 휴장일엔 배치를 건너뛴다 (`market_calendar`)
 배치 대부분이 외부 크론(cron-job.org)이라 요일·공휴일 구분 없이 돈다 — 한글날(10/9)에 신고가
