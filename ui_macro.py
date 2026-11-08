@@ -1224,7 +1224,7 @@ _COMPARE_PERIODS = {"1년": 1, "3년": 3, "5년": 5, "10년": 10}
 # 차트와 같은 색, S&P는 그와 확실히 구분되는 호박색, 금리는 성격이 달라
 # (오른쪽 축) 회색 점선으로 낮춘다.
 _CMP_KOSPI = _VALUATION_LINE
-_CMP_SP500 = "#E8870B"
+_CMP_SP500 = "#E8870B"   # 지금은 안 쓴다 — S&P 차트를 뺐다(2026-11-08). 되살릴 때를 위해 남긴다.
 _CMP_YIELD = "#7E8A93"
 
 
@@ -1397,18 +1397,17 @@ def _render_compare_section() -> None:
     cut = lambda s: s[s.index >= start].dropna() if s is not None else None
     kospi, sp500, yld = cut(kospi_all), cut(sp500), cut(yld)
 
+    # 💡 S&P 500 + 금리 차트는 뺐다(2026-11-08 요청) — 코스피 한 장만 화면 폭으로.
+    # 하루 전 상관은 아래에 남아 있어 S&P 계열은 계속 받는다(batch_macro.update_compare_series).
+    # 되살리려면 이 블록을 st.columns(2) 루프로 되돌리면 된다 — 데이터는 그대로 있다.
     cfg = {"displayModeBar": False, "scrollZoom": False, "staticPlot": False}
-    for col, (s, name, color) in zip(st.columns(2),
-                                     ((kospi, "코스피", _CMP_KOSPI),
-                                      (sp500, "S&P 500", _CMP_SP500))):
-        with col:
-            if s is None or s.empty:
-                st.caption(f"{name} 데이터를 아직 받지 못했습니다.")
-                continue
-            st.plotly_chart(_make_rate_chart(s, name, color, yld),
-                            use_container_width=True, config=cfg)
-            st.markdown(_rate_summary_html(s, name, yld, span_label),
-                        unsafe_allow_html=True)
+    if kospi is None or kospi.empty:
+        st.caption("코스피 데이터를 아직 받지 못했습니다.")
+    else:
+        st.plotly_chart(_make_rate_chart(kospi, "코스피", _CMP_KOSPI, yld),
+                        use_container_width=True, config=cfg)
+        st.markdown(_rate_summary_html(kospi, "코스피", yld, span_label),
+                    unsafe_allow_html=True)
 
     # 일간 변동률의 상관 — 수준이 아니라 '같이 흔들리는 정도'를 본다.
     #
