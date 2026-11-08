@@ -1548,6 +1548,120 @@ def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
     return fig
 
 
+# ───────── 시장별 신용잔고 (코스피 · 코스닥) ─────────
+#
+# 합계만 보면 어느 쪽이 레버리지를 지고 있는지 안 보인다 — 코스닥은 개인·신용 비중이
+# 구조적으로 높아 같은 1조가 코스피의 1조보다 훨씬 무겁다(2026-11-08 요청).
+# 지수를 같은 장에 겹치는 이유는 수준이 아니라 **벌어지는 자리**를 보기 위해서다:
+# 지수가 빠지는데 잔고가 안 줄면 청산이 아직 남았고, 지수가 멈췄는데 잔고만 계속
+# 줄면 디레버리징이 끝나가는 국면이다. 잔고 자체는 지수를 따라가므로 겹치는 구간은
+# 아무 정보도 아니다.
+#
+# 지수는 보조 계열이라 비교 차트의 금리와 같은 회색 점선으로 낮춘다 — 매크로 탭에서
+# 빨강·파랑은 '올랐다/내렸다'라 계열 구분에 쓰지 않는다(AGENTS.md 색상 규칙).
+_CRD_IDX_LINE = _CMP_YIELD
+
+
+def _make_crd_idx_chart(crd: pd.Series, idx: pd.Series | None) -> go.Figure:
+    hi, lo = float(crd.max()), float(crd.min())
+    span = (hi - lo) or abs(hi) or 1.0
+    base_y, top_y = lo - span * 0.14, hi + span * 0.10
+    fig = go.Figure()
+    # 채움을 쓰려면 폭 0인 바닥 선이 바로 앞에 있어야 한다(fill="tonexty").
+    fig.add_trace(go.Scatter(x=crd.index, y=[base_y] * len(crd), mode="lines",
+                             line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(
+        x=crd.index, y=crd.values, mode="lines",
+        line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
+        fill="tonexty", fillcolor=_LINE_FILL,
+        hovertemplate="%{x|%Y-%m-%d}<br>잔고 <b>%{y:,.1f}조</b><extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[crd.index[-1]], y=[float(crd.iloc[-1])], mode="markers",
+        marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
+        showlegend=False, hoverinfo="skip",
+    ))
+    notes = [dict(xref="paper", yref="y", x=0.004, y=hi, xanchor="left", yanchor="top",
+                  text=f"<b>최고</b> {hi:,.1f}조", showarrow=False,
+                  font=dict(size=9.5, color="#ef5350"),
+                  bgcolor="rgba(255,255,255,0.72)", borderpad=1)]
+    fig.add_hline(y=hi, line=dict(color="#ef5350", width=1.1, dash="dash"))
+    y2 = dict(overlaying="y", visible=False, fixedrange=True)
+    if idx is not None and not idx.empty:
+        ihi, ilo = float(idx.max()), float(idx.min())
+        ispan = (ihi - ilo) or abs(ihi) or 1.0
+        # 잔고 선과 지수 선이 서로를 가리지 않게 지수 쪽을 조금 더 넓게 잡는다.
+        y2["range"] = [ilo - ispan * 0.22, ihi + ispan * 0.16]
+        fig.add_trace(go.Scatter(
+            x=idx.index, y=idx.values, mode="lines", yaxis="y2",
+            line=dict(color=_CRD_IDX_LINE, width=1.2, dash="dot"), showlegend=False,
+            hovertemplate="지수 <b>%{y:,.0f}</b><extra></extra>",
+        ))
+    fig.update_layout(
+        height=110, margin=dict(l=0, r=2, t=8, b=18),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x",
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(crd.index)),
+        yaxis=dict(range=[base_y, top_y], showgrid=False, zeroline=False,
+                   fixedrange=True, showticklabels=False),
+        yaxis2=y2,
+        annotations=notes,
+    )
+    return fig
+
+
+def _crd_market_card(key: str, name: str, full: pd.Series | None,
+                     win: pd.Series | None, idx: pd.Series | None, idx_label: str) -> None:
+    with st.container(key=f"mcard_flow_{key}"):
+        _crd_market_body(name, full, win, idx, idx_label)
+
+
+def _crd_market_body(name: str, full: pd.Series | None, win: pd.Series | None,
+                     idx: pd.Series | None, idx_label: str) -> None:
+    if win is None or win.dropna().empty or full is None or full.dropna().empty:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
+                    unsafe_allow_html=True)
+        return
+    win, full = win.dropna(), full.dropna()
+    cur = float(win.iloc[-1])
+    d1 = cur - (float(win.iloc[-2]) if len(win) > 1 else cur)
+    # 배지·고점 낙폭은 **전체 이력** 기준 — 기간을 좁혀도 뜻이 바뀌지 않게.
+    pk, pk_i = float(full.max()), full.idxmax()
+    drop = (float(full.iloc[-1]) / pk - 1) * 100
+    badge_html = ""
+    if drop <= -15:
+        txt, bclr = "청산 진행", "#1565C0"
+    elif drop >= -2:
+        txt, bclr = "고점권", "#ef5350"
+    else:
+        txt, bclr = "", ""
+    if txt:
+        badge_html = (f"<span style='background:{bclr};color:#fff;font-size:9.5px;"
+                      f"font-weight:700;padding:1px 5px;border-radius:3px;'>{txt}</span>")
+    st.markdown(
+        f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
+        f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+        f"<span style='font-size:11px;color:#888;white-space:nowrap;'>{name}</span>{badge_html}"
+        f"<span style='font-size:18px;font-weight:700;'>{cur:,.1f}조</span>"
+        f"<span style='font-size:11.5px;color:{_sign_color(d1)};white-space:nowrap;'>"
+        f"전일 {d1:+,.2f}조</span>"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"{win.index[-1]:%m/%d}</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(_make_crd_idx_chart(win, idx), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+    st.markdown(
+        f"<div style='font-size:10.5px;color:#9aa5b1;margin-top:1px;'>"
+        f"고점 {pk:,.1f}조({pk_i:%y.%m}) 대비 "
+        f"<span style='color:{_sign_color(drop)};font-weight:600;'>{drop:+.1f}%</span>"
+        f" · 회색 점선 {idx_label}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _flow_card(key: str, name: str, s: pd.Series, unit: str, fmt: str, sub: str,
                badge: tuple | None = None, warn: float | None = None,
                bars: bool = False) -> None:
@@ -1625,6 +1739,26 @@ def _flow_summary_html(df: pd.DataFrame) -> str:
             "line-height:1.5;'>" + " · ".join(parts) + "</div>")
 
 
+# 해석은 펼침 안에만 둔다 — 늘 펼쳐 두면 카드보다 글이 길어진다. 숫자 기준선은
+# 차트 안에 이미 그려져 있으니 여기서는 '그래서 어떻게 읽나'만 적는다.
+#
+# ⚠️ 볼드 닫는 `**`를 `%` 바로 뒤에 두지 말 것 — 강조로 안 읽히고 별표가 그대로
+# 화면에 나온다(실측: "…대비 -15~20%**까지"). 볼드는 단어에만 건다.
+_FLOW_HELP = """
+- **신용잔고**가 고점 대비 15~20% 줄면 디레버리징이 상당히 진행된 것으로 본다.
+  그 전까지는 '아직 남았다'로 읽는다.
+- **반대매매**는 평소의 3~5배로 치솟았다가 며칠 안에 꺾이는 자리가 저점 근처인 경우가 많다.
+  평균 수준이면 강제 청산이 아니라 **자발적 상환**이다 — 같은 감소라도 뜻이 전혀 다르다.
+- **예탁금 대비 신용잔고**가 40%를 넘으면 경계, 45% 이상이면 과열. 30%대 초반까지
+  내려오면 부담이 꽤 풀린 상태다.
+- **예탁금**이 줄다 멈추고 늘기 시작하면 대기 자금이 돌아오는 신호다.
+- **시장별 잔고**는 지수와 **벌어지는 자리**를 본다. 지수가 빠지는데 잔고가 안 줄면
+  청산이 남았고, 지수가 멈췄는데 잔고만 계속 줄면 끝나가는 국면이다.
+- ⚠️ 전부 **후행 지표**다. 저점 '확인'에는 쓰되 예측에는 못 쓴다. 발표도 2영업일쯤 늦어
+  급락 당일의 청산은 아직 숫자에 없다.
+"""
+
+
 def _render_flow_section() -> None:
     try:
         df, cfg_err = _get_flow_stats()
@@ -1680,6 +1814,27 @@ def _render_flow_section() -> None:
         # (섹션 캡션으로 따로 적었더니 카드 설명 세 줄과 뭉쳐 읽혔다.)
         _flow_card("opps", "반대매매", w.get("opps"), "억", ",.0f",
                    "미수금 반대매매만 · 점선 20일 평균", bars=True)
+
+    # 시장별로 나눠 지수와 겹친다 — 합계만 보면 코스닥에 몰린 레버리지가 안 보인다.
+    idx_data = _get_index_valuation() or {}
+    mcols = st.columns(2)
+    for col, (ikey, label, mkey) in zip(
+            mcols, (("KOSPI", "코스피", "crd_kospi"), ("KOSDAQ", "코스닥", "crd_kosdaq"))):
+        full = df.get(mkey)
+        win = w.get(mkey)
+        idf = idx_data.get(ikey)
+        idx = None
+        if idf is not None and not idf.empty and win is not None and not win.dropna().empty:
+            idx = idf["close"]
+            idx = idx[idx.index >= win.dropna().index[0]].dropna()
+        with col:
+            _crd_market_card(
+                f"crd_{ikey.lower()}", f"{label} 신용잔고",
+                None if full is None else full / 1e4,
+                None if win is None else win / 1e4, idx, label)
+
+    with st.expander("읽는 법"):
+        st.markdown(_FLOW_HELP)
 
 
 # ───────── 신용 스프레드 (하이일드 · 투자등급 OAS) ─────────
@@ -1831,6 +1986,18 @@ def _credit_card_body(key: str, name: str, s: pd.Series) -> None:
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
 
 
+_CREDIT_HELP = """
+- 절대 수준보다 **방향과 속도**를 본다. 같은 4%라도 벌어지는 중인지 좁혀지는 중인지가 다르다.
+- **지수 하락 + 스프레드 조용** → 증시 안쪽 수급 조정. 신용 쪽은 아직 멀쩡하다는 뜻이라
+  낙폭이 과하면 되돌림 쪽에 무게가 실린다.
+- **지수 버팀 + 스프레드 확대** → 가장 위험한 조합. 채권이 먼저 경고하는 경우가 많다.
+- **하이일드만 확대** → 저신용·한계기업 문제. **투자등급까지 확대** → 시스템 문제로 번진 것이라
+  두 장을 나란히 둔다.
+- 배지 색은 앱 규칙대로 낮으면 파랑·높으면 빨강이다 — **좋고 나쁨이 아니라 올랐다/내렸다**를
+  말한다. 좋고 나쁨은 위 문장이 말한다.
+"""
+
+
 def _render_credit_section() -> None:
     data = _get_us_credit()
     if not data:
@@ -1848,6 +2015,8 @@ def _render_credit_section() -> None:
             if s is not None and years:
                 s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
             _render_credit_card(key, name, s)
+    with st.expander("읽는 법"):
+        st.markdown(_CREDIT_HELP)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
