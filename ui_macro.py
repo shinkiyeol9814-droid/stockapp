@@ -1547,9 +1547,16 @@ def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
     return fig
 
 
-def _flow_card(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
+def _flow_card(key: str, name: str, s: pd.Series, unit: str, fmt: str, sub: str,
                badge: tuple | None = None, warn: float | None = None,
                bars: bool = False) -> None:
+    with st.container(key=f"mcard_flow_{key}"):
+        _flow_card_body(name, s, unit, fmt, sub, badge, warn, bars)
+
+
+def _flow_card_body(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
+                    badge: tuple | None = None, warn: float | None = None,
+                    bars: bool = False) -> None:
     if s is None or s.dropna().empty:
         st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
                     f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
@@ -1660,17 +1667,18 @@ def _render_flow_section() -> None:
 
     cols = st.columns(3)
     with cols[0]:
-        _flow_card("신용거래융자 잔고", None if crd is None else crd / 1e4, "조", ",.1f",
-                   "코스피+코스닥 합계", crd_badge)
+        _flow_card("crd", "신용거래융자 잔고", None if crd is None else crd / 1e4,
+                   "조", ",.1f", "코스피+코스닥 합계", crd_badge)
     with cols[1]:
-        _flow_card("예탁금 대비 신용잔고", ratio, "%", ".1f",
-                   f"{_CRD_WARN:.0f}% 이상이면 경계", ratio_badge, warn=_CRD_WARN)
+        # 경계선은 차트 안에 '경계 40.0'으로 이미 그려진다 — 밑에 또 적지 않는다.
+        _flow_card("ratio", "예탁금 대비 신용잔고", ratio, "%", ".1f", "",
+                   ratio_badge, warn=_CRD_WARN)
     with cols[2]:
         # ⚠️ 이 통계는 '미수금 반대매매'만이다 — 규모가 훨씬 큰 신용융자 담보부족
         # 청산은 어느 공식 통계에도 없다. 그 한계를 카드 밑 한 줄로 못박아 둔다.
         # (섹션 캡션으로 따로 적었더니 카드 설명 세 줄과 뭉쳐 읽혔다.)
-        _flow_card("반대매매", w.get("opps"), "억", ",.0f",
-                   "미수금 반대매매만 집계 · 점선 20일 평균", bars=True)
+        _flow_card("opps", "반대매매", w.get("opps"), "억", ",.0f",
+                   "미수금 반대매매만 · 점선 20일 평균", bars=True)
 
 
 # ───────── 신용 스프레드 (하이일드 · 투자등급 OAS) ─────────
@@ -1684,10 +1692,7 @@ def _render_flow_section() -> None:
 # 쪽 주석), 배치가 매일 누적하는 만큼 저절로 길어진다. 그래서 '전체'를 골라도
 # 지금은 3년이고, 고점/저점 선도 그 범위 안의 값이다.
 _CREDIT_PERIODS = {"1년": 1, "3년": 3, "전체": None}
-_CREDIT_ITEMS = [
-    ("hy", "하이일드 스프레드", "투기등급 회사채 − 국채"),
-    ("ig", "투자등급 스프레드", "투자등급 회사채 − 국채"),
-]
+_CREDIT_ITEMS = [("hy", "하이일드 스프레드"), ("ig", "투자등급 스프레드")]
 # 구간 기준선. 하이일드는 4%를 넘으면 경계, 5% 이상이면 침체를 가격에 넣은 수준으로
 # 읽는 것이 통상이다. 투자등급은 수준 자체가 1/4 규모라 기준도 따로 둔다.
 _SPREAD_LEVELS = {"hy": (3.0, 4.0, 5.0), "ig": (0.9, 1.3, 1.8)}
@@ -1780,7 +1785,12 @@ def _make_spread_chart(s: pd.Series, warn: float) -> go.Figure:
     return fig
 
 
-def _render_credit_card(key: str, name: str, sub: str, s: pd.Series) -> None:
+def _render_credit_card(key: str, name: str, s: pd.Series) -> None:
+    with st.container(key=f"mcard_crd_{key}"):
+        _credit_card_body(key, name, s)
+
+
+def _credit_card_body(key: str, name: str, s: pd.Series) -> None:
     if s is None or len(s) < 5:
         st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
                     f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
@@ -1814,10 +1824,10 @@ def _render_credit_card(key: str, name: str, sub: str, s: pd.Series) -> None:
         f"{s.index[-1]:%m/%d}</span></div>",
         unsafe_allow_html=True,
     )
+    # 카드 밑 설명("투기등급 회사채 − 국채")은 뺐다 — 섹션 캡션이 이미 OAS가
+    # 무엇인지 말하고 카드 제목이 등급을 말해, 같은 얘기를 세 번 하고 있었다.
     st.plotly_chart(_make_spread_chart(s, warn), use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
-    st.markdown(f"<div style='font-size:10.5px;color:#9aa5b1;margin-top:1px;'>{sub}</div>",
-                unsafe_allow_html=True)
 
 
 def _render_credit_section() -> None:
@@ -1829,14 +1839,14 @@ def _render_credit_section() -> None:
     span_label = section_title_select("신용 스프레드", _CREDIT_PERIODS, key="crd", index=1)
     years = _CREDIT_PERIODS[span_label]
     # 값이 "3.48%"라 무엇인지는 한 줄 남긴다 — 회색 구간의 뜻도 같이.
-    st.caption("회사채 금리 − 같은 만기 국채 금리(OAS) · 회색은 경계선 이상 구간")
+    st.caption("회사채 − 국채 금리차 · 회색은 경계선 이상")
     cols = st.columns(2)
-    for i, (key, name, sub) in enumerate(_CREDIT_ITEMS):
+    for i, (key, name) in enumerate(_CREDIT_ITEMS):
         with cols[i % 2]:
             s = data.get(key)
             if s is not None and years:
                 s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
-            _render_credit_card(key, name, sub, s)
+            _render_credit_card(key, name, s)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

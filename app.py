@@ -114,6 +114,23 @@ st.markdown("""
             font-size: 0.78rem !important;
         }
 
+        /* 3-3. 매크로 카드 경계(st-key-mcard_*) — 가로로 셋이 늘어서면 어느 차트가
+           어느 제목 아래인지 헷갈린다는 요청(2026-11-08). 배경은 건드리지 않고
+           테두리만 옅게 둘러 '제목+차트+설명'을 한 덩어리로 묶는다. 휴대폰에서
+           세로로 쌓일 때도 같은 테두리가 카드 사이를 끊어 준다. */
+        [class*="st-key-mcard_"] {
+            border: 1px solid #e9e9f0;
+            border-radius: 9px;
+            padding: 6px 10px 8px;
+            height: 100%;            /* 한 줄의 카드 높이를 맞춘다(아래 주석) */
+        }
+        /* 카드마다 머리글 줄바꿈·설명 유무가 달라 상자 밑변이 들쭉날쭉했다.
+           컬럼 안쪽 래퍼가 flex:0 1 auto라 내용 높이에 붙는 게 원인이라,
+           그 래퍼만 늘어나게 바꾸고 카드를 height:100%로 채운다. */
+        [data-testid="stLayoutWrapper"]:has(> [class*="st-key-mcard_"]) {
+            flex: 1 1 auto;
+        }
+
         /* 4. 버튼 클릭 잔상·트랜지션 제거 */
         div[data-testid="stButton"] > button,
         div[data-testid="stFormSubmitButton"] > button {
