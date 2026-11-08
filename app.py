@@ -141,6 +141,17 @@ st.markdown("""
         [data-testid="stLayoutWrapper"]:has(> [class*="st-key-mcard_"]) {
             flex: 1 1 auto;
         }
+        /* Streamlit은 stMarkdownContainer에 margin-bottom:-14px를 걸어 <p>의 1rem
+           여백을 상쇄한다. 카드의 설명 줄은 raw HTML <div>라 상쇄할 여백이 없어서,
+           그 -14px이 마지막 줄을 테두리 '밖으로' 14px 밀어냈다 — 시세 카드의 뉴스
+           줄, 신용잔고의 '합계' 줄, 공포·탐욕 범례가 테두리 아래에 떠 있던 이유다
+           (2026-11-09 제보, 실측 11px 삐져나옴). 마지막 요소에서만 되돌린다:
+           앞 요소들은 그 -14px이 인라인 padding과 맞물려 제목·차트 간격을 잡고
+           있어서, 전부 0으로 만들면 카드가 통째로 헐거워진다. */
+        [class*="st-key-mcard_"] > [data-testid="stElementContainer"]:last-child
+            [data-testid="stMarkdownContainer"] {
+            margin-bottom: 0;
+        }
 
         /* 4. 버튼 클릭 잔상·트랜지션 제거 */
         div[data-testid="stButton"] > button,

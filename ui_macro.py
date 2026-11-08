@@ -1779,16 +1779,6 @@ def _render_flow_section() -> None:
 
     crd = w.get("crd")
     dpsg = w.get("dpsg")
-    # 신용잔고 배지 — 고점 대비 낙폭으로 '청산이 났나'를 말한다. 전체 이력 기준이라
-    # 기간을 좁혀도 뜻이 바뀌지 않는다.
-    crd_badge = None
-    if crd is not None and not crd.dropna().empty:
-        full = df["crd"].dropna()
-        drop = (float(full.iloc[-1]) / float(full.max()) - 1) * 100
-        if drop <= -15:
-            crd_badge = ("청산 진행", "#1565C0")
-        elif drop >= -2:
-            crd_badge = ("고점권", "#ef5350")
     ratio = None
     if crd is not None and dpsg is not None:
         ratio = (crd / dpsg * 100).dropna()
@@ -1800,22 +1790,9 @@ def _render_flow_section() -> None:
         elif cur >= _CRD_WARN:
             ratio_badge = ("경계", "#ef5350")
 
-    cols = st.columns(3)
-    with cols[0]:
-        _flow_card("crd", "신용거래융자 잔고", None if crd is None else crd / 1e4,
-                   "조", ",.1f", "코스피+코스닥 합계", crd_badge)
-    with cols[1]:
-        # 경계선은 차트 안에 '경계 40.0'으로 이미 그려진다 — 밑에 또 적지 않는다.
-        _flow_card("ratio", "예탁금 대비 신용잔고", ratio, "%", ".1f", "",
-                   ratio_badge, warn=_CRD_WARN)
-    with cols[2]:
-        # ⚠️ 이 통계는 '미수금 반대매매'만이다 — 규모가 훨씬 큰 신용융자 담보부족
-        # 청산은 어느 공식 통계에도 없다. 그 한계를 카드 밑 한 줄로 못박아 둔다.
-        # (섹션 캡션으로 따로 적었더니 카드 설명 세 줄과 뭉쳐 읽혔다.)
-        _flow_card("opps", "반대매매", w.get("opps"), "억", ",.0f",
-                   "미수금 반대매매만 · 점선 20일 평균", bars=True)
-
-    # 시장별로 나눠 지수와 겹친다 — 합계만 보면 코스닥에 몰린 레버리지가 안 보인다.
+    # 시장별로 나눠 지수와 겹친다 — 합계 한 장으로는 어느 쪽이 레버리지를 지고
+    # 있는지 안 보인다. 2026-11-09에 '신용거래융자 잔고(합계)' 카드를 빼고 이 둘로
+    # 대신했다. 합계 수치는 위 요약 줄의 '고점 대비 −N%(−N조)'가 계속 말한다.
     idx_data = _get_index_valuation() or {}
     mcols = st.columns(2)
     for col, (ikey, label, mkey) in zip(
@@ -1832,6 +1809,18 @@ def _render_flow_section() -> None:
                 f"crd_{ikey.lower()}", f"{label} 신용잔고",
                 None if full is None else full / 1e4,
                 None if win is None else win / 1e4, idx, label)
+
+    cols = st.columns(2)
+    with cols[0]:
+        # 경계선은 차트 안에 '경계 40.0'으로 이미 그려진다 — 밑에 또 적지 않는다.
+        _flow_card("ratio", "예탁금 대비 신용잔고", ratio, "%", ".1f", "",
+                   ratio_badge, warn=_CRD_WARN)
+    with cols[1]:
+        # ⚠️ 이 통계는 '미수금 반대매매'만이다 — 규모가 훨씬 큰 신용융자 담보부족
+        # 청산은 어느 공식 통계에도 없다. 그 한계를 카드 밑 한 줄로 못박아 둔다.
+        # (섹션 캡션으로 따로 적었더니 카드 설명 세 줄과 뭉쳐 읽혔다.)
+        _flow_card("opps", "반대매매", w.get("opps"), "억", ",.0f",
+                   "미수금 반대매매만 · 점선 20일 평균", bars=True)
 
     with st.expander("읽는 법"):
         st.markdown(_FLOW_HELP)
