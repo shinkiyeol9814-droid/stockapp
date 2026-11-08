@@ -14,6 +14,7 @@ import re
 import html
 import urllib.parse
 
+import kofia_flow
 import lithium_source
 from ui_common import (page_header, section_title, section_title_select,
                        run_with_progress)
@@ -27,6 +28,7 @@ _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 _SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
 _INFLATION_CACHE = os.path.join(_MACRO_DIR, "us_inflation.json")
+_CREDIT_CACHE    = os.path.join(_MACRO_DIR, "us_credit.json")
 _COMPARE_DIR     = os.path.join(_MACRO_DIR, "compare")
 
 _USDEBT_API = (
@@ -1436,6 +1438,408 @@ _INFLATION_ITEMS = [
 ]
 
 
+# ───────── 수급 건전성 (투자자예탁금 · 신용거래융자 · 반대매매) ─────────
+#
+# 목적은 "반대매매가 어디까지 났고 그래서 저점일 수 있나"다. 그런데 반대매매 금액
+# 하나로는 판단이 안 된다 — 이 통계는 **미수 반대매매만** 집계하고(규모가 훨씬 큰
+# 신용융자 담보부족 청산은 공식 통계가 없다), 이미 청산된 뒤의 숫자라 후행한다.
+# 그래서 세 장을 같이 둔다: ① 신용융자 잔고가 고점 대비 얼마나 줄었나(실제
+# 디레버리징 규모) ② 예탁금 대비 신용잔고(과열도) ③ 반대매매 금액·비중.
+#
+# 데이터는 앱에서 직접 받는다(배치 아님) — API가 전체 이력을 매번 주므로 쌓을
+# 필요가 없고, 커밋되는 파일이 늘지 않는다. 자세한 내용은 kofia_flow.py 머리말.
+_FLOW_PERIODS = {"3개월": 3, "6개월": 6, "1년": 12, "3년": 36, "전체": None}
+# 예탁금 대비 신용잔고 과열선 — 40%를 넘으면 경계, 45% 이상이면 과열로 읽는다.
+_CRD_WARN, _CRD_HOT = 40.0, 45.0
+_FLOW_API_URL = "https://www.data.go.kr/data/15094809/openapi.do"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_flow_stats():
+    """(DataFrame|None, 설정오류문구). 금액 단위는 억원.
+
+    💡 보통은 "캐시 함수는 실패를 반환하지 말고 예외로 올린다"가 규칙이다(빈 결과가
+    TTL 동안 캐시되면 일시 장애가 한 시간짜리 '데이터 없음'이 된다). 여기서는
+    **활용신청이 안 된 상태만** 예외로 반환값에 담는다 — 그건 일시 장애가 아니라
+    사람이 신청해야 풀리는 설정 문제인데, 예외로 올리면 캐시가 안 돼서 5분마다
+    돌아오는 자동 새로고침이 그때마다 쓸데없는 요청을 쏘기 때문이다. 나머지
+    오류(네트워크·429·포털 장애)는 그대로 올려 다음 새로고침에 다시 시도한다.
+    """
+    key = st.secrets.get("DATA_GO_KR_KEY", "")
+    if not key:
+        return None, "DATA_GO_KR_KEY가 설정돼 있지 않습니다."
+    try:
+        return kofia_flow.fetch_flow(key), ""
+    except kofia_flow.KofiaNotRegistered:
+        return None, (
+            "이 키로는 아직 조회할 수 없습니다 — 공공데이터포털에서 "
+            f"[금융투자협회 종합통계정보]({_FLOW_API_URL}) 활용신청을 한 번 하면 "
+            "지금 쓰는 키 그대로 열립니다."
+        )
+
+
+def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
+                     bars: bool = False) -> go.Figure:
+    """수급 카드용 작은 차트. warn을 주면 그 이상 구간 배경을 칠하고 기준선을 긋는다."""
+    hi, lo = float(s.max()), float(s.min())
+    if bars:
+        base_y, top_y = 0.0, hi * 1.18 or 1.0
+    else:
+        span = (hi - lo) or abs(hi) or 1.0
+        base_y, top_y = lo - span * 0.14, hi + span * 0.10
+    fig = go.Figure()
+    if warn is not None:
+        for x0, x1 in _yield_runs(s, thr=warn):
+            fig.add_vrect(x0=x0, x1=x1 + pd.Timedelta(days=1),
+                          fillcolor=_SPREAD_BAND, line_width=0, layer="below")
+    if bars:
+        # 막대도 한 가지 색으로 — 매크로 탭은 선 색에 뜻을 담지 않는다(AGENTS.md).
+        fig.add_trace(go.Bar(
+            x=s.index, y=s.values, marker=dict(color=_VALUATION_LINE), showlegend=False,
+            hovertemplate=f"%{{x|%Y-%m-%d}}<br><b>%{{y:{fmt}}}</b><extra></extra>",
+        ))
+        avg = s.rolling(20, min_periods=5).mean()
+        fig.add_trace(go.Scatter(
+            x=avg.index, y=avg.values, mode="lines",
+            line=dict(color="#78909C", width=1.1, dash="dot"), showlegend=False,
+            hovertemplate=f"20일 평균 %{{y:{fmt}}}<extra></extra>",
+        ))
+    else:
+        # 채움을 쓰려면 폭 0인 바닥 선이 바로 앞에 있어야 한다(fill="tonexty").
+        fig.add_trace(go.Scatter(x=s.index, y=[base_y] * len(s), mode="lines",
+                                 line=dict(width=0), showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(
+            x=s.index, y=s.values, mode="lines",
+            line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
+            fill="tonexty", fillcolor=_LINE_FILL,
+            hovertemplate=f"%{{x|%Y-%m-%d}}<br><b>%{{y:{fmt}}}</b><extra></extra>",
+        ))
+        fig.add_trace(go.Scatter(
+            x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers",
+            marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
+            showlegend=False, hoverinfo="skip",
+        ))
+    notes = []
+    lines = [(hi, "#ef5350", "dash", "최고", "top"), (lo, "#1565C0", "dash", "최저", "bottom")]
+    if warn is not None:
+        lines.append((warn, "#78909C", "dot", "경계", "bottom"))
+    for y, color, dash, lbl, anchor_ in lines:
+        if bars and lbl == "최저":
+            continue                     # 막대 차트의 최저는 늘 바닥이라 뜻이 없다
+        if y > top_y or y < base_y:
+            continue
+        fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+        notes.append(dict(
+            xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anchor_,
+            text=f"<b>{lbl}</b> {format(y, fmt)}", showarrow=False,
+            font=dict(size=9.5, color=color),
+            bgcolor="rgba(255,255,255,0.72)", borderpad=1,
+        ))
+    fig.update_layout(
+        height=110, margin=dict(l=0, r=2, t=8, b=18), bargap=0.15,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x",
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
+        yaxis=dict(range=[base_y, top_y], showgrid=False, zeroline=False,
+                   fixedrange=True, showticklabels=False),
+        annotations=notes,
+    )
+    return fig
+
+
+def _flow_card(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
+               badge: tuple | None = None, warn: float | None = None,
+               bars: bool = False) -> None:
+    if s is None or s.dropna().empty:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
+                    unsafe_allow_html=True)
+        return
+    s = s.dropna()
+    cur = float(s.iloc[-1])
+    prev = float(s.iloc[-2]) if len(s) > 1 else cur
+    d1 = cur - prev
+    badge_html = ""
+    if badge:
+        txt, bclr = badge
+        badge_html = (f"<span style='background:{bclr};color:#fff;font-size:9.5px;"
+                      f"font-weight:700;padding:1px 5px;border-radius:3px;'>{txt}</span>")
+    clr = "#ef5350" if d1 > 0 else "#1565C0" if d1 < 0 else "#888"
+    st.markdown(
+        f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
+        f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+        f"<span style='font-size:11px;color:#888;white-space:nowrap;'>{name}</span>{badge_html}"
+        f"<span style='font-size:18px;font-weight:700;'>{format(cur, fmt)}{unit}</span>"
+        f"<span style='font-size:11.5px;color:{clr};white-space:nowrap;'>"
+        f"전일 {format(d1, '+' + fmt)}{unit}</span>"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"{s.index[-1]:%m/%d}</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(_make_flow_chart(s, fmt, warn, bars), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+    if sub:
+        st.markdown(f"<div style='font-size:10.5px;color:#9aa5b1;margin-top:1px;'>{sub}</div>",
+                    unsafe_allow_html=True)
+
+
+def _flow_summary_html(df: pd.DataFrame) -> str:
+    """'청산이 어디까지 났나'를 한 줄로. 카드 셋을 따로 읽지 않아도 되게."""
+    parts = []
+    crd = df.get("crd")
+    if crd is not None and crd.dropna().size > 20:
+        crd = crd.dropna()
+        pk_i = crd.idxmax()
+        pk, cur = float(crd.max()), float(crd.iloc[-1])
+        drop = (cur / pk - 1) * 100
+        parts.append(
+            f"신용잔고 고점 {pk/1e4:,.1f}조({pk_i:%y.%m}) 대비 "
+            f"<span style='color:{_sign_color(drop)};font-weight:600;'>{drop:+.1f}%"
+            f"({(cur-pk)/1e4:+,.1f}조)</span>")
+    opps = df.get("opps")
+    if opps is not None and opps.dropna().size > 30:
+        opps = opps.dropna()
+        r5 = float(opps.tail(5).mean())
+        base = float(opps.tail(250).mean()) or 1.0
+        parts.append(f"최근 5일 반대매매 평균 {r5:,.0f}억 "
+                     f"(1년 평균의 <b>{r5/base:.1f}배</b>)")
+    dpsg = df.get("dpsg")
+    if dpsg is not None and dpsg.dropna().size > 20:
+        dpsg = dpsg.dropna()
+        m1 = dpsg.asof(dpsg.index[-1] - pd.Timedelta(days=30))
+        if pd.notna(m1):
+            chg = (float(dpsg.iloc[-1]) - float(m1)) / 1e4
+            parts.append(f"예탁금 1개월 <span style='color:{_sign_color(chg)};"
+                         f"font-weight:600;'>{chg:+,.1f}조</span>")
+    if not parts:
+        return ""
+    return ("<div style='font-size:11.5px;color:#555;margin:2px 0 4px;"
+            "line-height:1.5;'>" + " · ".join(parts) + "</div>")
+
+
+def _render_flow_section() -> None:
+    try:
+        df, cfg_err = _get_flow_stats()
+    except Exception as e:                      # 네트워크·429·포털 장애 — 다음 새로고침에 재시도
+        section_title("수급 건전성")
+        st.caption(f"금융투자협회 통계를 불러오지 못했습니다 ({type(e).__name__}). "
+                   "잠시 후 새로고침하면 다시 시도합니다.")
+        return
+    if df is None:
+        section_title("수급 건전성")
+        st.caption(cfg_err)
+        return
+
+    span_label = section_title_select("수급 건전성", _FLOW_PERIODS, key="flow", index=2)
+    months = _FLOW_PERIODS[span_label]
+    w = df if not months else df[df.index >= df.index[-1] - pd.DateOffset(months=months)]
+    st.markdown(_flow_summary_html(df), unsafe_allow_html=True)
+
+    crd = w.get("crd")
+    dpsg = w.get("dpsg")
+    # 신용잔고 배지 — 고점 대비 낙폭으로 '청산이 났나'를 말한다. 전체 이력 기준이라
+    # 기간을 좁혀도 뜻이 바뀌지 않는다.
+    crd_badge = None
+    if crd is not None and not crd.dropna().empty:
+        full = df["crd"].dropna()
+        drop = (float(full.iloc[-1]) / float(full.max()) - 1) * 100
+        if drop <= -15:
+            crd_badge = ("청산 진행", "#1565C0")
+        elif drop >= -2:
+            crd_badge = ("고점권", "#ef5350")
+    ratio = None
+    if crd is not None and dpsg is not None:
+        ratio = (crd / dpsg * 100).dropna()
+    ratio_badge = None
+    if ratio is not None and not ratio.empty:
+        cur = float(ratio.iloc[-1])
+        if cur >= _CRD_HOT:
+            ratio_badge = ("과열", "#ef5350")
+        elif cur >= _CRD_WARN:
+            ratio_badge = ("경계", "#ef5350")
+
+    cols = st.columns(3)
+    with cols[0]:
+        _flow_card("신용거래융자 잔고", None if crd is None else crd / 1e4, "조", ",.1f",
+                   "코스피+코스닥 합계", crd_badge)
+    with cols[1]:
+        _flow_card("예탁금 대비 신용잔고", ratio, "%", ".1f",
+                   f"{_CRD_WARN:.0f}% 이상이면 경계", ratio_badge, warn=_CRD_WARN)
+    with cols[2]:
+        # ⚠️ 이 통계는 '미수금 반대매매'만이다 — 규모가 훨씬 큰 신용융자 담보부족
+        # 청산은 어느 공식 통계에도 없다. 그 한계를 카드 밑 한 줄로 못박아 둔다.
+        # (섹션 캡션으로 따로 적었더니 카드 설명 세 줄과 뭉쳐 읽혔다.)
+        _flow_card("반대매매", w.get("opps"), "억", ",.0f",
+                   "미수금 반대매매만 집계 · 점선 20일 평균", bars=True)
+
+
+# ───────── 신용 스프레드 (하이일드 · 투자등급 OAS) ─────────
+#
+# batch_macro가 FRED에서 받아 누적한다. 읽는 법은 절대 수준보다 **방향과 속도**다:
+# 지수가 빠지는데 스프레드가 조용하면 수급 조정이고, 지수가 버티는데 스프레드가
+# 벌어지면 그게 가장 위험한 조합이다. 하이일드만 벌어지면 저신용·한계기업 문제,
+# 투자등급까지 벌어지면 시스템 문제 — 그래서 두 장을 나란히 둔다.
+#
+# ⚠️ 이력이 3년뿐이다. FRED CSV가 일별 계열을 최근 3년만 주기 때문이고(batch_macro
+# 쪽 주석), 배치가 매일 누적하는 만큼 저절로 길어진다. 그래서 '전체'를 골라도
+# 지금은 3년이고, 고점/저점 선도 그 범위 안의 값이다.
+_CREDIT_PERIODS = {"1년": 1, "3년": 3, "전체": None}
+_CREDIT_ITEMS = [
+    ("hy", "하이일드 스프레드", "투기등급 회사채 − 국채"),
+    ("ig", "투자등급 스프레드", "투자등급 회사채 − 국채"),
+]
+# 구간 기준선. 하이일드는 4%를 넘으면 경계, 5% 이상이면 침체를 가격에 넣은 수준으로
+# 읽는 것이 통상이다. 투자등급은 수준 자체가 1/4 규모라 기준도 따로 둔다.
+_SPREAD_LEVELS = {"hy": (3.0, 4.0, 5.0), "ig": (0.9, 1.3, 1.8)}
+_SPREAD_BAND = _YIELD_BAND   # 경계선 위 구간 배경 — 금리 4.6% 구간과 같은 회색
+
+
+def _spread_badge(key: str, cur: float):
+    """(문구, 색) 또는 None.
+
+    💡 색은 앱 전체 규칙을 그대로 쓴다 — 낮으면 파랑, 높으면 빨강(밴드 카드의
+    저점권/고점권과 같다). '올라가면 나쁜' 지표라고 초록/빨강으로 바꾸면 이 앱에서
+    빨강·파랑이 가진 뜻(올랐다/내렸다)과 한 화면에서 충돌한다. 좋고 나쁨은 색이
+    아니라 문구가 말한다.
+    """
+    loose, warn, risk = _SPREAD_LEVELS.get(key, (0, 0, 0))
+    if cur >= risk:
+        return "위험", "#ef5350"
+    if cur >= warn:
+        return "경계", "#ef5350"
+    if cur < loose:
+        return "느슨", "#1565C0"
+    return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_us_credit() -> dict:
+    """batch_macro가 받아 둔 OAS. {키: Series}."""
+    try:
+        with open(_CREDIT_CACHE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return {}
+    out = {}
+    for key, rows in (raw or {}).items():
+        if not rows:
+            continue
+        df = pd.DataFrame(rows, columns=["ts", "v"])
+        df["date"] = pd.to_datetime(df["ts"], unit="ms")
+        out[key] = df.set_index("date")["v"].sort_index()
+    return out
+
+
+def _make_spread_chart(s: pd.Series, warn: float) -> go.Figure:
+    """스프레드 선 + 경계선 위 구간 배경. 모양은 물가 카드 차트와 같게 맞춘다."""
+    hi, lo = float(s.max()), float(s.min())
+    span = (hi - lo) or abs(hi) or 1.0
+    base_y, top_y = lo - span * 0.14, hi + span * 0.10
+    fig = go.Figure()
+    # 경계선 이상 구간 배경 먼저(layer="below") — 금리 4.6% 구간과 같은 방식.
+    for x0, x1 in _yield_runs(s, thr=warn):
+        fig.add_vrect(x0=x0, x1=x1 + pd.Timedelta(days=1),
+                      fillcolor=_SPREAD_BAND, line_width=0, layer="below")
+    # 채움을 쓰려면 폭 0인 바닥 선이 **바로 앞에** 있어야 한다(fill="tonexty").
+    fig.add_trace(go.Scatter(x=s.index, y=[base_y] * len(s), mode="lines",
+                             line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        line=dict(color=_VALUATION_LINE, width=1.5), showlegend=False,
+        fill="tonexty", fillcolor=_LINE_FILL,
+        hovertemplate="%{x|%Y-%m-%d}<br><b>%{y:.2f}%</b><extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers",
+        marker=dict(color=_VALUATION_LINE, size=7, line=dict(color="#fff", width=1)),
+        showlegend=False, hoverinfo="skip",
+    ))
+    notes = []
+    for y, color, dash, lbl, anchor_ in ((hi, "#ef5350", "dash", "최고", "top"),
+                                         (lo, "#1565C0", "dash", "최저", "bottom"),
+                                         (warn, "#78909C", "dot", "경계", "bottom")):
+        if y > top_y or y < base_y:
+            continue
+        fig.add_hline(y=y, line=dict(color=color, width=1.1, dash=dash))
+        notes.append(dict(
+            xref="paper", yref="y", x=0.004, y=y, xanchor="left", yanchor=anchor_,
+            text=f"<b>{lbl}</b> {y:.2f}%", showarrow=False,
+            font=dict(size=9.5, color=color),
+            bgcolor="rgba(255,255,255,0.72)", borderpad=1,
+        ))
+    fig.update_layout(
+        height=110, margin=dict(l=0, r=2, t=8, b=18),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        dragmode=False, hovermode="x",
+        xaxis=dict(showgrid=False, zeroline=False, fixedrange=True,
+                   tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
+        yaxis=dict(range=[base_y, top_y], showgrid=False, zeroline=False,
+                   fixedrange=True, showticklabels=False),
+        annotations=notes,
+    )
+    return fig
+
+
+def _render_credit_card(key: str, name: str, sub: str, s: pd.Series) -> None:
+    if s is None or len(s) < 5:
+        st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
+                    unsafe_allow_html=True)
+        return
+    cur = float(s.iloc[-1])
+    d1 = cur - float(s.iloc[-2]) if len(s) > 1 else 0.0
+    # 한 달 전 값 — 영업일이 비는 날이 있어 '직전 영업일로 되짚기'(asof)로 잡는다.
+    m1 = s.asof(s.index[-1] - pd.Timedelta(days=30))
+    mom = cur - float(m1) if pd.notna(m1) else None
+    warn = _SPREAD_LEVELS.get(key, (0, 0, 0))[1]
+    badge = ""
+    b = _spread_badge(key, cur)
+    if b:
+        txt, bclr = b
+        badge = (f"<span style='background:{bclr};color:#fff;font-size:9.5px;font-weight:700;"
+                 f"padding:1px 5px;border-radius:3px;'>{txt}</span>")
+    clr = lambda v: "#ef5350" if v > 0 else "#1565C0" if v < 0 else "#888"
+    mom_html = ""
+    if mom is not None:
+        mom_html = (f"<span style='font-size:11.5px;color:{clr(mom)};font-weight:600;"
+                    f"white-space:nowrap;'>1개월 {mom:+.2f}%p</span>")
+    st.markdown(
+        f"<div style='padding:4px 0 10px;display:flex;align-items:baseline;"
+        f"flex-wrap:wrap;column-gap:7px;row-gap:0;line-height:1.25;'>"
+        f"<span style='font-size:11px;color:#888;white-space:nowrap;'>{name}</span>{badge}"
+        f"<span style='font-size:18px;font-weight:700;'>{cur:.2f}%</span>"
+        f"<span style='font-size:11.5px;color:{clr(d1)};white-space:nowrap;'>"
+        f"전일 {d1:+.2f}%p</span>{mom_html}"
+        f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
+        f"{s.index[-1]:%m/%d}</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(_make_spread_chart(s, warn), use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
+    st.markdown(f"<div style='font-size:10.5px;color:#9aa5b1;margin-top:1px;'>{sub}</div>",
+                unsafe_allow_html=True)
+
+
+def _render_credit_section() -> None:
+    data = _get_us_credit()
+    if not data:
+        section_title("신용 스프레드")
+        st.caption("신용 스프레드를 아직 받지 못했습니다 (매일 배치가 FRED에서 수집).")
+        return
+    span_label = section_title_select("신용 스프레드", _CREDIT_PERIODS, key="crd", index=1)
+    years = _CREDIT_PERIODS[span_label]
+    # 값이 "3.48%"라 무엇인지는 한 줄 남긴다 — 회색 구간의 뜻도 같이.
+    st.caption("회사채 금리 − 같은 만기 국채 금리(OAS) · 회색은 경계선 이상 구간")
+    cols = st.columns(2)
+    for i, (key, name, sub) in enumerate(_CREDIT_ITEMS):
+        with cols[i % 2]:
+            s = data.get(key)
+            if s is not None and years:
+                s = s[s.index >= s.index[-1] - pd.DateOffset(years=years)]
+            _render_credit_card(key, name, sub, s)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_us_inflation() -> dict:
     """
@@ -1754,6 +2158,8 @@ def render_macro():
         _get_index_live.clear()
         _get_flow_live.clear()
         _get_foreign_holding.clear()
+        _get_flow_stats.clear()
+        _get_us_credit.clear()
         st.rerun()
 
     # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.
@@ -1985,6 +2391,11 @@ def render_macro():
     # 비교·물가는 월/다년 단위라 위 시세 카드의 기간 라디오(1개월~5년)와 성격이
     # 다르다 — 각자 기간 선택을 가진 별도 섹션으로 아래에 둔다. 위를 밀어내면
     # 매일 보는 환율·DRAM 카드가 내려가서 맨 아래가 맞다.
+    # 국내 수급(예탁금·신용융자·반대매매) → 미국 신용 스프레드 → 장기 비교 순.
+    # 매일 보는 환율·DRAM 카드를 밀어내지 않으려고 시세 카드 아래에 둔다.
+    _render_flow_section()
+    # 신용 스프레드는 "지금 위험한가"를 보는 지표라 장기 맥락인 비교 차트보다 먼저 둔다.
+    _render_credit_section()
     _render_compare_section()
     # 경제 지표(미국 물가)는 화면에서 뺐다(2026-11-07 요청). 수집(batch_macro)과
     # _render_inflation_section()은 그대로 둔다 — 다시 넣을 땐 이 줄만 되살리면 된다.

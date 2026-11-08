@@ -25,6 +25,7 @@ _MARKET_CACHE  = os.path.join(_MACRO_DIR, "market_cache.json")
 _FNG_CACHE     = os.path.join(_MACRO_DIR, "fng_cache.json")
 _SP500_CACHE   = os.path.join(_MACRO_DIR, "sp500_val.json")
 _INFLATION_CACHE = os.path.join(_MACRO_DIR, "us_inflation.json")
+_CREDIT_CACHE    = os.path.join(_MACRO_DIR, "us_credit.json")
 _COMPARE_DIR     = os.path.join(_MACRO_DIR, "compare")
 
 # 미국 연방부채는 스크래핑이 아니라 재무부 공식 API로 받는다 — 키가 필요 없고
@@ -363,14 +364,33 @@ _INFLATION_SERIES = {
 _INFLATION_KEEP_DAYS = 365 * 40
 
 
-def fetch_us_inflation() -> dict:
-    """{"cpi": [[epoch_ms, 지수], ...], ...}. 실패한 항목은 빼고 돌려준다."""
+# ICE BofA 옵션조정스프레드(OAS) — 하이일드와 투자등급. 회사채 금리에서 같은
+# 만기 국채 금리를 뺀 값이고, "부도 위험에 시장이 요구하는 추가 이자"다.
+#
+# 왜 받는가: 돈을 빌려주는 쪽이 주식 사는 쪽보다 먼저 겁을 낸다. 지수가 버티는데
+# 스프레드가 벌어지는 구간이 가장 위험하고, 지수가 빠지는데 스프레드가 조용하면
+# 보통 수급 조정이다 — 하락의 성격을 구분하는 데 쓴다.
+#
+# ⚠️ FRED CSV는 **일별 계열을 최근 3년치만** 내려준다(2026-11-08 실측: 786건,
+# cosd/coed를 줘도 늘지 않는다). 월별인 물가가 40년치 전부 나오는 것과 다르다.
+# 그래서 장기 이력은 "매일 받아 누적"해야만 길어진다 — keep_days를 20년으로 두고
+# _merge_market이 기존 이력을 지키게 한다. 화면의 고점/저점·구간 판단도 그래서
+# 당장은 최근 3년 기준이고, 배치가 도는 만큼 저절로 길어진다.
+_CREDIT_SERIES = {
+    "hy": "BAMLH0A0HYM2",   # 미국 하이일드(투기등급) OAS
+    "ig": "BAMLC0A0CM",     # 미국 투자등급 OAS
+}
+_CREDIT_KEEP_DAYS = 365 * 20
+
+
+def _fetch_fred(series: dict, tag: str) -> dict:
+    """{키: [[epoch_ms, 값], ...]}. 실패한 항목은 빼고 돌려준다."""
     out = {}
-    for key, sid in _INFLATION_SERIES.items():
+    for key, sid in series.items():
         try:
             r = requests.get(_FRED_CSV.format(sid), headers=_UA_HEADERS, timeout=25)
             if r.status_code != 200:
-                print(f"[inflation] {key}({sid}): HTTP {r.status_code}")
+                print(f"[{tag}] {key}({sid}): HTTP {r.status_code}")
                 continue
             rows = []
             for line in r.text.splitlines()[1:]:
@@ -388,10 +408,18 @@ def fetch_us_inflation() -> dict:
             if rows:
                 rows.sort()
                 out[key] = rows
-                print(f"[inflation] {key}({sid}): {len(rows)}건 (최신 {rows[-1][1]})")
+                print(f"[{tag}] {key}({sid}): {len(rows)}건 (최신 {rows[-1][1]})")
         except Exception as e:
-            print(f"[inflation] {key} 실패: {type(e).__name__}: {e}")
+            print(f"[{tag}] {key} 실패: {type(e).__name__}: {e}")
     return out
+
+
+def fetch_us_inflation() -> dict:
+    return _fetch_fred(_INFLATION_SERIES, "inflation")
+
+
+def fetch_us_credit() -> dict:
+    return _fetch_fred(_CREDIT_SERIES, "credit")
 
 
 # S&P 500 지수 · 미국채 10년 금리 일별 종가 — 매크로 탭의 비교 차트용.
@@ -542,6 +570,8 @@ if __name__ == "__main__":
                                          _SP500_KEEP_DAYS)
         updated["inflation"] = _merge_market(_INFLATION_CACHE, fetch_us_inflation(),
                                              _INFLATION_KEEP_DAYS)
+        updated["credit"] = _merge_market(_CREDIT_CACHE, fetch_us_credit(),
+                                          _CREDIT_KEEP_DAYS)
         updated["compare"] = update_compare_series()
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")
