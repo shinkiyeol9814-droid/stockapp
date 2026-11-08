@@ -121,8 +121,19 @@ st.markdown("""
         [class*="st-key-mcard_"] {
             border: 1px solid #e9e9f0;
             border-radius: 9px;
-            padding: 6px 10px 8px;
+            /* 여백은 최소로 — 테두리가 경계를 말하니 안쪽까지 넓으면 한 화면에
+               들어가는 카드 수만 줄어든다(2026-11-08 요청). 카드 안 요소 간격도
+               전역 0.6rem에서 줄인다. */
+            padding: 3px 7px 2px;
+            gap: 0.25rem;
             height: 100%;            /* 한 줄의 카드 높이를 맞춘다(아래 주석) */
+        }
+        /* 카드가 든 줄만 컬럼 사이를 좁힌다(전역 1rem). 다른 탭 레이아웃은 그대로. */
+        [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]
+                                              > [data-testid="stVerticalBlock"]
+                                              > [data-testid="stLayoutWrapper"]
+                                              > [class*="st-key-mcard_"]) {
+            gap: 0.45rem;
         }
         /* 카드마다 머리글 줄바꿈·설명 유무가 달라 상자 밑변이 들쭉날쭉했다.
            컬럼 안쪽 래퍼가 flex:0 1 auto라 내용 높이에 붙는 게 원인이라,

@@ -1174,7 +1174,7 @@ def _render_sp500_band(years, span_label: str) -> None:
         unsafe_allow_html=True)
     cols = st.columns(3)
     for col, (field, title) in zip(cols[:2], (("per", "PER"), ("pbr", "PBR"))):
-        with col:
+        with col, st.container(key=f"mcard_band_sp500_{field}"):
             s_ = data.get(field)
             if s_ is None or s_.empty:
                 _render_band_card(f"S&P 500 {title}", pd.Series(dtype=float), "배", span_label)
@@ -1200,10 +1200,11 @@ def _render_valuation_band() -> None:
             st.markdown(today_html, unsafe_allow_html=True)
         # 시세 카드와 같은 3칸 격자로 카드 폭을 맞춘다. 지수당 한 줄: PER · PBR · 외국인 보유액.
         cols = st.columns(3)
-        with cols[2]:
+        with cols[2], st.container(key=f"mcard_frn_{idx}"):
             _render_foreign_card(idx, label, df, years, span_label)
         for col, (field, unit, title) in zip(cols[:2], (("per", "배", "PER"), ("pbr", "배", "PBR"))):
-            with col:
+            # 컨테이너 key가 app.py 전역 CSS의 카드 테두리를 입힌다(st-key-mcard_*).
+            with col, st.container(key=f"mcard_band_{idx}_{field}"):
                 if df is None or df.empty:
                     _render_band_card(f"{label} {title}", pd.Series(dtype=float), unit, span_label)
                     continue
@@ -1986,7 +1987,7 @@ def _render_inflation_section() -> None:
     # ISM/pmi는 2025-09부터 값이 깨진 채 갱신이 멈췄다. batch_macro 쪽 주석 참고.
     cols = st.columns(3)
     for i, (key, name, target) in enumerate(_INFLATION_ITEMS):
-        with cols[i % 3]:
+        with cols[i % 3], st.container(key=f"mcard_infl_{key}"):
             s = data.get(key)
             if s is None or s.empty:
                 _render_inflation_card(name, pd.Series(dtype=float), target, span_label)
@@ -2255,13 +2256,14 @@ def render_macro():
 
     for row_start in range(0, len(MARKET_ITEMS), 3):
         if row_start:
-            # 줄 사이를 띄운다 — 붙여 두니 위 카드의 뉴스 줄과 아래 카드의
-            # 지표명이 한 덩어리로 읽혀서 어디까지가 한 카드인지 흐렸다.
-            st.markdown("<div style='height:22px;'></div>", unsafe_allow_html=True)
+            # 예전엔 22px을 띄웠다 — 붙여 두면 위 카드의 뉴스 줄과 아래 카드의
+            # 지표명이 한 덩어리로 읽혔기 때문이다. 이제 테두리가 그 경계를
+            # 말하므로 줄 사이는 최소만 남긴다(2026-11-08 요청).
+            st.markdown("<div style='height:5px;'></div>", unsafe_allow_html=True)
         cols = st.columns(3)
         for ci, (name, ticker, unit, fmt, mult) in enumerate(MARKET_ITEMS[row_start:row_start + 3]):
             hist = hists[name]
-            with cols[ci]:
+            with cols[ci], st.container(key=f"mcard_mkt_{row_start + ci}"):
                 if hist is None or hist.empty:
                     st.markdown(
                         f"<div style='padding:4px 0 8px;'>"
