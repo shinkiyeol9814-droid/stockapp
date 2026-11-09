@@ -285,6 +285,20 @@ GET https://apis.data.go.kr/1160100/service/GetKofiaStatisticsInfoService/{op}
 >
 > **반대매매는 "오퍼레이션 목록"에 없다 — 증시자금추이의 응답 항목 안에 있다.** 그래서
 > data.go.kr에서 '반대매매'로 검색하면 0건이 나온다. 없다고 결론 내렸다가 뒤집은 자리다.
+>
+> ⚠️ **반대매매는 코스피·코스닥으로 나눌 수 없다 — 원천에 시장 구분이 없다.**
+> 2026-11-09 사용자 질문("반대매매도 나눠야 하지 않나")으로 Swagger의 item 정의를 통째로
+> 꺼내 확인했다. `Item_SecuritiesMarketTotalCapitalInfo`의 필드는 **7개 전부**가
+> `basDt` · `invrDpsgAmt` · `onbdDrvPrdTrRcAdvAmt`(장내파생 예수금) ·
+> `toCstRpchCndBndSlgBal`(대고객 RP 매도잔고) · `brkTrdUcolMny` ·
+> `brkTrdUcolMnyVsOppsTrdAmt` · `ucolMnyVsOppsTrdRlImpt`로, 시장별 항목이 하나도 없다.
+> 미수금·반대매매는 **증권사 계좌 단위 집계**라 금투협이 애초에 시장별로 쪼개 받지 않는다
+> (신용융자는 담보 종목이 어느 시장인지가 명확해서 나뉜다). 시장별 반대매매를 찾아
+> 같은 API를 다시 뒤지지 말 것.
+>
+> 신용공여잔고추이 쪽은 **신용거래대주**도 시장별로 준다(`crdTrLndrWhl/Scrs/Kosdaq`,
+> 공매도용 주식 대차). 받아 두진 않았다 — 규모가 융자의 수백분의 일이라 화면에 올리면
+> 선이 바닥에 깔린다.
 
 **반대매매 금액 하나로 저점을 판단하면 안 된다**(이 섹션이 셋을 같이 띄우는 이유):
 - 이 통계의 반대매매는 **미수 반대매매만**이다. 규모가 훨씬 큰 신용융자 담보부족 청산은
