@@ -11,6 +11,11 @@ on:
   repository_dispatch:
     types: [run_macro_batch]
   workflow_dispatch:
+    inputs:
+      only:
+        description: "us_debt면 부채만 (scheduler.yml이 KST 08:00에 이렇게 부른다)"
+        required: false
+        default: ""
 
 # 💡 동시 실행 방어. 이게 없어서 예정 실행(repository_dispatch)과
 # 수동 실행이 겹치면 두 실행이 같은 날짜 파일을 각자 만들어
@@ -42,9 +47,10 @@ jobs:
       - name: Run Script
         env:
           SCHED: ${{ github.event.schedule }}
+          ONLY: ${{ github.event.inputs.only }}
         run: |
           # 저녁 스케줄에서는 부채만 갱신한다 (이유는 batch_macro.py __main__ 주석).
-          if [ "$SCHED" = "0 23 * * 1-5" ]; then
+          if [ "$SCHED" = "0 23 * * 1-5" ] || [ "$ONLY" = "us_debt" ]; then
             python batch_macro.py --only us_debt
           else
             python batch_macro.py
@@ -57,14 +63,14 @@ jobs:
       - name: Refresh KRX listing seed
         # 부채만 받는 저녁 실행에서는 건너뛴다 — 장이 끝난 지 한참이라
         # 새로 받을 것도 없고 커밋만 하나 더 쌓인다.
-        if: github.event.schedule != '0 23 * * 1-5'
+        if: github.event.schedule != '0 23 * * 1-5' && github.event.inputs.only != 'us_debt'
         continue-on-error: true
         run: python krx_listing.py
 
       # 섹터별 등락률을 거래일마다 쌓는다(data/sector/daily). 최근 10일 중 빠진 날을 채우므로
       # 하루 못 돌아도 다음 실행이 메운다. 실패해도 배치 전체는 세우지 않는다.
       - name: Sector history
-        if: github.event.schedule != '0 23 * * 1-5'
+        if: github.event.schedule != '0 23 * * 1-5' && github.event.inputs.only != 'us_debt'
         continue-on-error: true
         run: python sector_history.py
 

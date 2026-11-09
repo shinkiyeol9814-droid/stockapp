@@ -1,0 +1,66 @@
+name: Scheduler (cron-job.org tick)
+
+# 💡 GitHub 자체 schedule은 늦게 돈다 — 2026-11 실측으로 18:00(KST) 예정이 새벽 1:30,
+# 18:30 예정이 1:50~4:38, keep-alive(3시간 간격)는 사이가 9시간까지 벌어졌다(절전 임계 12시간).
+# 그래서 cron-job.org가 30분마다 tick을 보내고, 여기서 한국 시각을 보고 해당 워크플로우를 깨운다.
+# cron-job.org 작업 하나로 끝나게 한 것이다(작업마다 따로 만들 필요 없음).
+#
+#   cron-job.org: 매시 0·30분, 매일 / POST https://api.github.com/repos/{리포}/dispatches
+#                 본문 {"event_type":"tick"} · 헤더 Authorization: Bearer {PAT}
+#
+# 각 워크플로우의 원래 schedule은 tick이 안 올 때를 대비한 예비로 남아 있다(늦게 한 번 더
+# 돌 수 있지만 셋 다 이미 받은 날은 건너뛰거나 같은 값을 다시 쓸 뿐이다).
+on:
+  repository_dispatch:
+    types: [tick]
+  workflow_dispatch:
+    inputs:
+      at:
+        description: "시각 흉내 (KST 'N HH:MM', N=요일 1~7 월~일) — 비우면 지금"
+        required: false
+        default: ""
+
+permissions:
+  actions: write      # gh workflow run
+
+concurrency:
+  group: scheduler
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch due workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AT: ${{ github.event.inputs.at }}
+        run: |
+          if [ -n "$AT" ]; then
+            DOW=${AT%% *}; HM=${AT#* }
+          else
+            DOW=$(TZ=Asia/Seoul date +%u); HM=$(TZ=Asia/Seoul date +%H:%M)
+          fi
+          H=$((10#${HM%%:*})); M=$((10#${HM##*:}))
+          # tick이 조금 늦게 와도 같은 칸으로 — 가장 가까운 30분 칸, 10분 넘게 벗어나면 무시
+          T=$((H * 60 + M)); SLOT=$(( (T + 15) / 30 * 30 % 1440 )); D=$(( T - SLOT ))
+          [ $D -lt -720 ] && D=$((D + 1440)); [ $D -gt 720 ] && D=$((D - 1440))
+          if [ ${D#-} -gt 10 ]; then echo "칸에서 ${D}분 벗어남 — 건너뜀"; exit 0; fi
+          SH=$((SLOT / 60)); SM=$((SLOT % 60))
+          # 자정 직전 tick이 00:00 칸으로 반올림되면 요일도 다음 날
+          [ $T -gt 1400 ] && [ $SLOT -eq 0 ] && DOW=$(( DOW % 7 + 1 ))
+          printf '칸 %s %02d:%02d (요일 %s)\n' "$SLOT" "$SH" "$SM" "$DOW"
+
+          run() { echo "→ $*"; gh workflow run "$@" --ref main || echo "::warning::$1 요청 실패"; }
+          WEEKDAY=$([ "$DOW" -le 5 ] && echo 1 || echo 0)
+          # 연방부채는 미 재무부 공개(ET 16:00) 뒤인 KST 다음 날 08:00 — 원래 cron '0 23 * * 1-5'(UTC)와 같은 화~토
+          TUE_SAT=$([ "$DOW" -ge 2 ] && [ "$DOW" -le 6 ] && echo 1 || echo 0)
+
+          [ $SM -eq 0 ] && [ $((SH % 3)) -eq 0 ]         && run keep_alive.yml
+          [ $WEEKDAY = 1 ] && [ $SH -eq 18 ] && [ $SM -eq 0 ]  && run macro_batch.yml
+          [ $WEEKDAY = 1 ] && [ $SH -eq 18 ] && [ $SM -eq 30 ] && run index_valuation.yml
+          [ $WEEKDAY = 1 ] && [ $SH -eq 19 ] && [ $SM -eq 0 ]  && run dart_batch.yml
+          [ $TUE_SAT = 1 ] && [ $SH -eq 8 ]  && [ $SM -eq 0 ]  && run macro_batch.yml -f only=us_debt
+          exit 0

@@ -96,7 +96,13 @@ jobs:
           cp data/earnings/last_sync.txt "$WORK/data/earnings/last_sync.txt"
           git -C "$WORK" add data/earnings/last_sync.txt
           git -C "$WORK" commit -m "Earnings sync marker" || { echo "변경 없음"; exit 0; }
-          git -C "$WORK" push origin batch-state
+          # batch-state는 급등알림·실적 배치와 앱(관심종목 저장)이 같이 쓴다 — 받고 나서 올리기 전에
+          # 다른 쪽이 먼저 올렸으면 거절되므로 위에 다시 얹어 세 번까지 재시도한다(파일이 서로 달라 충돌은 없다).
+          for i in 1 2 3; do
+            git -C "$WORK" push origin batch-state && exit 0
+            git -C "$WORK" pull --rebase origin batch-state || true
+          done
+          exit 1
 
       - name: Commit and Push
         if: steps.check_flag.outputs.skip != 'true'

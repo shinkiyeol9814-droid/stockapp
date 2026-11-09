@@ -69,7 +69,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `valuation.py` | 가치평가 탭 UI + 공유 데이터 함수(`get_hybrid_financials` 등) |
 | `ui_surge.py` | **거래대금 급증 스크리너 탭 — 별도 리포 `kosdaq-surge`가 만든 JSON을 읽어 그리기만 함** |
 | `ui_macro.py` | 매크로 지표 탭 (지수 밴드/외국인 보유액/환율/금리/원자재/메모리/미국부채/**수급 건전성**/**신용 스프레드**/지수·금리 비교) |
-| `ui_earnings.py` | 실적 탭 |
+| `ui_earnings.py` | 실적 탭 — 관심종목(별)은 **`batch-state` 브랜치**의 `data/earnings/favorites.json`에 저장(2026-11-09~, main 커밋은 앱 재시작이라 — 아래 '배포 브랜치에 커밋하지 않는 것') |
 | `ui_report.py` | 레포트 탭 |
 | `new_high.py` | 신고가 탭 (아래에 섹터별 등락률 섹션. 종목별 뉴스 펼침은 2026-10-30 제거) |
 | `ui_sector.py` | 섹터별 등락률 (Top5 + 이슈 뉴스) — 2026-10-30부터 탭이 아니라 신고가 탭 아래 섹션(`render_sector_section`) |
@@ -355,6 +355,22 @@ Yahoo가 Cloud에서 막힌 것과 같은 위험을 피하고, 월 단위라 배
 (`KORCPIALLMINMEI`가 2023-11에서 끊김, `KORCPALTT01GYM`·`KORPPIIAMINMEI`는 404),
 ECOS의 `sample` 키는 **1회 10건 제한**(`ERROR-301`)이라 시계열에 못 쓴다.
 
+### 배포 브랜치(main)에 커밋하지 않는 것
+main에 push하면 Streamlit Cloud가 **앱을 재시작**하고, 그 순간 접속하면 인증 리디렉션이 꼬일 수 있다
+(아래 '절전과 리디렉션 루프'). 그래서 앱이 읽지 않거나 자주 바뀌는 상태는 `batch-state` 브랜치에 둔다:
+급등알림 `alerted_today.json`, 실적 `last_sync.txt`, **관심종목 `favorites.json`**(별 하나에 커밋 하나 —
+한 달 66번 재시작이었다). main의 `data/earnings/favorites.json`은 옮기기 전 마지막 값이고, batch-state에
+파일이 없을 때만 읽는다. batch-state는 세 곳이 같이 쓰므로 배치의 push는 rebase 후 3회 재시도한다.
+
+### 정기 실행은 cron-job.org tick 하나로 (`scheduler.yml`, 2026-11-09)
+GitHub 자체 `schedule`은 **7~10시간 늦게** 돈다(실측: 18:00 예정 매크로가 01:30, 18:30 지수 PER·PBR이
+01:50~04:38, 19:00 DART가 02:00~05:00, 3시간 간격 keep-alive가 최대 9시간 간격). cron-job.org가
+30분마다 `repository_dispatch`(`event_type: tick`)를 보내면 `scheduler.yml`이 KST 시각을 보고
+`gh workflow run`으로 깨운다 — keep_alive(3시간마다)·macro(평일 18:00)·index_valuation(평일 18:30)·
+dart 워치리스트(평일 19:00)·macro 부채만(화~토 08:00, `-f only=us_debt`). tick이 ±10분 안에 오면 그 칸으로 친다.
+각 워크플로우의 원래 `schedule`은 tick이 끊겼을 때를 위한 예비로 남겨 두었다(늦게 한 번 더 돌아도 셋 다
+이미 받은 날은 건너뛰거나 같은 값을 쓴다). 시각 흉내는 수동 실행 입력 `at`(예: `1 18:30`).
+
 ### 휴장일엔 배치를 건너뛴다 (`market_calendar`)
 배치 대부분이 외부 크론(cron-job.org)이라 요일·공휴일 구분 없이 돈다 — 한글날(10/9)에 신고가
 분석이 Gemini를 부르고, 급등주 알림이 일요일 하루 288번 돌았다. 그래서 진입점에서
@@ -460,6 +476,11 @@ ECOS의 `sample` 키는 **1회 10건 제한**(`ERROR-301`)이라 시계열에 �
   새로 생기면 CSS가 사라져 한 줄이 된다(배포 직후 자주 보이던 증상). 그래서 감시를 멈추지 않고 0.4초마다
   CSS 재주입 + iframe 높이를 내용에 맞춘다. 메뉴 항목 수를 바꾸면 25%(4칸) 폭도 같이 볼 것.
 - 작은 옵션(체크박스 등)을 한 줄에 둘 땐 `st.container(key="inline_…")` 안에 컬럼으로 — 전역 CSS가 nowrap.
+- **매크로 탭은 맨 위에서 한 번에 받는다**(2026-11-09) — 시장 지표·뉴스에 더해 밴드·수급 섹션의 네이버 실시간
+  지수·순매수, 금투협 통계까지 `render_macro()` 첫머리의 `run_with_progress` 하나로("매크로 데이터 불러오는 중").
+  아래 섹션은 같은 인자로 캐시만 읽는다. '시장 지표' 기간 상자는 밴드 아래에 그려지지만 값은 `secsel_mkt`
+  세션 키에서 미리 읽는다. DRAMeXchange(DDR5·DDR4)·TE(리튬) 현재가는 `_dramexchange_spot`·`_te_lithium_now`
+  한 번씩만 긁는다 — 예전엔 기간(1y·max)×품목마다 따로 받아 같은 페이지를 4번 받았다. 콜드 로딩 14.2초 → 7.3초(로컬).
 - **여러 건을 받는 로딩은 `run_with_progress({이름: 함수})`** — 병렬로 돌리고, 1초 넘게 걸릴 때만
   0~100% 진행률을 띄운다(캐시 적중 때는 안 띄워 자동 새로고침마다 번쩍이지 않게).
   `st.cache_data` 함수 **안에서** 부르지 말 것 — 캐시 적중 때 진행률 요소가 재생된다. 캐시는
@@ -521,7 +542,7 @@ st.plotly_chart(fig, config={
 절전 임계값은 **12시간**이다(Streamlit 측 포럼 답변 기준. 7일 → 2~3일 → 12시간으로 짧아졌고
 공식 문서에는 수치가 없다). 하루 1회 핑으로는 실행 사이에 반드시 잠든다.
 
-`keep_alive.yml`이 3시간마다 헤드리스 Chromium으로 실제 접속해서, 잠들어 있으면
+`keep_alive.yml`이 3시간마다(`scheduler.yml` tick이 깨움) 헤드리스 Chromium으로 실제 접속해서, 잠들어 있으면
 "get this app back up" 버튼을 누르고 본문이 렌더링되는지까지 확인한다.
 확인 실패 시 실행을 실패로 표시하고 스크린샷을 아티팩트로 남긴다.
 

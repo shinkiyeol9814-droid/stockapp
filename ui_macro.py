@@ -549,6 +549,38 @@ def _gfex_trading_days():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _te_lithium_now():
+    """TE 리튬 현재가 (값의 날짜 ms, 가격). 1y·max 두 기간이 같은 값을 쓰도록 한 번만 긁는다.
+    실패는 예외로 — 빈 결과를 한 시간 붙잡지 않게."""
+    price = lithium_source.fetch_te_value(timeout=10)
+    if price is None:
+        raise RuntimeError("TE 리튬 현재가 없음")
+    d = lithium_source.te_value_date(datetime.now(_KST).date(), _gfex_trading_days())
+    return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000), price
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _dramexchange_spot() -> dict:
+    """DRAMeXchange 첫 페이지의 DDR5 16Gb · DDR4 16Gb 3200 Spot 평균가 {"ddr5", "ddr4"}.
+    💡 예전엔 DDR5·DDR4 함수가 같은 페이지를 기간(1y·max)마다 따로 받아 콜드 로딩에
+    4번(한 번 2.5~5초) 긁었다(2026-11-09 실측). 실패는 예외로."""
+    r = requests.get(
+        "https://www.dramexchange.com/",
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                 "Accept-Language": "en-US,en;q=0.9",
+                 "Referer": "https://www.dramexchange.com/"},
+        timeout=10,
+    )
+    r.raise_for_status()
+    out = {}
+    # 각 행에서 5번째 td값 = Spot 평균가
+    for key, row in (("ddr5", r'DDR5 16Gb[^<]*</a>'), ("ddr4", r'DDR4 16Gb[^<]*3200.*?</a>')):
+        m = re.search(row + r'(?:.*?<td[^>]*>[\d.]+</td>){4}.*?<td[^>]*>([\d.]+)</td>', r.text, re.S)
+        out[key] = float(m.group(1)) if m else None
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
     """리튬 탄산염 가격 (CNY/ton) — 캐시 파일 + TE 현재가 스크래핑"""
     try:
@@ -561,14 +593,11 @@ def _get_lithium_price_history(period: str = "1y") -> pd.DataFrame | None:
         # 💡 TE 현재가는 아직 "직전 중국 거래일" 값이라 오늘 날짜로 찍으면 하루 밀린다.
         # 배치와 같은 규칙(lithium_source.te_value_date)으로 날짜를 붙인다.
         try:
-            current_price = lithium_source.fetch_te_value(timeout=10)
-            if current_price is not None:
-                d = lithium_source.te_value_date(datetime.now(_KST).date(), _gfex_trading_days())
-                ts = int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
-                # 💡 소스가 새 값을 아직 안 냈으면 직전과 같은 값이 긁힌다. 그걸 새 점으로
-                # 덧붙이면 "전일대비 0.00%"가 되어 실제 마지막 변동이 화면에서 사라진다.
-                if raw[-1][0] < ts and current_price != raw[-1][1]:
-                    raw.append([ts, current_price])
+            ts, current_price = _te_lithium_now()   # 값의 날짜는 lithium_source.te_value_date 규칙
+            # 💡 소스가 새 값을 아직 안 냈으면 직전과 같은 값이 긁힌다. 그걸 새 점으로
+            # 덧붙이면 "전일대비 0.00%"가 되어 실제 마지막 변동이 화면에서 사라진다.
+            if raw[-1][0] < ts and current_price != raw[-1][1]:
+                raw.append([ts, current_price])
         except Exception:
             pass
 
@@ -594,22 +623,8 @@ def _get_dram_price_history(period: str = "1y") -> pd.DataFrame | None:
             return None
 
         try:
-            r = requests.get(
-                "https://www.dramexchange.com/",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                         "Accept-Language": "en-US,en;q=0.9",
-                         "Referer": "https://www.dramexchange.com/"},
-                timeout=10,
-            )
-            # DDR5 16Gb 행에서 5번째 td값 = Spot 평균가
-            m = re.search(
-                r'DDR5 16Gb[^<]*</a>'
-                r'(?:.*?<td[^>]*>[\d.]+</td>){4}'
-                r'.*?<td[^>]*>([\d.]+)</td>',
-                r.text, re.S
-            )
-            if m:
-                current_price = float(m.group(1))
+            current_price = _dramexchange_spot().get("ddr5")
+            if current_price is not None:
                 today_ms = _today_ms_utc_midnight()
                 # 💡 소스가 아직 오늘자를 발행하지 않으면 어제와 똑같은 값이
                 # 스크래핑된다. 그걸 오늘 점으로 덧붙이면 직전값과 같아져
@@ -643,22 +658,8 @@ def _get_ddr4_price_history(period: str = "1y") -> pd.DataFrame | None:
             return None
 
         try:
-            r = requests.get(
-                "https://www.dramexchange.com/",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                         "Accept-Language": "en-US,en;q=0.9",
-                         "Referer": "https://www.dramexchange.com/"},
-                timeout=10,
-            )
-            # DDR4 16Gb (2Gx8) 3200 행에서 5번째 td값 = Spot 평균가
-            m = re.search(
-                r'DDR4 16Gb[^<]*3200.*?</a>'
-                r'(?:.*?<td[^>]*>[\d.]+</td>){4}'
-                r'.*?<td[^>]*>([\d.]+)</td>',
-                r.text, re.S
-            )
-            if m:
-                current_price = float(m.group(1))
+            current_price = _dramexchange_spot().get("ddr4")
+            if current_price is not None:
                 today_ms = _today_ms_utc_midnight()
                 # 💡 소스가 아직 오늘자를 발행하지 않으면 어제와 똑같은 값이
                 # 스크래핑된다. 그걸 오늘 점으로 덧붙이면 직전값과 같아져
@@ -2321,6 +2322,8 @@ def render_macro():
         _get_lithium_price_history.clear()
         _get_dram_price_history.clear()
         _get_ddr4_price_history.clear()
+        _dramexchange_spot.clear()
+        _te_lithium_now.clear()
         _get_commodity_news.clear()
         _get_index_valuation.clear()
         _get_index_live.clear()
@@ -2339,10 +2342,10 @@ def render_macro():
     # 코스피·코스닥 밴드를 맨 위로 — 국내 지수가 먼저 눈에 들어와야 한다는
     # 요청(2026-11-06). 밴드는 자체 기간 선택(밴드 기간)을 쓰므로 아래 '기간'
     # 라디오와 무관하고, 그 라디오는 '시장 지표' 카드에만 걸리니 소제목 뒤에 둔다.
-    _render_valuation_band()
     period_map = {"1개월": "1mo", "6개월": "6mo", "1년": "1y", "3년": "3y", "5년": "5y"}
-    sel_p = section_title_select("시장 지표", period_map, key="mkt", index=2)
-    period = period_map[sel_p]
+    # '시장 지표' 기간 상자는 밴드 아래에 그려지지만 고른 값은 세션에 남아 있어 미리 읽을 수 있다
+    # — 아래 run_with_progress가 밴드보다 먼저 돌아야 해서다.
+    period = period_map.get(st.session_state.get("secsel_mkt"), "1y")
 
     # 💡 예전엔 티커 6개(+캐시파일 3개)를 하나씩 순차적으로 가져왔다 —
     # 티커당 차트용 history() + 실시간가 fast_info/get_info()까지 최대
@@ -2403,7 +2406,14 @@ def render_macro():
         jobs[("full", item[0])] = lambda it=item: _fetch_full(it)[1]
     for tk, (q, must) in _NEWS_QUERY.items():
         jobs[("news", tk)] = lambda q=q, must=must: _get_commodity_news(q, must)
-    res = run_with_progress(jobs, label="시장 데이터 불러오는 중", max_workers=len(MARKET_ITEMS) * 2)
+    # 💡 탭 맨 위에서 한 번에 받는다(2026-11-09). 예전엔 밴드·수급 섹션이 네이버 실시간
+    # 지수·순매수, 금투협 통계를 그리면서 하나씩 받아(진행률 없이 약 3초) 그 뒤에야 이 막대가
+    # 떴다. 여기서 같이 받아 두면 아래 섹션은 캐시만 읽는다 — 인자가 같아야 캐시 키가 같다.
+    for idx in ("KOSPI", "KOSDAQ"):
+        jobs[("live", idx)] = lambda i=idx: _get_index_live(i)
+        jobs[("flowlive", idx)] = lambda i=idx: _get_flow_live(i)
+    jobs[("flowstats", "")] = _get_flow_stats
+    res = run_with_progress(jobs, label="매크로 데이터 불러오는 중", max_workers=len(MARKET_ITEMS) * 2)
     ok = lambda v, default=None: default if isinstance(v, Exception) else v
     news_map = {k[1]: ok(v) for k, v in res.items() if k[0] == "news"}
     for item in MARKET_ITEMS:
@@ -2411,6 +2421,12 @@ def render_macro():
         hists[nm] = ok(res[("hist", nm)])
         last_prev_map[nm] = ok(res[("lp", nm)], (None, None, None))
         full_map[nm] = ok(res[("full", nm)])
+
+    _render_valuation_band()
+    sel_p = section_title_select("시장 지표", period_map, key="mkt", index=2)
+    if period_map[sel_p] != period:      # 세션 값이 없던 첫 실행 등 — 고른 기간으로 다시 받는다
+        st.rerun()
+
 
     for row_start in range(0, len(MARKET_ITEMS), 3):
         if row_start:

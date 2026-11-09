@@ -75,5 +75,10 @@ jobs:
           cp data/surge_alert/alerted_today.json "$WORK/data/surge_alert/alerted_today.json"
           git -C "$WORK" add data/surge_alert/alerted_today.json
           git -C "$WORK" commit -m "Surge alert state" || { echo "변경 없음"; exit 0; }
-          # batch-state는 이 배치만 쓰므로 경합이 없다 — main처럼 rebase 재시도가 필요 없다.
-          git -C "$WORK" push origin batch-state
+          # batch-state는 급등알림·실적 배치와 앱(관심종목 저장)이 같이 쓴다 — 받고 나서 올리기 전에
+          # 다른 쪽이 먼저 올렸으면 거절되므로 위에 다시 얹어 세 번까지 재시도한다(파일이 서로 달라 충돌은 없다).
+          for i in 1 2 3; do
+            git -C "$WORK" push origin batch-state && exit 0
+            git -C "$WORK" pull --rebase origin batch-state || true
+          done
+          exit 1

@@ -5,13 +5,19 @@ import os
 import re
 import html
 from pathlib import Path
-from github import Github
+from github import Github, UnknownObjectException
 
 from earnings_store import available_quarters, load_quarter
 from ui_mobile import disable_keyboard
 
 BASE_DIR = Path(__file__).parent
 FAVORITES_FILE = "data/earnings/favorites.json"
+# 💡 관심종목은 배포 브랜치(main)가 아니라 batch-state 브랜치에 저장한다(2026-11-09).
+# main에 커밋하면 Streamlit Cloud가 그때마다 앱을 재시작한다 — 별 하나 누를 때마다 한 번,
+# 한 달에 66번이었다(급등알림·실적 배치 상태를 batch-state로 옮긴 것과 같은 이유,
+# surge_batch.yml 주석 참고). main의 같은 경로 파일은 옮기기 전 마지막 값으로 남겨 두고,
+# batch-state에 아직 파일이 없을 때만 읽는다(첫 저장이 batch-state에 만든다).
+FAVORITES_BRANCH = "batch-state"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 BATCH_CONFIG_FILE = "data/earnings/batch_config.json"
 LOCAL_BATCH_CONFIG_FILE = BASE_DIR / "data" / "earnings" / "batch_config.json"
@@ -33,7 +39,10 @@ def load_favorites():
     repo = get_github_repo()
     if repo:
         try:
-            file_content = repo.get_contents(str(FAVORITES_FILE))
+            try:
+                file_content = repo.get_contents(FAVORITES_FILE, ref=FAVORITES_BRANCH)
+            except UnknownObjectException:      # 아직 옮기기 전 — main의 마지막 값
+                file_content = repo.get_contents(FAVORITES_FILE)
             data = json.loads(file_content.decoded_content.decode('utf-8'))
             return set(data), True
         except Exception:
@@ -87,17 +96,17 @@ def save_favorites(favorites_set):
     content_str = json.dumps(list(favorites_set), ensure_ascii=False)
     if repo:
         try:
-            file = repo.get_contents(str(FAVORITES_FILE))
-            repo.update_file(str(FAVORITES_FILE), "Update favorites", content_str, file.sha)
+            try:
+                file = repo.get_contents(FAVORITES_FILE, ref=FAVORITES_BRANCH)
+                repo.update_file(FAVORITES_FILE, "Update favorites", content_str, file.sha,
+                                 branch=FAVORITES_BRANCH)
+            except UnknownObjectException:
+                repo.create_file(FAVORITES_FILE, "Move favorites off the deploy branch", content_str,
+                                 branch=FAVORITES_BRANCH)
             load_favorites.clear()
             return True, ""
         except Exception as e:
-            try:
-                repo.create_file(str(FAVORITES_FILE), "Create favorites", content_str)
-                load_favorites.clear()
-                return True, ""
-            except Exception as e2:
-                return False, str(e2)
+            return False, str(e)
     else:
         try:
             LOCAL_FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
