@@ -88,7 +88,12 @@ _NEWS_QUERY = {
     "_LITHIUM_": ("탄산리튬 가격", ("리튬",)),
     "_USDEBT_":  ("미국 국가부채", ("부채",)),
     "_DRAM_":    ("DDR5 D램 가격", ("DDR5", "D램", "디램")),
-    "_DDR4_":    ("DDR4 가격", ("DDR4",)),
+    # 💡 DDR4만 검색어가 "DDR4 가격", 키워드가 ("DDR4",) 하나였다 — 그래서 7일치
+    #    풀 8건 중 제목에 'DDR4'가 든 게 0건이라 매번 기간 제한 없는 재조회로
+    #    넘어가, 7일(실측 175시간) 묵은 기사가 카드에 박혔다(2026-11-10 제보).
+    #    국내 기사는 DDR4를 제목에 거의 안 쓰고 'D램'·'범용 D램'이라 부른다.
+    #    DDR5와 같은 모양으로 맞추면 7일치 안에서 걸린다(실측 36시간).
+    "_DDR4_":    ("DDR4 D램 가격", ("DDR4", "D램", "디램")),
     "BTC-USD":   ("비트코인", ("비트코인", "BTC")),
 }
 _NEWS_RECENT = " when:7d"
@@ -459,26 +464,25 @@ def _news_rss(query: str):
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_commodity_news(query: str, must: tuple):
     """
-    최신 헤드라인 1건 -> (제목, 링크, 경과) 또는 None.
+    헤드라인 후보 -> [(제목, 링크, 경과), ...] 최신순 최대 3건(없으면 빈 리스트).
     금융 뉴스 헤드라인은 보통 등락 사유가 제목에 그대로 들어있어
     (예: "WTI, OPEC+ 감산 소식에 급등") 요약 없이 헤드라인만으로 충분하다.
     고르는 규칙은 _NEWS_QUERY 위 주석 참고.
+
+    💡 1건이 아니라 후보를 돌려주는 이유: DDR5·DDR4처럼 검색어가 겹치는 카드가
+    나란히 서면 같은 기사가 두 번 걸린다. 쓰는 쪽이 '아직 안 쓴 것'을 고른다.
     """
-    try:
-        now = datetime.now(timezone.utc)
-        pool = _news_rss(query + _NEWS_RECENT)
+    now = datetime.now(timezone.utc)
+    pool = _news_rss(query + _NEWS_RECENT)
+    hits = [r for r in pool if any(k.lower() in r[1].lower() for k in must)]
+    if not hits:
+        # 최근 7일에 키워드 맞는 기사가 없으면(한산한 주) 기간 제한 없이 한 번 더.
+        # 이쪽엔 날짜 하한이 없어 한 달 지난 기사도 올라온다 — 그래서 경과("28일")를
+        # 제목 앞에 같이 적는다. 애초에 여기까지 오지 않게 키워드를 넓히는 게 먼저다.
+        pool = _news_rss(query)
         hits = [r for r in pool if any(k.lower() in r[1].lower() for k in must)]
-        if not hits:
-            # 최근 7일에 키워드 맞는 기사가 없으면(한산한 주) 기간 제한 없이 한 번 더.
-            pool = _news_rss(query)
-            hits = [r for r in pool if any(k.lower() in r[1].lower() for k in must)]
-        if not hits:
-            return None
-        dt, title, link = max(hits, key=lambda r: r[0])
-        return title, link, _news_age(dt, now)
-    except Exception as e:
-        print(f"[ui_macro] 뉴스({query}) 조회 실패: {type(e).__name__}: {e}")
-        return None
+    hits.sort(key=lambda r: r[0], reverse=True)
+    return [(title, link, _news_age(dt, now)) for dt, title, link in hits[:3]]
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2420,7 +2424,18 @@ def render_macro():
     jobs[("flowstats", "")] = _get_flow_stats
     res = run_with_progress(jobs, label="매크로 데이터 불러오는 중", max_workers=len(MARKET_ITEMS) * 2)
     ok = lambda v, default=None: default if isinstance(v, Exception) else v
-    news_map = {k[1]: ok(v) for k, v in res.items() if k[0] == "news"}
+    # 후보 중 다른 카드가 아직 안 쓴 것을 고른다 — DDR5·DDR4는 'D램'을 같이
+    # 키워드로 쓰므로 그냥 1위를 박으면 나란한 두 카드에 같은 기사가 걸린다.
+    # MARKET_ITEMS 순서대로 집어 가니 위 카드가 우선이다(= 화면에 그리는 순서).
+    news_raw = {k[1]: ok(v, []) for k, v in res.items() if k[0] == "news"}
+    news_map, _used = {}, set()
+    for item in MARKET_ITEMS:
+        for title, link, age in (news_raw.get(item[1]) or []):
+            if title in _used:
+                continue
+            _used.add(title)
+            news_map[item[1]] = (title, link, age)
+            break
     for item in MARKET_ITEMS:
         nm = item[0]
         hists[nm] = ok(res[("hist", nm)])
