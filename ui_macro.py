@@ -577,6 +577,11 @@ def _dramexchange_spot() -> dict:
     for key, row in (("ddr5", r'DDR5 16Gb[^<]*</a>'), ("ddr4", r'DDR4 16Gb[^<]*3200.*?</a>')):
         m = re.search(row + r'(?:.*?<td[^>]*>[\d.]+</td>){4}.*?<td[^>]*>([\d.]+)</td>', r.text, re.S)
         out[key] = float(m.group(1)) if m else None
+    # 💡 '확인 시각'을 값과 함께 캐시에 담는다. 캐시 적중이어도 이 시각은 그때
+    # 실제로 긁은 시각이라(ttl 1시간) 카드에 그대로 쓸 수 있다. 이게 없으면
+    # 카드가 마지막 '데이터 점의 날짜'를 기준시각으로 적어서, 소스가 며칠
+    # 안 움직인 것과 스크래핑이 죽은 것이 화면에서 똑같이 보인다.
+    out["at"] = datetime.now(_KST)
     return out
 
 
@@ -2477,9 +2482,22 @@ def render_macro():
                             hist = pd.concat([hist, new_row])
                     else:
                         is_stale_snapshot = True
-                else:
+                spot_at = None
+                if is_cache_based:
                     # 캐시 파일 기반(리튬/DDR5/DDR4) — 방금 확인한 값이므로 age 경고 없이 시각만 표시
                     last_update = hist.index[-1].to_pydatetime()
+                    # 💡 DRAM 스팟은 '값이 달라졌을 때만' 새 점을 만든다(배치의
+                    # _append_if_new, 앱의 덧붙이기 조건 둘 다). 그래서 소스가 며칠
+                    # 가만히 있으면 마지막 점의 날짜가 그대로 머물고, 카드가 그 날짜를
+                    # 기준시각으로 적어 "갱신이 멈췄다"로 읽힌다 — 2026-11-10 제보:
+                    # DDR5가 11/07에 멈춰 보였는데 DRAMeXchange 자체가 Session
+                    # Change 0.00%였다. 긁은 시각을 같이 적어 둘을 구분한다.
+                    # 스크래핑이 실패하면 None으로 둬서 '확인'이라 말하지 않는다.
+                    if ticker in ("_DRAM_", "_DDR4_"):
+                        try:
+                            spot_at = _dramexchange_spot().get("at")
+                        except Exception:
+                            spot_at = None
                 chg_p = (last / prev - 1) * 100 if prev else 0
                 try:
                     val_str = f"{last:{fmt}} {unit}"
@@ -2493,12 +2511,16 @@ def render_macro():
                 update_txt, update_clr, update_bold = "", "#aaa", False
                 if is_stale_snapshot:
                     update_txt = f"{hist.index[-1]:%m/%d} 종가 기준 (지연)"
-                elif is_cache_based and last_update:
-                    if prev == last and len(hist) > 1:
-                        prev_date = hist.index[-2].to_pydatetime()
-                        update_txt = f"{last_update:%m/%d %H:%M} 확인 ({prev_date:%m/%d} 이후 무변동)"
+                elif is_cache_based and spot_at is not None:
+                    # 값이 바뀐 날만 점이 생기므로, 마지막 점이 어제 이전이면
+                    # 그 사이는 '무변동'이 맞다 — 방금 확인한 사실과 같이 적는다.
+                    if last_update and last_update.date() < spot_at.date():
+                        update_txt = (f"{spot_at:%m/%d %H:%M} 확인 · "
+                                      f"{last_update:%m/%d} 이후 무변동")
                     else:
-                        update_txt = f"{last_update:%m/%d %H:%M} 기준"
+                        update_txt = f"{spot_at:%m/%d %H:%M} 확인"
+                elif is_cache_based and last_update:
+                    update_txt = f"{last_update:%m/%d %H:%M} 기준"
                 elif last_update:
                     age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
                     # 💡 예전엔 age_hours >= 24 만 보고 경고를 띄웠다. 그러면 금요일
