@@ -219,25 +219,45 @@ _KST = timezone(timedelta(hours=9))
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_last_and_prev_close(ticker: str):
     """
-    야후의 실시간 현재가/전일종가(fast_info)를 직접 사용.
+    야후의 실시간 현재가/전일종가를 직접 사용.
     일봉 배열의 [-1]/[-2]로 전일종가를 추론하면 장중 진행형 봉이 계속
     갱신되거나 날짜 경계를 지날 때 기준점이 흔들려 등락률이 튈 수 있어서,
     변동 없는 전일 공식 종가를 기준으로 삼기 위함.
     regularMarketTime(최종 시세 갱신 시각)도 같이 반환 — 미국채 수익률처럼
     거래시간이 짧은 지표는 한국 시간대엔 몇 시간 전 값에서 멈춰있을 수 있어
     "언제 기준 값인지"를 화면에 같이 보여주기 위함.
+
+    ⚠️ **전일종가는 `info["regularMarketPreviousClose"]`를 쓴다 —
+    `fast_info.previous_close`가 아니다.** 이름과 달리 그 값은 전일 종가가
+    아니라 "1주 1시간봉(prepost 포함)을 **달력 날짜**로 묶어 마지막 봉의
+    종가를 고른 뒤 [-2]"다(yfinance 1.7.0 `scrapers/quote.py`). 거의 24시간
+    도는 선물에서는 이게 전혀 다른 값이 된다 — WTI(CL=F)는 17:00 ET에 닫고
+    **같은 날** 18:00 ET에 다음 세션을 여는데, 그러면 '11/09의 마지막
+    1시간봉'이 23:00 ET, 즉 이미 11/10 세션으로 6시간 들어간 값이다.
+
+    2026-11-10 실측: 유가가 86.85 → 85.75로 **-1.27%** 빠진 날 카드가
+    `▲ +0.07%`로 떴다(previous_close가 85.67이라). 같은 날 금·은·구리·환율도
+    0.2~1.0%p씩 어긋났고, 부호가 뒤집힌 건 WTI였다. 날짜 묶기가 구조적으로
+    깨지는 것도 같이 보였다 — 글로벡스가 일요일 18:00 ET에 주를 여니까
+    "11/08(일)" 행이 유령으로 하나 생긴다.
+    `regularMarketPreviousClose`는 야후 사이트가 그대로 쓰는 공식 전일
+    종가(선물은 정산가)라 이 문제가 없다.
     """
     try:
         import yfinance as yf
         t = yf.Ticker(ticker)
         fi = t.fast_info
         last = float(fi.last_price)
-        prev = float(fi.previous_close)
+        prev = float(fi.previous_close)   # info가 실패할 때만 쓰는 폴백
         if last <= 0 or prev <= 0:
             return None, None, None
         last_update = None
         try:
-            rt = t.get_info().get("regularMarketTime")
+            info = t.get_info()
+            reg_prev = info.get("regularMarketPreviousClose")
+            if reg_prev and float(reg_prev) > 0:
+                prev = float(reg_prev)
+            rt = info.get("regularMarketTime")
             if rt:
                 last_update = datetime.fromtimestamp(rt, tz=timezone.utc).astimezone(_KST)
         except Exception:
