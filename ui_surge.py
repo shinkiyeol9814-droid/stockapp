@@ -294,14 +294,46 @@ _FLOW_SORT = {"시총 대비": "pct", "순매수": "net", "매수일": "bd", "�
 _FLOW_SORT_OPTS = [f"{name} {d}" for name in _FLOW_SORT for d in ("높은순", "낮은순")]
 
 
+_MKT_NAME = {"K": "코스피", "Q": "코스닥"}
+
+
+def _won(w: float) -> str:
+    """원 단위 금액 -> '3조' / '5,000억'. 상한이 조 단위라 억으로만 적으면 자릿수가 길다."""
+    if abs(w) >= 1e12:
+        v = w / 1e12
+        return f"{v:,.0f}조" if abs(v - round(v)) < 0.05 else f"{v:,.1f}조"
+    return f"{w / 1e8:,.0f}억"
+
+
+def _flow_scope_text(c: dict) -> str:
+    """
+    대상 종목 범위 한 줄.
+
+    ⚠️ **원본 리포가 criteria 모양을 바꾼다.** ver 4(2026-11-11)에서 하한
+    `min_mcap`이 사라지고 상한 `max_mcap`이 숫자에서 **시장별 dict**가 됐다
+    ({"K": 3e12, "Q": null} — 코스피만 3조 이하, 코스닥은 제한 없음).
+    예전 모양(숫자 둘)으로 돌아가도 읽히게 둘 다 받는다. 값은 원 단위다
+    (종목의 `cap`은 억원이라 단위가 서로 다르니 섞지 말 것).
+    """
+    lo, hi = c.get("min_mcap"), c.get("max_mcap")
+    if isinstance(hi, dict):
+        body = " · ".join(
+            f"{nm} {('시총 ' + _won(hi[m]) + ' 이하') if hi.get(m) else '전 종목'}"
+            for m, nm in _MKT_NAME.items() if m in hi)
+    else:
+        rng = [s for s in (f"{_won(lo)} 이상" if lo else "",
+                           f"{_won(hi)} 이하" if hi else "") if s]
+        body = ("시총 " + " · ".join(rng)) if rng else ""
+    return f'대상은 <b>{body}</b>. ' if body else ""
+
+
 def _flow_rules_html(c: dict) -> str:
-    eok = lambda w: f"{w / 1e8:,.0f}"
     pill = lambda t, txt: (f"<span style='{_PILL_STYLE[t]};padding:1px 7px;border-radius:999px;'>"
                            f"{txt}</span>")
     box = c.get("box_pct", 0.3)
     return (
         f'<div style="font-size:12.5px;color:#555;line-height:1.6;">'
-        f'시가총액 <b>{eok(c["min_mcap"])}억 ~ {eok(c["max_mcap"])}억</b> 종목만 본다. 투신 순매수는 KRX '
+        f'{_flow_scope_text(c)}투신 순매수는 KRX '
         f'투자자별 순매수(기관 중 투자신탁)의 장 마감 뒤 확정치다.'
         f'<div style="margin-top:4px;"><b>오늘 많이 산</b> — 기준일 투신 순매수가 시가총액의 '
         f'<b>{c["min_pct"]:g}%</b> 이상.</div>'
@@ -425,7 +457,14 @@ def _render_flow() -> None:
     c = f.get("criteria", {})
     if c:
         with st.expander("투신 수급 기준", expanded=False):
-            st.markdown(_flow_rules_html(c), unsafe_allow_html=True)
+            try:
+                st.markdown(_flow_rules_html(c), unsafe_allow_html=True)
+            except Exception as e:
+                # 💡 이 펼침은 '설명'일 뿐인데 KeyError 하나로 탭 전체가 빨간 트레이스백이
+                # 됐다(2026-11-11, 원본이 criteria를 ver 4로 바꿔 min_mcap이 사라짐).
+                # 원본 리포는 예고 없이 모양을 바꾸므로, 여기서만 접고 표는 그린다.
+                st.caption(f"기준 표기를 읽지 못했습니다 ({type(e).__name__}) — 아래 표는 정상입니다.")
+                print(f"[ui_surge] 투신 기준 표기 실패: {type(e).__name__}: {e} / criteria={c}")
 
     # 제목 고정 — 이유는 _sort_filter_controls 참고
     with st.expander("정렬 · 필터", expanded=False, key="flow_sf"):
