@@ -20,6 +20,11 @@ trade_tenday.py — 수출입 탭의 '10일 단위 속보' 화면 (관세청 잠
 통계는 아예 공개되지 않는다. 월간 API(`Itemtrade`)도 `strtYymm`/`endYymm`만
 받아 월보다 잘게 못 쪼갠다. 다른 소스를 찾아 헤매지 말 것.
 
+⚠️ **단가($/kg)도 10일 단위로는 못 낸다 — 응답에 중량이 없다.** 실측한 item 태그는
+`itemUsdAmt00~10` + `priodDt/priodMon/priodYear` 열넷이 전부로, 중량·수량 필드가
+하나도 없다(월간 `Itemtrade`는 `expWgt`/`impWgt`를 줘서 거기서 단가가 나온다).
+증권사 리포트의 '중량 기준 수출 단가' 차트는 전부 월간 확정치 기반이다.
+
 그 대신 **2차전지 9품목·화장품 5품목은 `품목별 월간` 화면에 이미 있다**
 (`trade_items.py`, HS코드 단위). 세분화가 필요하면 그쪽이다 — 대신 확정치라
 1~2개월 늦다. "세분화 ↔ 신속" 둘 중 하나만 고를 수 있는 구조다.
@@ -273,44 +278,19 @@ def render_tenday() -> None:
     names = [n for n in _SRC[kind][2] if n != "전체"]
     k = len(df) - 1
 
-    # ── 수출 전체 (넓은 카드 한 장) ───────────────────────────────────────────
-    # 수입·무역수지는 2026-11-12 사용자 요청으로 뺐다. 비워진 자리를 '전체'에 주어
-    # 그리드에서 빠져 있던 합계를 큰 막대 한 장으로 띄운다 — 품목 카드가 11개 중
-    # 10개뿐이라 "그래서 수출 전체는 얼마냐"가 숫자 한 줄로만 있었다.
-    tot = float(df.iloc[k]["전체"])
-    t_yoy = _yoy(df, "전체", k)
-    t_prev = _prev_year(df, "전체", k)
-    t_inc = float(df.iloc[k]["전체_inc"])
-    p_inc = float(df.iloc[k - 1]["전체_inc"]) if k >= 1 else None
-    t_mom = ((t_inc / p_inc - 1) * 100) if (p_inc and p_inc > 0) else None
-    tclr = "#ef5350" if (t_yoy or 0) > 0 else "#1565C0" if (t_yoy or 0) < 0 else "#888"
-
-    with st.container(key="mcard_td_all"):
-        prev_line = ("" if t_prev is None else
-                     f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
-                     f"전년 같은 구간 ${t_prev:,.0f}M</div>")
-        st.markdown(
-            f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>"
-            f"수출 전체 · <b style='color:#555;'>{df.iloc[k]['label']}</b> 누적</div>"
-            f"<div style='font-size:22px;font-weight:700;line-height:1.2;'>"
-            f"${tot:,.0f}M</div>"
-            f"<div style='font-size:12px;color:{tclr};font-weight:600;'>"
-            f"{_fmt_pct(t_yoy, '전년')}  ·  {_fmt_pct(t_mom, '직전 구간')}</div>"
-            f"{prev_line}",
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(_bars(df, "전체", tclr, height=170), use_container_width=True,
-                        config={"displayModeBar": False, "scrollZoom": False,
-                                "staticPlot": False})
-        # 막대 읽는 법은 여기 한 줄로 끝낸다 — '읽는 법' 펼침은 2026-11-12에 뺐다
-        # (카드가 스스로 말하는 그림이라 글이 더 길었다).
-        st.markdown(
-            "<div style='font-size:11px;color:#8b98a5;'>"
-            "막대 하나가 <b style='color:#666;'>한 달</b> · 아래부터 "
-            "<b style='color:#666;'>1~10일 · 11~20일 · 21일~말일</b>로 쌓아 "
-            "전체 높이가 그 달 합계 · 진행 중인 달은 받은 구간까지만</div>",
-            unsafe_allow_html=True,
-        )
+    # 머리글 두 줄 — '수출 전체' 큰 카드는 2026-11-12 요청으로 뺐다. 기준 구간과
+    # 막대 읽는 법은 카드가 말해주지 않으니 여기 한 줄씩만 남긴다.
+    tot = float(df.iloc[k]["전체"])          # 비중 계산용(화면에 따로 띄우지는 않는다)
+    st.markdown(
+        f"<div style='font-size:12px;color:#888;margin:2px 0 2px;'>"
+        f"최신 <b style='color:#555;'>{df.iloc[k]['label']}</b> 누적 · "
+        f"전년 같은 월·같은 구간 대비 · 통관 잠정치</div>"
+        "<div style='font-size:11px;color:#8b98a5;margin-bottom:7px;'>"
+        "막대 하나가 <b style='color:#666;'>한 달</b> · 아래부터 "
+        "<b style='color:#666;'>1~10일 · 11~20일 · 21일~말일</b>로 쌓아 "
+        "전체 높이가 그 달 합계 · 진행 중인 달은 받은 구간까지만</div>",
+        unsafe_allow_html=True,
+    )
 
     # ── 품목 / 국가 카드 ─────────────────────────────────────────────────────
     ranked = sorted(names, key=lambda n: (_yoy(df, n, k) is None, -(_yoy(df, n, k) or 0)))
