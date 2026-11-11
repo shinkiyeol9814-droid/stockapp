@@ -6,6 +6,11 @@ ui_trade.py — 수출입 동향 탭 (관세청 품목별 수출입실적).
 
 데이터 소스: 관세청_품목별 수출입실적 (data.go.kr, DATA_GO_KR_KEY 필요).
 수출·수입·무역수지를 지표로 골라 월별/분기별로 본다.
+
+━━ 화면 둘 (2026-11-11, 거래급증 탭의 [거래대금 급증]/[투신 수급]과 같은 모양) ━━
+  품목별 월간   — 이 파일. 관세청 **확정치**, HS코드 세부품목 76개, 1~2개월 지연.
+  10일 단위 속보 — trade_tenday.py. **잠정치**, MTI 주요 11개 고정, 지연 1일.
+축(세부품목 76 vs 주요 11)이 서로 달라 한 그리드에 섞을 수 없어 화면을 나눴다.
 """
 import streamlit as st
 import pandas as pd
@@ -26,6 +31,7 @@ from trade_items import TRADE_ITEMS, themes, lookup, item_count
 
 from ui_mobile import disable_keyboard
 from ui_common import page_header, run_with_progress
+import trade_tenday
 
 _API_BASE = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
 # 국가 차원이 필요할 때 쓰는 엔드포인트 (품목 × 국가).
@@ -546,11 +552,8 @@ def render_trade():
     if page_header("수출입 동향", "trade"):
         _fetch_code_range_cached.clear()
         _country_share_cached.clear()
+        trade_tenday.clear_cache()
         st.rerun()
-    st.caption(
-        f"관세청 품목별 수출입실적 · 세부품목 {item_count()}개 · "
-        f"월별 {_MONTHS}개월 · 12개월 중위 대비 급등 순 · 1시간 캐시"
-    )
 
     if not st.secrets.get("DATA_GO_KR_KEY", ""):
         st.warning(
@@ -560,6 +563,23 @@ def render_trade():
             "Streamlit 시크릿에 DATA_GO_KR_KEY 로 추가하세요."
         )
         st.stop()
+
+    # 확정치(월간)와 잠정치(10일)는 품목 축이 달라 한 화면에 못 섞는다 —
+    # 거래급증 탭과 같은 모양으로 화면을 나눈다.
+    view = st.segmented_control(
+        "화면", ["품목별 월간", "10일 단위 속보"], default="품목별 월간",
+        key="trade_view", label_visibility="collapsed") or "품목별 월간"
+    if view == "10일 단위 속보":
+        trade_tenday.render_tenday()
+        return
+    _render_items()
+
+
+def _render_items():
+    st.caption(
+        f"관세청 품목별 수출입실적 · 세부품목 {item_count()}개 · "
+        f"월별 {_MONTHS}개월 · 12개월 중위 대비 급등 순 · 1시간 캐시"
+    )
 
     # ── 테마 · 국가 · 지표 선택 ───────────────────────────────────────────────
     # 💡 버튼 11개로 깔아봤더니 화면 위쪽을 두 줄이나 차지했다 — 셀렉터로 되돌린다.
