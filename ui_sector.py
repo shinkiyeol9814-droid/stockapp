@@ -13,6 +13,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import concurrent.futures
 from krx_listing import fetch_krx_marcap
+import sector_groups
 import sector_history
 import os
 import json
@@ -68,6 +69,9 @@ def _merged_quotes():
     df.attrs["as_of"] = q.attrs.get("as_of", "")
     df["업종명"] = df["Code"].map(ind)
     df = df.dropna(subset=["업종명"])
+    # 화면은 묶음(25개) 단위다 — KSIC 세분류 158개는 이름이 최대 37자이고 3종목짜리가
+    # TOP5를 먹는다(2026-11-11 요청). 세부업종은 이 칼럼에 그대로 남아 있다.
+    df["묶음"] = df["업종명"].map(sector_groups.group_of)
     # 스팩은 업종이 '금융 지원 서비스업'으로 묶이는데 거의 움직이지 않아
     # 그 업종 전체를 0% 쪽으로 끌어내린다. 제외한다.
     df = df[~df["Name"].astype(str).str.contains("스팩", na=False)]
@@ -81,7 +85,10 @@ def get_sector_performance():
     """업종명 / 업종코드 / 등락률 / 상승·보합·하락 종목수. 실패하면 None."""
     try:
         q = fetch_krx_marcap()
-        rows = sector_history.compute_sector_table(q, _industry_map())
+        # ⚠️ 묶음맵을 넘겨 원시 시세에서 바로 집계한다. 세부업종으로 집계한 뒤
+        # 종목수로 가중해 합치면 자동차·부품이 -0.70% ↔ +0.96%로 부호까지 뒤집힌다.
+        rows = sector_history.compute_sector_table(
+            q, sector_groups.group_map(_industry_map()))
         out = _rows_to_df(rows)
         if out is not None:
             out.attrs["as_of"] = q.attrs.get("as_of", "")
@@ -92,24 +99,32 @@ def get_sector_performance():
 
 
 def _rows_to_df(rows):
-    """sector_history 행([업종, 등락률, 종목수, 상승, 보합, 하락]) → 화면용 표. 비면 None."""
+    """
+    sector_history 행 → 화면용 표. 비면 None.
+    행은 [업종, 등락률, 종목수, 상승, 보합, 하락] 또는 +[시총합] 7칸이다
+    (시총합은 2026-11-11에 붙었다) — 자리로 꺼내 둘 다 받는다.
+    """
     if not rows:
         return None
     return pd.DataFrame([{
-        "업종명": n, "등락률": f"{r:+.2f}%", "등락률_num": r, "전체": t,
-        "상승": u, "보합": f, "하락": d,
-        "업종코드": n,      # 드릴다운 키. 예전엔 네이버 업종번호였는데 이제 업종명이 곧 키다.
-    } for n, r, t, u, f, d in rows])
+        "업종명": r[0], "등락률": f"{r[1]:+.2f}%", "등락률_num": r[1], "전체": r[2],
+        "상승": r[3], "보합": r[4], "하락": r[5],
+        "업종코드": r[0],   # 드릴다운 키. 예전엔 네이버 업종번호였는데 이제 이름이 곧 키다.
+    } for r in rows])
 
 
 @st.cache_data(ttl=180, show_spinner=False)
 def get_sector_stocks(no: str):
-    """해당 업종 소속 종목명 / 현재가 / 등락률. 실패하면 None."""
+    """해당 묶음 소속 종목명 / 현재가 / 등락률. 실패하면 None."""
     df = _merged_quotes()
     if df is None or df.empty:
         return None
     try:
-        g = df[df["업종명"] == no]
+        # 묶음 이름으로 찾되, 옛 스냅샷·옛 저장 파일이 세부업종 이름을 줄 수도 있어
+        # 그때는 세부업종으로 떨어진다.
+        g = df[df["묶음"] == no]
+        if g.empty:
+            g = df[df["업종명"] == no]
         if g.empty:
             return None
         # 💡 현재가는 숫자 그대로 돌려준다. 화면 쪽(render_sector_section)이
@@ -197,6 +212,16 @@ def get_sector_snapshot():
     return df, now_txt, True
 
 
+def _day_rows(day: str):
+    """
+    저장된 날 → 묶음 행. 배치가 저장할 때 원시 시세로 같이 계산해 둔 것을 그대로 읽는다.
+    세부 행을 여기서 합치지 않는 이유는 sector_history 머리말 참고(3종목 미만을 이미
+    버렸고 반올림도 거쳐서 라이브 집계와 어긋난다). 묶음이 없는 옛 파일이면 세부업종
+    그대로 — 화면이 비는 것보다 낫다.
+    """
+    return sector_history.load_day(day, "groups") or sector_history.load_day(day)
+
+
 def _fallback():
     """
     (표, 기준) — 디스크 스냅샷과 배치가 쌓은 마지막 거래일(sector_history) 중 더 최근 것.
@@ -206,7 +231,7 @@ def _fallback():
     snap, saved = _load_snapshot()
     days = sector_history.saved_days()
     if days and (snap is None or str(saved or "")[:10] < days[0]):
-        hist = _rows_to_df(sector_history.load_day(days[0]))
+        hist = _rows_to_df(_day_rows(days[0]))
         if hist is not None:
             return hist, days[0]
     return snap, saved
@@ -215,7 +240,9 @@ def _fallback():
 def _fetch_news(sector_name: str, n: int):
     """업종 관련 뉴스 헤드라인 (제목, 링크) n개. 실패하면 빈 리스트."""
     try:
-        query = urllib.parse.quote(f"{sector_name} 업종 주가")
+        # 묶음 이름은 '반도체·전자부품'처럼 가운뎃점으로 둘을 잇는다. 그대로 넣으면
+        # 한 낱말로 검색돼 결과가 거의 없다 — 띄어쓰기로 바꾼다.
+        query = urllib.parse.quote(f"{sector_name.replace('·', ' ')} 업종 주가")
         url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, timeout=5)
         root = ET.fromstring(res.text)
@@ -340,7 +367,7 @@ def render_sector_section():
     if day == "live":
         df, as_of, stale = live_df, live_as_of, live_stale
     else:
-        df, as_of, stale = _rows_to_df(sector_history.load_day(day)), day, False
+        df, as_of, stale = _rows_to_df(_day_rows(day)), day, False
 
     if df is None or df.empty:
         st.error("❌ 업종 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.")

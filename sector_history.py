@@ -8,7 +8,15 @@ KRX 업종분류(KIND, 158개) × 종목별 종가 등락률을 시가총액으�
 두 곳이 따로 계산하면 같은 날 숫자가 어긋난다.
 
 ━━ 저장 ━━
-data/sector/daily/{YYYY-MM-DD}.json  {"date", "rows": [[업종, 등락률%, 종목수, 상승, 보합, 하락], ...]}
+data/sector/daily/{YYYY-MM-DD}.json
+  {"date", "rows": [세부업종 158개 기준], "groups": [묶음 25개 기준]}   둘 다 같은 모양
+  [업종/묶음, 등락률%, 종목수, 상승, 보합, 하락]
+
+  ⚠️ `groups`는 2026-11-11에 붙였다. 화면이 묶음 단위로 바뀌었는데(sector_groups),
+  **저장된 세부 행을 나중에 합쳐 묶음을 만들면 안 된다** — 세부 집계는 3종목 미만을 먼저
+  버리고 등락률을 반올림해 두어서 원시 시세로 바로 낸 값과 어긋난다(실측으로 확인). 그래서
+  저장할 때 묶음맵으로 한 번 더 집계해 같이 적는다. 기존 173일은 `--rewrite`로 채웠다.
+  `groups`가 없는 파일이면 화면은 세부업종 그대로 그린다(틀린 숫자보다 낫다).
 하루 한 파일(약 6KB)이고 한 번 쓰면 다시 쓰지 않는다 — 연도 파일 하나를 매일 다시 쓰면
 커밋마다 큰 blob이 쌓인다. 업종은 등락률 높은 순.
 
@@ -29,6 +37,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import requests
 
+import sector_groups
 from krx_listing import _FDR_CACHE_REPO, _has_prices, _normalize
 
 KST = timezone(timedelta(hours=9))
@@ -117,20 +126,24 @@ def saved_days() -> list:
     return sorted((f[:-5] for f in os.listdir(DAILY_DIR) if f.endswith(".json")), reverse=True)
 
 
-def load_day(day: str) -> list | None:
+def load_day(day: str, key: str = "rows") -> list | None:
+    """key='rows'면 세부업종, 'groups'면 묶음. 옛 파일엔 groups가 없어 None이 나온다."""
     try:
         with open(os.path.join(DAILY_DIR, f"{day}.json"), encoding="utf-8") as f:
-            return json.load(f)["rows"]
+            return json.load(f).get(key) or None
     except Exception:
         return None
 
 
-def _save_day(day: str, rows: list) -> None:
+def _save_day(day: str, rows: list, groups: list) -> None:
     os.makedirs(DAILY_DIR, exist_ok=True)
     path = os.path.join(DAILY_DIR, f"{day}.json")
+    one = lambda rs: ",\n".join(json.dumps(r, ensure_ascii=False) for r in rs)  # 한 줄에 하나
     with open(path + ".tmp", "w", encoding="utf-8") as f:
         f.write('{"date": "%s", "rows": [\n' % day)
-        f.write(",\n".join(json.dumps(r, ensure_ascii=False) for r in rows))   # 한 줄에 업종 하나
+        f.write(one(rows))
+        f.write('\n], "groups": [\n')
+        f.write(one(groups))
         f.write("\n]}\n")
     os.replace(path + ".tmp", path)
 
@@ -150,9 +163,13 @@ def _quotes_for(day: str) -> pd.DataFrame | None:
         return None
 
 
-def update(since: date) -> list:
-    """since부터 오늘까지 빠진 평일을 채운다. 새로 쓴 날짜 목록."""
-    have = set(saved_days())
+def update(since: date, rewrite: bool = False) -> list:
+    """
+    since부터 오늘까지 빠진 평일을 채운다. 새로 쓴 날짜 목록.
+    rewrite=True면 이미 있는 날도 다시 쓴다 — 저장 형식이 바뀔 때만 쓴다
+    (2026-11-11 묶음 추가). 평소엔 한 번 쓴 파일을 다시 쓰지 않는다.
+    """
+    have = set() if rewrite else set(saved_days())
     today = datetime.now(KST).date()
     industry = None
     written = []
@@ -171,8 +188,10 @@ def update(since: date) -> list:
                     if not industry:
                         raise RuntimeError("업종 분류를 받지 못했다 (KIND / 디스크 모두 실패)")
                 rows = compute_sector_table(q, industry)
+                # 묶음은 세부 결과를 합치지 말고 원시 시세에서 바로 낸다(머리말 참고).
+                groups = compute_sector_table(q, sector_groups.group_map(industry))
                 if rows:
-                    _save_day(day, rows)
+                    _save_day(day, rows, groups)
                     written.append(day)
                     print(f"[sector] {day}: 업종 {len(rows)}개 저장 (1위 {rows[0][0]} {rows[0][1]:+.2f}%)")
         d += timedelta(days=1)
@@ -183,5 +202,5 @@ if __name__ == "__main__":
     since = datetime.now(KST).date() - timedelta(days=10)
     if "--since" in sys.argv:
         since = date.fromisoformat(sys.argv[sys.argv.index("--since") + 1])
-    out = update(since)
+    out = update(since, rewrite="--rewrite" in sys.argv)
     print(f"[sector] 새로 저장 {len(out)}일")
