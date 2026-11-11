@@ -161,36 +161,51 @@ def _fmt_pct(v, label: str) -> str:
 
 
 # ── 차트 ─────────────────────────────────────────────────────────────────────
-def _spark(df, col: str, color: str, n: int = 36):
-    """구간 순증 스파크라인. 축은 fixedrange로 잠그고 툴팁은 남긴다.
+# 한 달을 막대 하나로 세우고 1~10 / 11~20 / 21~말일을 아래부터 쌓는다(2026-11-11 요청).
+# 선 하나로 순증만 긋던 때는 "이번 달이 어디까지 왔나"가 안 보였다 — 월 전체 크기와
+# 그 안의 10일치 기여가 한 눈에 같이 들어와야 월중 판단이 된다.
+_SEG = ("1~10일", "11~20일", "21일~말일")
+_RGB = {"#ef5350": (239, 83, 80), "#1565C0": (21, 101, 192)}
+# 아래(이른 구간)가 진하고 위로 갈수록 옅다. ⚠️ 구간 구분에 빨강/파랑을 섞어 쓰면
+# 안 된다 — 이 앱에서 두 색은 '올랐다/내렸다'다. 카드 색 **한 가지의 농도**로만 나눈다.
+_SEG_ALPHA = (0.95, 0.60, 0.32)
 
-    누적값을 그대로 그으면 달마다 올라갔다 0으로 떨어지는 톱니가 된다 —
-    선은 순증, 큰 숫자는 누적이고 툴팁에 둘 다 적는다.
+
+def _rgba(color: str, a: float) -> str:
+    r, g, b = _RGB.get(color, (138, 138, 138))
+    return f"rgba({r},{g},{b},{a})"
+
+
+def _bars(df, col: str, color: str):
+    """월별 누적 막대. 한 칸이 한 달, 아래부터 1~10 / 11~20 / 21~말일.
+
+    값은 `_inc`(구간 순증)를 쌓으므로 막대 전체 높이가 그 달의 월 합계가 된다.
+    원값(누적)을 그대로 쌓으면 2~3배로 부풀어 오른다 — 거기에 쓰지 말 것.
+    진행 중인 달은 받은 구간만 서서 "아직 1~10일까지"가 그림으로 보인다.
     """
-    d = df.tail(n)
-    x = list(d["label"])
-    y = [float(v) for v in d[col + "_inc"]]
-    fill = {"#ef5350": "rgba(239,83,80,0.12)",
-            "#1565C0": "rgba(21,101,192,0.12)"}.get(color, "rgba(158,158,158,0.12)")
+    piv = (df.pivot_table(index="ym", columns="seq", values=col + "_inc",
+                          aggfunc="first").sort_index())
+    x = [f"{ym[2:4]}.{ym[4:6]}" for ym in piv.index]
+    month_tot = [float(v) for v in piv.sum(axis=1)]
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y, mode="lines", line=dict(color=color, width=1.6),
-        fill="tozeroy", fillcolor=fill, showlegend=False,
-        customdata=[float(v) for v in d[col]],
-        hovertemplate=("<b>%{x}</b><br>구간 순증 <b>$%{y:,.0f}M</b>"
-                       "<br>누적 $%{customdata:,.0f}M<extra></extra>"),
-    ))
-    if x:
-        fig.add_trace(go.Scatter(
-            x=[x[-1]], y=[y[-1]], mode="markers",
-            marker=dict(color=color, size=6, line=dict(color="#fff", width=1)),
-            showlegend=False, hoverinfo="skip",
+    for sq in range(3):
+        if sq not in piv.columns:
+            continue
+        y = [None if v != v else float(v) for v in piv[sq]]
+        fig.add_trace(go.Bar(
+            x=x, y=y, name=_SEG[sq], showlegend=False,
+            marker=dict(color=_rgba(color, _SEG_ALPHA[sq]), line=dict(width=0)),
+            customdata=month_tot,
+            hovertemplate=(f"<b>%{{x}}</b> · {_SEG[sq]}<br>$%{{y:,.0f}}M"
+                           "<br>그 달 합계 $%{customdata:,.0f}M<extra></extra>"),
         ))
     fig.update_layout(
+        barmode="stack", bargap=0.18,
         height=110, margin=dict(l=0, r=4, t=4, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        dragmode=False, hovermode="x",
-        xaxis=dict(tickmode="array", tickvals=x[::9], ticklen=0,
+        dragmode=False, hovermode="closest",
+        xaxis=dict(tickmode="array", tickvals=x[::6], ticklen=0,
                    tickfont=dict(size=7, color="#aaa"),
                    showgrid=False, zeroline=False, fixedrange=True),
         yaxis=dict(showticklabels=False, showgrid=False, zeroline=False,
@@ -199,12 +214,15 @@ def _spark(df, col: str, color: str, n: int = 36):
     return fig
 
 
-# ⚠️ 본문에 백틱(코드 스팬)을 쓰지 말 것 — 한글이 들어가면 글자가 쪼그라들어
-#    오히려 안 읽힌다(모바일 실측). 물결표는 취소선이 되므로 \~로 escape한다.
 _HELP = r"""
-**값은 월내 누적입니다.** 1\~10일 → 1\~20일 → 1\~말일 순으로 쌓인 금액이고,
-카드의 큰 숫자가 그 누적값입니다. 선은 차분해 낸 **구간 순증**이라 10일치씩
-끊어서 보는 그림입니다.
+**막대 하나가 한 달입니다.** 아래부터 1\~10일 · 11\~20일 · 21일\~말일 순으로 쌓아
+막대 전체 높이가 그 달 합계가 됩니다. 색이 진한 아래쪽이 이른 구간입니다.
+진행 중인 달은 받은 구간까지만 서 있어, 월초 열흘이 지난 달과 견줘 어느
+정도인지 그대로 보입니다.
+
+**카드의 큰 숫자는 월내 누적입니다.** 원자료가 1\~10일 → 1\~20일 →
+1\~말일로 쌓여 오기 때문입니다. 막대는 그걸 차분해 구간별로 돌려놓은 것이라,
+막대 셋을 더하면 그 달 1\~말일 누적과 같습니다.
 
 **비교는 전년 동기끼리 합니다.** 수출은 계절성과 조업일수 영향이 커서 직전
 구간과만 비교하면 방향이 뒤집힙니다 — 추석이 낀 달의 1\~10일이 대표적입니다.
@@ -284,34 +302,52 @@ def render_tenday() -> None:
         unsafe_allow_html=True,
     )
 
-    def _sumcard(title, val, yoy):
+    # 카드는 st.container(key="mcard_…")로 감싼다 — app.py 전역 CSS 3-3이 옅은
+    # 테두리를 두르고 한 줄 안 높이를 맞춘다. 테두리가 없을 땐 셋이 그냥 흘러
+    # 있어 어디까지가 한 카드인지, 아래 '읽는 법'이 무엇에 딸린 건지 흐렸다.
+    def _sumcard(title, val, yoy, prev, color=None):
         clr = "#ef5350" if (yoy or 0) > 0 else "#1565C0" if (yoy or 0) < 0 else "#888"
         v = "-" if val is None else f"${val:,.0f}M"
+        vcol = f"color:{color};" if color else ""
+        sub_ = "" if prev is None else (
+            f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
+            f"전년 같은 구간 ${prev:,.0f}M</div>")
         return (f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>{title}</div>"
-                f"<div style='font-size:19px;font-weight:700;line-height:1.2;'>{v}</div>"
+                f"<div style='font-size:19px;font-weight:700;line-height:1.2;{vcol}'>{v}</div>"
                 f"<div style='font-size:11.5px;color:{clr};font-weight:600;'>"
-                f"{_fmt_pct(yoy, '전년')}</div>")
+                f"{_fmt_pct(yoy, '전년')}</div>{sub_}")
 
     s1, s2, s3 = st.columns(3)
-    with s1:
-        st.markdown(_sumcard("수출 전체", e_cur, e_yoy), unsafe_allow_html=True)
-    with s2:
-        st.markdown(_sumcard("수입 전체", i_cur, i_yoy), unsafe_allow_html=True)
-    with s3:
+    with s1, st.container(key="mcard_td_exp"):
+        st.markdown(_sumcard("수출 전체", e_cur, e_yoy, e_prev), unsafe_allow_html=True)
+    with s2, st.container(key="mcard_td_imp"):
+        st.markdown(_sumcard("수입 전체", i_cur, i_yoy, i_prev), unsafe_allow_html=True)
+    with s3, st.container(key="mcard_td_bal"):
         # 수지는 음수가 될 수 있어 증감률 대신 전년 동기와의 차액으로 적는다 —
         # 전년이 적자였으면 %가 부호까지 뒤집혀 읽힌다.
         d = (bal - bal_prev) if (bal is not None and bal_prev is not None) else None
         bclr = "#ef5350" if (bal or 0) > 0 else "#1565C0" if (bal or 0) < 0 else "#888"
         dtxt = "전년 -" if d is None else f"전년 {'+' if d >= 0 else '−'}${abs(d):,.0f}M"
         bval = "-" if bal is None else f"${bal:,.0f}M"
+        prev_ = "" if bal_prev is None else (
+            f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
+            f"전년 같은 구간 {'−' if bal_prev < 0 else ''}${abs(bal_prev):,.0f}M</div>")
         st.markdown(
             f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>무역수지</div>"
             f"<div style='font-size:19px;font-weight:700;line-height:1.2;color:{bclr};'>"
             f"{bval}</div>"
-            f"<div style='font-size:11.5px;color:#8b98a5;font-weight:600;'>{dtxt}</div>",
+            f"<div style='font-size:11.5px;color:#8b98a5;font-weight:600;'>{dtxt}</div>"
+            f"{prev_}",
             unsafe_allow_html=True,
         )
 
+    st.markdown(
+        "<div style='font-size:11.5px;color:#8b98a5;margin:7px 0 2px;'>"
+        "아래 카드의 막대 하나가 <b style='color:#666;'>한 달</b>이고, "
+        "아래부터 <b style='color:#666;'>1~10일 · 11~20일 · 21일~말일</b>로 쌓았습니다 "
+        "— 막대 전체 높이가 그 달 합계입니다.</div>",
+        unsafe_allow_html=True,
+    )
     with st.expander("읽는 법", expanded=False):
         st.markdown(_HELP)
 
@@ -329,8 +365,12 @@ def render_tenday() -> None:
             pinc = float(df.iloc[k - 1][nm + "_inc"]) if k >= 1 else None
             mom = ((inc / pinc - 1) * 100) if (pinc and pinc > 0) else None
             clr = "#ef5350" if (yoy or 0) > 0 else "#1565C0" if (yoy or 0) < 0 else "#888"
-            share = f" · 비중 {cur / tot * 100:.1f}%" if tot > 0 else ""
-            with cols[ci]:
+            share = f"비중 {cur / tot * 100:.1f}%" if tot > 0 else ""
+            # 첫 구간(1~10일)은 누적 == 순증이라 같은 숫자를 두 번 적게 된다 —
+            # 그때는 구간 순증 줄을 빼고 비중만 남긴다.
+            seg = "" if abs(inc - cur) < 0.05 else f"구간 순증 ${inc:,.1f}M"
+            foot = " · ".join(x for x in (share, seg) if x)
+            with cols[ci], st.container(key=f"mcard_td_{nm}"):
                 st.markdown(
                     f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>"
                     f"{html.escape(nm)}</div>"
@@ -339,16 +379,18 @@ def render_tenday() -> None:
                     f"<div style='font-size:11.5px;color:{clr};font-weight:600;'>"
                     f"{_fmt_pct(yoy, '전년')}  ·  {_fmt_pct(mom, '직전 구간')}</div>"
                     f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
-                    f"구간 순증 ${inc:,.1f}M{share}</div>",
+                    f"{foot}</div>",
                     unsafe_allow_html=True,
                 )
                 st.plotly_chart(
-                    _spark(df, nm, clr),
+                    _bars(df, nm, clr),
                     use_container_width=True,
                     # staticPlot은 두지 않는다 — 마우스오버 툴팁까지 죽는다.
                     config={"displayModeBar": False, "scrollZoom": False,
                             "staticPlot": False},
                 )
 
+    # 막대 읽는 법은 그리드 바로 위 한 줄과 '읽는 법'에 이미 있다 — 여기까지
+    # 적으면 같은 말이 세 번이 된다(화면 공통 규칙).
     st.caption("출처: 관세청 10일 단위 잠정치(data.go.kr) · "
-               "숫자는 월내 누적, 선은 구간 순증 · 품목·국가는 MTI 기준 주요 11개 고정")
+               "품목·국가는 MTI 기준 주요 11개 고정")
