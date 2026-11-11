@@ -10,6 +10,24 @@ trade_tenday.py — 수출입 탭의 '10일 단위 속보' 화면 (관세청 잠
 축이 달라 월간 화면과 섞을 수 없어 화면을 나눴다 — 여기는 HS코드가 아니라
 **MTI 기준 주요 품목/국가 11개 고정**이고, 월간 화면은 세부품목 76개다.
 
+━━ ⚠️ 10일 단위는 더 세분화할 수 없다 (2026-11-12 확인) ━━
+"배터리·화장품은 없나"는 질문이 나오는 자리인데, **없고 넣을 방법도 없다.**
+10일 단위로 공개되는 품목은 아래 11개가 전부다:
+    수출: 전체 · 반도체 · 철강제품 · 승용차 · 석유제품 · 무선통신기기 ·
+          선박 · 자동차부품 · 컴퓨터주변기기 · 정밀기기 · 가전제품
+이차전지·화장품·바이오는 이 목록에 없다. data.go.kr 전수 검색에서 관세청의
+10일 단위 데이터셋은 **네 개(수출/수입 × 품목/국가)뿐**이고, HS코드별 10일
+통계는 아예 공개되지 않는다. 월간 API(`Itemtrade`)도 `strtYymm`/`endYymm`만
+받아 월보다 잘게 못 쪼갠다. 다른 소스를 찾아 헤매지 말 것.
+
+그 대신 **2차전지 9품목·화장품 5품목은 `품목별 월간` 화면에 이미 있다**
+(`trade_items.py`, HS코드 단위). 세분화가 필요하면 그쪽이다 — 대신 확정치라
+1~2개월 늦다. "세분화 ↔ 신속" 둘 중 하나만 고를 수 있는 구조다.
+
+수입·무역수지는 2026-11-12 사용자 요청으로 화면에서 뺐다(수출만). `_SRC`의
+수입 두 줄은 남아 있고 활용신청도 되어 있어, 되살리려면 '구분' 선택 상자만
+되돌리면 된다.
+
 ━━ API (data.go.kr, 전부 무료·자동승인이지만 **각각 따로 활용신청**해야 한다) ━━
     15157908 수출 주요품목별  /1220000/prlstMmUtPrviExpAcrs/getPrlstMmUtPrviExpAcrs
     15157901 수입 주요품목별  /1220000/prlstMmUtPrviImpAcrs/getPrlstMmUtPrviImpAcrs
@@ -55,6 +73,9 @@ _SRC = {
     "수출_품목": ("prlstMmUtPrviExpAcrs", "getPrlstMmUtPrviExpAcrs",
                   ("전체", "반도체", "철강제품", "승용차", "석유제품", "무선통신기기",
                    "선박", "자동차부품", "컴퓨터주변기기", "정밀기기", "가전제품")),
+    # 수입 둘은 2026-11-12 사용자 요청으로 화면에서 뺐다("무조건 수출만"). 표는
+    # 남겨 둔다 — 활용신청은 되어 있고, 되살리려면 render_tenday에 '구분' 선택
+    # 상자를 되돌리기만 하면 된다.
     "수입_품목": ("prlstMmUtPrviImpAcrs", "getPrlstMmUtPrviImpAcrs",
                   ("전체", "반도체", "원유", "기계류", "가스", "반도체 제조용장비",
                    "정밀기기", "석유제품", "무선통신기기", "승용차", "석탄")),
@@ -176,7 +197,7 @@ def _rgba(color: str, a: float) -> str:
     return f"rgba({r},{g},{b},{a})"
 
 
-def _bars(df, col: str, color: str):
+def _bars(df, col: str, color: str, height: int = 110):
     """월별 누적 막대. 한 칸이 한 달, 아래부터 1~10 / 11~20 / 21~말일.
 
     값은 `_inc`(구간 순증)를 쌓으므로 막대 전체 높이가 그 달의 월 합계가 된다.
@@ -202,7 +223,7 @@ def _bars(df, col: str, color: str):
         ))
     fig.update_layout(
         barmode="stack", bargap=0.18,
-        height=110, margin=dict(l=0, r=4, t=4, b=18),
+        height=height, margin=dict(l=0, r=4, t=4, b=18),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         dragmode=False, hovermode="closest",
         xaxis=dict(tickmode="array", tickvals=x[::6], ticklen=0,
@@ -214,26 +235,6 @@ def _bars(df, col: str, color: str):
     return fig
 
 
-_HELP = r"""
-**막대 하나가 한 달입니다.** 아래부터 1\~10일 · 11\~20일 · 21일\~말일 순으로 쌓아
-막대 전체 높이가 그 달 합계가 됩니다. 색이 진한 아래쪽이 이른 구간입니다.
-진행 중인 달은 받은 구간까지만 서 있어, 월초 열흘이 지난 달과 견줘 어느
-정도인지 그대로 보입니다.
-
-**카드의 큰 숫자는 월내 누적입니다.** 원자료가 1\~10일 → 1\~20일 →
-1\~말일로 쌓여 오기 때문입니다. 막대는 그걸 차분해 구간별로 돌려놓은 것이라,
-막대 셋을 더하면 그 달 1\~말일 누적과 같습니다.
-
-**비교는 전년 동기끼리 합니다.** 수출은 계절성과 조업일수 영향이 커서 직전
-구간과만 비교하면 방향이 뒤집힙니다 — 추석이 낀 달의 1\~10일이 대표적입니다.
-그래서 카드 색은 전년 **같은 월·같은 구간** 기준입니다. 보조로 적는 '직전 구간'은
-바로 앞 10일치와의 비교인데, 말일 구간만 10\~11일이라 길이가 하루 다를 수 있습니다.
-
-**잠정치입니다.** 통관 기준으로 뒤에 정정되고, 확정치는 '품목별 월간' 화면
-쪽입니다. 품목·국가도 MTI 기준 주요 11개 고정이라 세부품목 단위로는 못 쪼갭니다.
-"""
-
-
 # ── 화면 ─────────────────────────────────────────────────────────────────────
 def clear_cache() -> None:
     _get.clear()
@@ -242,118 +243,76 @@ def clear_cache() -> None:
 def render_tenday() -> None:
     # ⚠️ st.caption은 마크다운이라 ~로 감싼 구간이 **취소선**이 된다("1~10일은 11일 ·
     #    1~20일"이 통째로 그어졌다, 2026-11-11 실측). 물결표는 백슬래시로 escape한다.
-    st.caption("관세청 10일 단위 잠정치 · 1\\~10일은 11일 · 1\\~20일은 21일 · "
+    st.caption("관세청 수출 10일 단위 잠정치 · 1\\~10일은 11일 · 1\\~20일은 21일 · "
                "월 전체는 익월 1일 공표 · 2016년 1월부터 · 1시간 캐시")
 
     api_key = st.secrets.get("DATA_GO_KR_KEY", "")
     spans = {"1년": 1, "2년": 2, "3년": 3, "5년": 5, "10년": 10}
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
-        flow = st.selectbox("구분", ["수출", "수입"], key="td_flow")
-    with c2:
         axis = st.selectbox("기준", ["품목별", "국가별"], key="td_axis")
-    with c3:
+    with c2:
         span = st.selectbox("기간", list(spans), index=2, key="td_span")
-    disable_keyboard("td_flow", "td_axis", "td_span")
+    disable_keyboard("td_axis", "td_span")
 
     now = datetime.now()
     b = f"{now.year}{now.month:02d}"
     a = max(_ym_add(b, -12 * spans[span]), _START)
-    kind = f"{flow}_{'품목' if axis == '품목별' else '국가'}"
+    kind = f"수출_{'품목' if axis == '품목별' else '국가'}"
 
-    # 요약 줄의 무역수지 때문에 수출·수입 '전체'를 늘 같이 받는다(캐시 1시간이라
-    # 화면을 오가도 다시 받지 않는다).
-    jobs = {
-        "main": lambda: _get(api_key, kind, a, b),
-        "수출": lambda: _get(api_key, "수출_품목", a, b),
-        "수입": lambda: _get(api_key, "수입_품목", a, b),
-    }
-    res = run_with_progress(jobs, "10일 단위 잠정치 불러오는 중", show_after=_SHOW_AFTER)
-    bad = [k for k, v in res.items() if isinstance(v, Exception)]
-    if bad:
-        err = res[bad[0]]
-        st.error(f"❌ 10일 단위 통계를 가져오지 못했습니다 — {type(err).__name__}: {err}")
+    res = run_with_progress({"main": lambda: _get(api_key, kind, a, b)},
+                            "10일 단위 잠정치 불러오는 중", show_after=_SHOW_AFTER)
+    df = res["main"]
+    if isinstance(df, Exception):
+        st.error(f"❌ 10일 단위 통계를 가져오지 못했습니다 — {type(df).__name__}: {df}")
         st.caption("data.go.kr에서 해당 API 활용신청이 되어 있는지 확인하세요 "
-                   "(수출·수입 × 품목별·국가별이 각각 별도 신청입니다).")
+                   "(품목별·국가별이 각각 별도 신청입니다).")
         return
 
-    df, exp, imp = res["main"], res["수출"], res["수입"]
     names = [n for n in _SRC[kind][2] if n != "전체"]
+    k = len(df) - 1
 
-    # ── 요약: 최신 구간의 수출 · 수입 · 무역수지 ──────────────────────────────
-    i = len(exp) - 1
-    row = exp.iloc[i]
-    jm = imp.index[(imp["ym"] == row["ym"]) & (imp["seq"] == row["seq"])]
-    j = int(jm[0]) if len(jm) else None
+    # ── 수출 전체 (넓은 카드 한 장) ───────────────────────────────────────────
+    # 수입·무역수지는 2026-11-12 사용자 요청으로 뺐다. 비워진 자리를 '전체'에 주어
+    # 그리드에서 빠져 있던 합계를 큰 막대 한 장으로 띄운다 — 품목 카드가 11개 중
+    # 10개뿐이라 "그래서 수출 전체는 얼마냐"가 숫자 한 줄로만 있었다.
+    tot = float(df.iloc[k]["전체"])
+    t_yoy = _yoy(df, "전체", k)
+    t_prev = _prev_year(df, "전체", k)
+    t_inc = float(df.iloc[k]["전체_inc"])
+    p_inc = float(df.iloc[k - 1]["전체_inc"]) if k >= 1 else None
+    t_mom = ((t_inc / p_inc - 1) * 100) if (p_inc and p_inc > 0) else None
+    tclr = "#ef5350" if (t_yoy or 0) > 0 else "#1565C0" if (t_yoy or 0) < 0 else "#888"
 
-    e_cur, e_yoy = float(row["전체"]), _yoy(exp, "전체", i)
-    i_cur = float(imp.iloc[j]["전체"]) if j is not None else None
-    i_yoy = _yoy(imp, "전체", j) if j is not None else None
-    bal = (e_cur - i_cur) if i_cur is not None else None
-    e_prev = _prev_year(exp, "전체", i)
-    i_prev = _prev_year(imp, "전체", j) if j is not None else None
-    bal_prev = (e_prev - i_prev) if (e_prev is not None and i_prev is not None) else None
-
-    st.markdown(
-        f"<div style='font-size:12px;color:#888;margin:2px 0 8px;'>"
-        f"최신 <b style='color:#555;'>{row['label']}</b> · "
-        f"전년 같은 월·같은 구간 대비 · 통관 잠정치</div>",
-        unsafe_allow_html=True,
-    )
-
-    # 카드는 st.container(key="mcard_…")로 감싼다 — app.py 전역 CSS 3-3이 옅은
-    # 테두리를 두르고 한 줄 안 높이를 맞춘다. 테두리가 없을 땐 셋이 그냥 흘러
-    # 있어 어디까지가 한 카드인지, 아래 '읽는 법'이 무엇에 딸린 건지 흐렸다.
-    def _sumcard(title, val, yoy, prev, color=None):
-        clr = "#ef5350" if (yoy or 0) > 0 else "#1565C0" if (yoy or 0) < 0 else "#888"
-        v = "-" if val is None else f"${val:,.0f}M"
-        vcol = f"color:{color};" if color else ""
-        sub_ = "" if prev is None else (
-            f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
-            f"전년 같은 구간 ${prev:,.0f}M</div>")
-        return (f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>{title}</div>"
-                f"<div style='font-size:19px;font-weight:700;line-height:1.2;{vcol}'>{v}</div>"
-                f"<div style='font-size:11.5px;color:{clr};font-weight:600;'>"
-                f"{_fmt_pct(yoy, '전년')}</div>{sub_}")
-
-    s1, s2, s3 = st.columns(3)
-    with s1, st.container(key="mcard_td_exp"):
-        st.markdown(_sumcard("수출 전체", e_cur, e_yoy, e_prev), unsafe_allow_html=True)
-    with s2, st.container(key="mcard_td_imp"):
-        st.markdown(_sumcard("수입 전체", i_cur, i_yoy, i_prev), unsafe_allow_html=True)
-    with s3, st.container(key="mcard_td_bal"):
-        # 수지는 음수가 될 수 있어 증감률 대신 전년 동기와의 차액으로 적는다 —
-        # 전년이 적자였으면 %가 부호까지 뒤집혀 읽힌다.
-        d = (bal - bal_prev) if (bal is not None and bal_prev is not None) else None
-        bclr = "#ef5350" if (bal or 0) > 0 else "#1565C0" if (bal or 0) < 0 else "#888"
-        dtxt = "전년 -" if d is None else f"전년 {'+' if d >= 0 else '−'}${abs(d):,.0f}M"
-        bval = "-" if bal is None else f"${bal:,.0f}M"
-        prev_ = "" if bal_prev is None else (
-            f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
-            f"전년 같은 구간 {'−' if bal_prev < 0 else ''}${abs(bal_prev):,.0f}M</div>")
+    with st.container(key="mcard_td_all"):
+        prev_line = ("" if t_prev is None else
+                     f"<div style='font-size:11px;color:#8b98a5;margin-top:1px;'>"
+                     f"전년 같은 구간 ${t_prev:,.0f}M</div>")
         st.markdown(
-            f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>무역수지</div>"
-            f"<div style='font-size:19px;font-weight:700;line-height:1.2;color:{bclr};'>"
-            f"{bval}</div>"
-            f"<div style='font-size:11.5px;color:#8b98a5;font-weight:600;'>{dtxt}</div>"
-            f"{prev_}",
+            f"<div style='font-size:12px;color:#888;margin-bottom:1px;'>"
+            f"수출 전체 · <b style='color:#555;'>{df.iloc[k]['label']}</b> 누적</div>"
+            f"<div style='font-size:22px;font-weight:700;line-height:1.2;'>"
+            f"${tot:,.0f}M</div>"
+            f"<div style='font-size:12px;color:{tclr};font-weight:600;'>"
+            f"{_fmt_pct(t_yoy, '전년')}  ·  {_fmt_pct(t_mom, '직전 구간')}</div>"
+            f"{prev_line}",
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(_bars(df, "전체", tclr, height=170), use_container_width=True,
+                        config={"displayModeBar": False, "scrollZoom": False,
+                                "staticPlot": False})
+        # 막대 읽는 법은 여기 한 줄로 끝낸다 — '읽는 법' 펼침은 2026-11-12에 뺐다
+        # (카드가 스스로 말하는 그림이라 글이 더 길었다).
+        st.markdown(
+            "<div style='font-size:11px;color:#8b98a5;'>"
+            "막대 하나가 <b style='color:#666;'>한 달</b> · 아래부터 "
+            "<b style='color:#666;'>1~10일 · 11~20일 · 21일~말일</b>로 쌓아 "
+            "전체 높이가 그 달 합계 · 진행 중인 달은 받은 구간까지만</div>",
             unsafe_allow_html=True,
         )
 
-    st.markdown(
-        "<div style='font-size:11.5px;color:#8b98a5;margin:7px 0 2px;'>"
-        "아래 카드의 막대 하나가 <b style='color:#666;'>한 달</b>이고, "
-        "아래부터 <b style='color:#666;'>1~10일 · 11~20일 · 21일~말일</b>로 쌓았습니다 "
-        "— 막대 전체 높이가 그 달 합계입니다.</div>",
-        unsafe_allow_html=True,
-    )
-    with st.expander("읽는 법", expanded=False):
-        st.markdown(_HELP)
-
     # ── 품목 / 국가 카드 ─────────────────────────────────────────────────────
-    k = len(df) - 1
-    tot = float(df.iloc[k]["전체"]) or 0.0
     ranked = sorted(names, key=lambda n: (_yoy(df, n, k) is None, -(_yoy(df, n, k) or 0)))
 
     for start in range(0, len(ranked), _COLS):
@@ -365,7 +324,7 @@ def render_tenday() -> None:
             pinc = float(df.iloc[k - 1][nm + "_inc"]) if k >= 1 else None
             mom = ((inc / pinc - 1) * 100) if (pinc and pinc > 0) else None
             clr = "#ef5350" if (yoy or 0) > 0 else "#1565C0" if (yoy or 0) < 0 else "#888"
-            share = f"비중 {cur / tot * 100:.1f}%" if tot > 0 else ""
+            share = f"비중 {cur / tot * 100:.1f}%" if tot > 0 else ""   # tot = 전체
             # 첫 구간(1~10일)은 누적 == 순증이라 같은 숫자를 두 번 적게 된다 —
             # 그때는 구간 순증 줄을 빼고 비중만 남긴다.
             seg = "" if abs(inc - cur) < 0.05 else f"구간 순증 ${inc:,.1f}M"
