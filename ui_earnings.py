@@ -9,6 +9,7 @@ from github import Github, UnknownObjectException
 
 from earnings_store import available_quarters, load_quarter
 from ui_mobile import disable_keyboard
+from ui_common import naver_link as _naver_link
 
 BASE_DIR = Path(__file__).parent
 FAVORITES_FILE = "data/earnings/favorites.json"
@@ -21,6 +22,48 @@ FAVORITES_BRANCH = "batch-state"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 BATCH_CONFIG_FILE = "data/earnings/batch_config.json"
 LOCAL_BATCH_CONFIG_FILE = BASE_DIR / "data" / "earnings" / "batch_config.json"
+
+
+# ── 종목명 → 네이버 금융 링크 ────────────────────────────────────────────────
+# ⚠️ 실적 데이터의 '코드'는 `A` + **5자리**로, 6자리 종목코드의 **끝 한 자리가 잘려**
+#    있다(자연과환경 043910 → 'A04391', 세중 039310 → 'A03931'). 뒤에 0을 붙여
+#    복원하지 말 것 — 005935처럼 끝자리가 0이 아닌 종목이 있어 다른 회사로 간다.
+#    종목목록에서 **이름으로 찾고 그 5자리가 맞는지 교차 확인**한다.
+#    사명이 바뀌어 이름으로 못 찾으면 5자리 후보가 **하나뿐일 때만** 그걸 쓴다
+#    (한국전력공사→한국전력, 케이티앤지→KT&G, 공구우먼→나인앤컴퍼니 …).
+#    2026-11-14 실측 2,270쌍: 이름 2,180건(5자리 전부 일치, 불일치 0) + 사명변경
+#    67건이 연결되고, 후보가 둘인 5건과 상장폐지 18건은 링크를 달지 않는다.
+@st.cache_data(ttl=86400, show_spinner=False)
+def _code_index():
+    """({공백 없는 종목명: [코드…]}, {코드 앞 5자리: [코드…]}). 실패하면 빈 dict 둘."""
+    try:
+        from krx_listing import fetch_krx_listing
+        df = fetch_krx_listing()
+        by_name, by_pref = {}, {}
+        for c, n in zip(df["Code"].astype(str), df["Name"].astype(str)):
+            c = c.zfill(6)
+            by_name.setdefault("".join(n.split()), []).append(c)
+            by_pref.setdefault(c[:5], []).append(c)
+        return by_name, by_pref
+    except Exception as e:
+        print(f"[ui_earnings] 종목목록 조회 실패(링크 생략): {type(e).__name__}: {e}")
+        return {}, {}
+
+
+def _stock_href(name: str, stored: str) -> str:
+    """네이버 금융 주소. 확실하지 않으면 빈 문자열(링크 없이 이름만 찍힌다)."""
+    by_name, by_pref = _code_index()
+    prefix = str(stored or "").lstrip("A")[:5]
+    cands = by_name.get("".join(str(name).split())) or []
+    if len(prefix) != 5:
+        code = cands[0] if len(cands) == 1 else ""
+    elif cands:
+        hit = [c for c in cands if c.startswith(prefix)]
+        code = hit[0] if len(hit) == 1 else ""
+    else:
+        hit = by_pref.get(prefix) or []
+        code = hit[0] if len(hit) == 1 else ""
+    return _naver_link(code, name).split("#")[0] if code else ""
 
 @st.cache_resource
 def get_github_repo():
@@ -323,6 +366,16 @@ def render_earnings_menu():
         qoq_colored = f"<span style='color: {get_growth_color(qoq)}; font-weight: 600;'>{qoq}</span>" if qoq else "-"
         growth_html = f"<span style='font-size: 12px; color: #888; margin-left: 10px;'>YoY {yoy_colored} &nbsp;|&nbsp; QoQ {qoq_colored}</span>"
 
+        # 종목명을 네이버 금융으로(2026-11-14 요청). <summary> 안의 <a>지만 크롬이
+        # 앵커 활성화를 먼저 처리해서 **카드가 같이 펼쳐지지는 않는다**(실측: 링크를
+        # 클릭해도 details.open이 그대로). 원문 펼침은 이름 바깥을 눌러야 열린다.
+        name_html = html.escape(corp_name)
+        href = _stock_href(corp_name, code)
+        if href:
+            name_html = (f"<a href='{href}' target='_blank' rel='noopener noreferrer' "
+                         f"style='color:inherit;text-decoration:none;"
+                         f"border-bottom:1px dotted #bbb;'>{name_html}</a>")
+
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
         card_border, card_bg = ('#FFD700', '#FFFDF0') if is_fav else ('#e0e0e0', '#ffffff')
 
@@ -331,7 +384,7 @@ def render_earnings_menu():
             <summary style='cursor: pointer; list-style: none; outline: none; padding: 12px 12px 12px 42px; box-sizing: border-box;'>
                 <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>
                     <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>
-                        <span style='font-size: 16px; font-weight: bold; color: #222;'>{html.escape(corp_name)}</span>
+                        <span style='font-size: 16px; font-weight: bold; color: #222;'>{name_html}</span>
                         <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>
                         <span style='font-size: 11px; color: #aaa;'>{short_time}</span>
                     </div>

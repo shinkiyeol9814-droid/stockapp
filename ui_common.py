@@ -17,6 +17,29 @@ import streamlit as st
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 
+# ── 종목명 → 네이버 금융 링크 ────────────────────────────────────────────────
+# st.dataframe/data_editor의 셀에는 HTML을 못 넣고, LinkColumn이 글자를 정하는
+# 수단은 **URL에 거는 정규식(display_text)** 하나뿐이다. 그래서 종목명을 URL
+# 프래그먼트(#이름)로 실어 보내고 거기서 되뽑는다. 프래그먼트는 서버로 전송되지
+# 않으므로 네이버 요청에는 아무 영향이 없다(ui_surge가 먼저 쓰던 방법).
+NAVER_ITEM = "https://finance.naver.com/item/main.naver?code={code}"
+NAME_FROM_URL = r"#(.+)$"      # LinkColumn(display_text=...)에 그대로 넘긴다
+
+
+def naver_link(code, name=None) -> str:
+    """'…?code=005930#삼성전자'. 코드가 없으면 빈 문자열(칸이 비고 링크도 없다)."""
+    c = str(code or "").strip()
+    if not c.isdigit() or len(c) != 6:
+        return ""
+    # 이름이 비면 정규식이 안 걸려 URL이 통째로 보이므로 코드로 메운다.
+    return NAVER_ITEM.format(code=c) + "#" + (str(name).strip() or c)
+
+
+def naver_name_column(label: str = "종목명", **kw):
+    """종목명 자리에 쓰는 LinkColumn. 호출부가 column_config에 그대로 넣는다."""
+    return st.column_config.LinkColumn(label, display_text=NAME_FROM_URL, **kw)
+
+
 def page_header(title: str, key: str, refresh: bool = True) -> bool:
     """
     페이지 제목 + 오른쪽 작은 정사각형 새로고침 버튼. 눌렸으면 True.

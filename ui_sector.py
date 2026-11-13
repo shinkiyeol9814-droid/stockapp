@@ -4,7 +4,7 @@ ui_sector.py — 섹터(업종)별 등락률 탭.
 많이 오르고/내리고 있는지 한눈에 보여준다.
 """
 import streamlit as st
-from ui_common import section_title
+from ui_common import section_title, naver_link, naver_name_column
 import pandas as pd
 import requests
 import re
@@ -131,7 +131,9 @@ def get_sector_stocks(no: str):
         # int()로 다시 포맷하므로 여기서 "2,135" 같은 문자열을 주면 거기서
         # ValueError로 죽는다.
         out = pd.DataFrame({
-            "종목명": g["Name"].astype(str),
+            # 종목명 자체가 네이버 금융 링크다(2026-11-14 요청).
+            "종목명": [naver_link(c, n)
+                       for c, n in zip(g["Code"].astype(str), g["Name"].astype(str))],
             "현재가": pd.to_numeric(g["Close"], errors="coerce"),
             "등락률": g["ChagesRatio"].map(lambda v: f"{v:+.2f}%"),
             "등락률_num": g["ChagesRatio"].astype(float),
@@ -460,5 +462,7 @@ def render_sector_section():
         lambda v: f"{int(v):,}원" if pd.notna(v) else "-"
     )
     st.dataframe(stock_display.style.map(_color_change, subset=["등락률"]),
+                 column_config={"종목명": naver_name_column(
+                     "종목명", help="누르면 네이버 금융 종목 페이지가 열린다")},
                  use_container_width=True, hide_index=True,
                  height=min(400, 40 + 35 * len(stock_display)))

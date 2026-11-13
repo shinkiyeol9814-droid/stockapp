@@ -1,5 +1,5 @@
 import streamlit as st
-from ui_common import page_header, section_title
+from ui_common import page_header, section_title, naver_link, naver_name_column
 from ui_sector import clear_sector_cache, render_sector_section
 import pandas as pd
 import json
@@ -135,6 +135,10 @@ def _render_new_high_body():
         hit = notion.get("".join(str(name).split()))
         return f"{hit[0]}#{hit[1] or '노션'}" if hit else ""   # None이면 칸에 회색 'None'이 찍힌다
     disp_df['노션'] = disp_df['종목명'].map(_notion_link)
+    # 종목명 자체가 네이버 금융 링크다(2026-11-14 요청). 표 셀에는 HTML을 못 넣어서
+    # 이름을 URL 프래그먼트로 실어 보낸다 — ui_common.naver_link 머리말 참고.
+    disp_df['종목명'] = [naver_link(c, n)
+                         for c, n in zip(disp_df['코드'], disp_df['종목명'])]
     disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
     
     section_title(f"통합 분석 결과 ({len(filtered_df)}건)")
@@ -147,7 +151,8 @@ def _render_new_high_body():
         # 💡 [핵심] 요청하신 순서대로 컬럼 배열 완벽 변경! (버튼들은 맨 뒤로)
         disp_df[['종목명', '노션', '등락률', '시가총액', '추정 사유', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크', '코드']],
         column_config={
-            "종목명": st.column_config.TextColumn("종목명", width="small"),
+            "종목명": naver_name_column("종목명", width="small",
+                                         help="누르면 네이버 금융 종목 페이지가 열린다"),
             "노션": st.column_config.LinkColumn(
                 "노션", display_text=r"#(.+)$", width="small",
                 help="노션 기업분석 DB에 있는 종목 — 등급이 보이고, 누르면 그 페이지가 열린다"),
