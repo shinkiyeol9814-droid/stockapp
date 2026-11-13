@@ -8,7 +8,7 @@ import requests
 import base64
 
 from ui_mobile import disable_keyboard
-from ui_company import notion_db_index
+from ui_company import notion_grade_links, notion_grade_column
 
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
@@ -125,16 +125,8 @@ def _render_new_high_body():
     
     disp_df['가치평가_이동'] = "/?stock_code=" + disp_df['코드']
     # 노션 기업분석 DB에 있는 종목은 그 페이지로 — 링크 글자는 노션의 등급(A·B+…).
-    # LinkColumn은 글자를 URL에서 정규식으로만 뽑을 수 있어 등급을 프래그먼트(#A)로 싣는다
-    # (ui_surge 종목명 링크와 같은 방법). 노션을 못 읽어도 표는 링크 없이 그대로 뜬다.
-    try:
-        notion = notion_db_index()
-    except Exception:
-        notion = {}
-    def _notion_link(name):
-        hit = notion.get("".join(str(name).split()))
-        return f"{hit[0]}#{hit[1] or '노션'}" if hit else ""   # None이면 칸에 회색 'None'이 찍힌다
-    disp_df['노션'] = disp_df['종목명'].map(_notion_link)
+    # 섹터·거래급증·투신·실적도 같은 헬퍼를 쓴다(ui_company 머리말 참고).
+    disp_df['노션'] = notion_grade_links(disp_df['종목명'])
     # 종목명 자체가 네이버 금융 링크다(2026-11-14 요청). 표 셀에는 HTML을 못 넣어서
     # 이름을 URL 프래그먼트로 실어 보낸다 — ui_common.naver_link 머리말 참고.
     disp_df['종목명'] = [naver_link(c, n)
@@ -153,9 +145,7 @@ def _render_new_high_body():
         column_config={
             "종목명": naver_name_column("종목명", width="small",
                                          help="누르면 네이버 금융 종목 페이지가 열린다"),
-            "노션": st.column_config.LinkColumn(
-                "노션", display_text=r"#(.+)$", width="small",
-                help="노션 기업분석 DB에 있는 종목 — 등급이 보이고, 누르면 그 페이지가 열린다"),
+            "노션": notion_grade_column(),
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
             "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
             "시가총액": st.column_config.TextColumn("시가총액"),

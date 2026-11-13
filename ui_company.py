@@ -132,6 +132,41 @@ def notion_db_index() -> dict:
     return out
 
 
+# ── 노션 등급 열 (다른 탭이 가져다 쓴다) ────────────────────────────────────
+# 신고가 표가 먼저 쓰던 모양을 2026-11-14에 섹터·거래급증·투신·실적으로 넓혔다.
+# 표 셀에는 HTML을 못 넣고 LinkColumn이 글자를 정하는 수단은 URL에 거는 정규식
+# 하나뿐이라, 등급을 프래그먼트(#A)로 실어 보내고 거기서 되뽑는다
+# (종목명 링크와 같은 방법 — ui_common.naver_link 머리말 참고).
+NOTION_GRADE_HELP = "노션 기업분석 DB에 있는 종목 — 등급이 보이고, 누르면 그 페이지가 열린다"
+
+
+def notion_grade_map() -> dict:
+    """{공백 뺀 종목명: (주소, 등급)}. 실패는 삼킨다 — 등급은 덤이라 노션이 막혔다고
+    표가 통째로 안 뜨면 안 된다(notion_db_index 자체는 예외를 올린다)."""
+    try:
+        return notion_db_index()
+    except Exception as e:
+        print(f"[ui_company] 노션 등급 조회 실패(열은 비워 둔다): {type(e).__name__}: {e}")
+        return {}
+
+
+def notion_grade_links(names) -> list:
+    """종목명 목록 -> '주소#등급' 목록. 노션은 한 번만 읽는다. 없으면 빈 문자열."""
+    m = notion_grade_map()
+    out = []
+    for n in names:
+        hit = m.get("".join(str(n).split()))
+        # 등급이 비어 있어도 링크는 살린다 — 정규식이 안 걸리면 URL이 통째로 보인다.
+        out.append(f"{hit[0]}#{hit[1] or '노션'}" if hit else "")
+    return out
+
+
+def notion_grade_column(label: str = "노션", width="small"):
+    """표의 등급 열. 호출부가 column_config에 그대로 넣는다."""
+    return st.column_config.LinkColumn(label, display_text=r"#(.+)$", width=width,
+                                       help=NOTION_GRADE_HELP)
+
+
 _FRAME_H = 900
 
 # 진행률 모양은 st.progress(run_with_progress)와 같게 — 글자 + 얇은 빨간 막대.

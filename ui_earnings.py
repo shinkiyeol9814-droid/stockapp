@@ -10,6 +10,7 @@ from github import Github, UnknownObjectException
 from earnings_store import available_quarters, load_quarter
 from ui_mobile import disable_keyboard
 from ui_common import naver_link as _naver_link
+from ui_company import notion_grade_map
 
 BASE_DIR = Path(__file__).parent
 FAVORITES_FILE = "data/earnings/favorites.json"
@@ -298,6 +299,9 @@ def render_earnings_menu():
     st.caption(f"📊 **{st.session_state.ea_quarter}** 기준 총 **{total_items}**개 · {len(display_results)}개 표시")
     st.divider()
 
+    # 노션 등급은 카드마다 조회하지 않고 한 번만 읽는다(10분 캐시).
+    notion = notion_grade_map()
+
     for row in display_results:
         corp_name = row.get('종목명', '')
         code = row.get('코드', '')
@@ -376,6 +380,17 @@ def render_earnings_menu():
                          f"style='color:inherit;text-decoration:none;"
                          f"border-bottom:1px dotted #bbb;'>{name_html}</a>")
 
+        # 노션 기업분석 DB에 있으면 등급 알약 — 표의 '노션' 열과 같은 것(2026-11-14 요청).
+        hit = notion.get("".join(str(corp_name).split()))
+        grade_html = ""
+        if hit:
+            grade_html = (
+                f"<a href='{html.escape(hit[0], quote=True)}' target='_blank' "
+                f"rel='noopener noreferrer' style='font-size:11px;font-weight:700;"
+                f"color:#555;border:1px solid #d7d7e0;border-radius:4px;"
+                f"padding:0 5px;text-decoration:none;white-space:nowrap;'>"
+                f"{html.escape(hit[1] or '노션')}</a>")
+
         short_time = pub_time[5:16] if len(pub_time) >= 16 else pub_time
         card_border, card_bg = ('#FFD700', '#FFFDF0') if is_fav else ('#e0e0e0', '#ffffff')
 
@@ -384,7 +399,7 @@ def render_earnings_menu():
             <summary style='cursor: pointer; list-style: none; outline: none; padding: 12px 12px 12px 42px; box-sizing: border-box;'>
                 <div style='display: flex; flex-direction: column; gap: 6px; width: 100%;'>
                     <div style='display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%;'>
-                        <span style='font-size: 16px; font-weight: bold; color: #222;'>{name_html}</span>
+                        <span style='font-size: 16px; font-weight: bold; color: #222;'>{name_html}</span>{grade_html}
                         <span style='color: {status_color}; font-weight: 900; font-size: 12.5px;'>{surf_status}</span>
                         <span style='font-size: 11px; color: #aaa;'>{short_time}</span>
                     </div>

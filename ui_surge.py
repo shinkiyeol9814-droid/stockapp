@@ -29,6 +29,7 @@ import requests
 import streamlit as st
 
 from ui_common import page_header
+from ui_company import notion_grade_links, notion_grade_column
 from ui_mobile import disable_keyboard
 
 # Pages가 1순위(CDN), 실패하면 raw. 둘 다 공개 URL이라 토큰이 필요 없다.
@@ -147,6 +148,8 @@ _TABLE_COLS = {
     # 전송되지 않으므로 네이버 요청에는 아무 영향이 없다.
     # 폭은 픽셀로 — "medium"(약 200px)은 이름에 비해 빈칸이 너무 컸다.
     "종목":        dict(kind="namelink", label="종목", width=110),
+    # 노션 기업분석 DB의 등급 — 신고가 표와 같은 열(2026-11-14 요청).
+    "노션":        dict(kind="notion", label="노션", width="small"),
     "등락률":      dict(kind="num",    label="등락률", fmt="%+.2f%%", width="small"),
     "3개월":       dict(kind="chart",  label="3개월 종가"),
     "최근 뉴스":   dict(kind="text",   label="최근 뉴스", width="large"),
@@ -174,6 +177,7 @@ def _table_df(rows) -> pd.DataFrame:
             # 이름이 비면 정규식이 안 걸려 URL이 그대로 보이므로 코드로 메운다.
             "종목": (f"https://finance.naver.com/item/main.naver?code={r['code']}"
                      f"#{str(st_.get('n') or r['code'])}"),
+            "노션": str(st_.get("n") or ""),      # 아래에서 링크로 바꾼다
             "최근 뉴스": str(nw[0]) if nw else "",
             "3개월": closes or None,
             "배수": float(r["mult"] or 0),
@@ -183,7 +187,10 @@ def _table_df(rows) -> pd.DataFrame:
             "거래대금(억)": float(r["value"] or 0),
             "회전율": float(r["turn"] or 0),
         })
-    return pd.DataFrame(out, columns=list(_TABLE_COLS))
+    df = pd.DataFrame(out, columns=list(_TABLE_COLS))
+    # 노션은 행마다 부르지 않고 한 번만 읽는다(10분 캐시).
+    df["노션"] = notion_grade_links(df["노션"])
+    return df
 
 
 def _render_table(rows) -> None:
@@ -195,6 +202,8 @@ def _render_table(rows) -> None:
             cfg[col] = st.column_config.NumberColumn(label, format=spec["fmt"], width=width)
         elif kind == "chart":
             cfg[col] = st.column_config.LineChartColumn(label, width=width)
+        elif kind == "notion":
+            cfg[col] = notion_grade_column(label, width=width)
         elif kind == "namelink":
             cfg[col] = st.column_config.LinkColumn(label, display_text=_NAME_FROM_URL,
                                                    width=width,
@@ -376,6 +385,7 @@ def _render_flow_table(rows: list, nd: int, box: float) -> None:
     df = pd.DataFrame([{
         "종목": (f"https://finance.naver.com/item/main.naver?code={r['code']}"
                  f"#{str(r.get('n') or r['code'])}"),
+        "노션": str(r.get("n") or ""),        # 아래에서 링크로 바꾼다
         "추이": _flow_bars_uri(r.get("s")),
         "3개월": [k[3] for k in (r.get("ohlc") or [])] or None,
         "순매수(억)": float(r.get("net") or 0),
@@ -387,10 +397,12 @@ def _render_flow_table(rows: list, nd: int, box: float) -> None:
         "등락률": float(r.get("c") or 0),
         "시총(억)": float(r.get("cap") or 0),
     } for r in rows])
+    df["노션"] = notion_grade_links(df["노션"])
     cc = st.column_config
     cfg = {
         "종목": cc.LinkColumn("종목", display_text=_NAME_FROM_URL, width=110,
                              help="누르면 네이버 금융 종목 페이지가 열립니다"),
+        "노션": notion_grade_column(),
         "추이": cc.ImageColumn("투신 순매수 추이", width=100,
                               help=f"최근 {nd}거래일 — 위 빨강 순매수, 아래 파랑 순매도"),
         "3개월": cc.LineChartColumn("3개월 종가"),
