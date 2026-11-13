@@ -133,7 +133,7 @@ def _render_new_high_body():
         notion = {}
     def _notion_link(name):
         hit = notion.get("".join(str(name).split()))
-        return f"{hit[0]}#{hit[1] or '노션'}" if hit else None
+        return f"{hit[0]}#{hit[1] or '노션'}" if hit else ""   # None이면 칸에 회색 'None'이 찍힌다
     disp_df['노션'] = disp_df['종목명'].map(_notion_link)
     disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
     
