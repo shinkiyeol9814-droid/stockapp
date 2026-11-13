@@ -20,12 +20,21 @@ UUID 꼴이어도 된다. 값이 있는데 못 쓰면 이유를 화면에 보인
 iframe 안 진행 상황은 다른 출처라 읽을 수 없으므로, 진행률은 경과 시간으로 추정해 올리다가(최대 95%)
 iframe load 뒤 데이터 요청 몫(0.9초)을 더 기다려 100%로 닫는다.
 
+━━ 다른 탭에서 쓰는 종목 목록 (notion_db_index, 2026-11-13) ━━
+신고가 표가 "노션 DB에 있는 종목"을 링크하려고 DB 행(종목명·등급·페이지 주소)을 읽는다. 공식 API는
+통합(integration) 토큰이 따로 필요해서, 웹에 게시된 페이지가 스스로 부르는 공개 엔드포인트
+({워크스페이스}.notion.site/api/v3 — loadCachedPageChunkV2로 DB 블록 → queryCollection으로 행)를 쓴다.
+게시를 끄면 빈 목록이 되고(링크만 사라짐), 문서화된 API가 아니라 노션이 바꾸면 깨질 수 있다 — 그때도
+표는 링크 없이 그대로 뜬다. 행 페이지는 {워크스페이스}.notion.site/{페이지ID}로 공개 열람된다.
+
 Secrets가 없으면 새 탭으로 여는 버튼만 보인다(NOTION_DB_URL, 없으면 아래 기본 링크 —
 워크스페이스 링크라 로그인한 본인만 열린다).
 """
 import html
 import re
+import uuid
 
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -70,6 +79,57 @@ def _why_not(raw: str) -> str:
                 "노션에서 <b>공유 → 게시 → 웹에 게시</b>를 켠 뒤 나오는 "
                 "<code>…notion.site/…</code> 주소(또는 임베드 코드)를 넣어 주세요.")
     return "노션 웹 게시 주소(<code>https://….notion.site/…</code>) 형태가 아닙니다."
+
+
+def _notion_ids(raw: str):
+    """시크릿 값 → (워크스페이스 주소, DB 블록 ID, 보기 ID|None). 못 읽으면 None."""
+    url = _embed_url(raw)
+    m = re.match(r"(https://[\w-]+\.notion\.site)/ebd/([0-9a-f]{32})(?:\?v=([0-9a-f]{32}))?", url)
+    return (m.group(1), m.group(2), m.group(3)) if m else None
+
+
+def _rec(rm: dict, table: str, rid: str) -> dict:
+    v = (rm.get(table, {}).get(rid) or {}).get("value") or {}
+    return v.get("value", v)        # 응답이 value를 한 번 더 감싸는 경우가 있다
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def notion_db_index() -> dict:
+    """{공백 뺀 종목명: (행 페이지 주소, 등급|"")} — 게시된 기업분석 DB의 모든 행.
+    시크릿이 없으면 {}. 네트워크·응답 오류는 예외로(빈 결과를 10분 붙잡지 않게)."""
+    ids = _notion_ids(_secret("NOTION_EMBED_URL"))
+    if not ids:
+        return {}
+    ws, block, view = ids
+    hdr = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    r = requests.post(f"{ws}/api/v3/loadCachedPageChunkV2", headers=hdr, timeout=15,
+                      json={"page": {"id": str(uuid.UUID(block))}, "limit": 30,
+                            "cursor": {"stack": []}, "verticalColumns": False})
+    r.raise_for_status()
+    b = _rec(r.json().get("recordMap", {}), "block", str(uuid.UUID(block)))
+    coll, space = b.get("collection_id"), b.get("space_id")
+    view = str(uuid.UUID(view)) if view else (b.get("view_ids") or [None])[0]
+    if not (coll and space and view):
+        raise RuntimeError("노션 DB 블록에서 collection/view를 찾지 못함")
+    r = requests.post(f"{ws}/api/v3/queryCollection?src=initial_load", headers=hdr, timeout=30,
+                      json={"collection": {"id": coll, "spaceId": space},
+                            "collectionView": {"id": view, "spaceId": space},
+                            "loader": {"type": "reducer", "searchQuery": "", "userTimeZone": "Asia/Seoul",
+                                       "reducers": {"collection_group_results":
+                                                    {"type": "results", "limit": 5000}}}})
+    r.raise_for_status()
+    d = r.json()
+    rm = d.get("recordMap", {})
+    schema = _rec(rm, "collection", coll).get("schema", {})
+    grade_key = next((k for k, v in schema.items() if v.get("name") == "등급"), None)
+    text = lambda v: "".join(str(x[0]) for x in (v or []) if x)
+    out = {}
+    for rid in d["result"]["reducerResults"]["collection_group_results"]["blockIds"]:
+        props = _rec(rm, "block", rid).get("properties", {})
+        name = re.sub(r"\s+", "", text(props.get("title")))
+        if name:
+            out[name] = (f"{ws}/{rid.replace('-', '')}", text(props.get(grade_key)) if grade_key else "")
+    return out
 
 
 _FRAME_H = 900

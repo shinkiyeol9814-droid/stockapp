@@ -8,6 +8,7 @@ import requests
 import base64
 
 from ui_mobile import disable_keyboard
+from ui_company import notion_db_index
 
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
@@ -123,6 +124,17 @@ def _render_new_high_body():
     disp_df['시가총액'] = disp_df['시가총액'].apply(lambda x: f"{int(x) // 100000000:,}억" if pd.notnull(x) and x > 0 else "N/A")
     
     disp_df['가치평가_이동'] = "/?stock_code=" + disp_df['코드']
+    # 노션 기업분석 DB에 있는 종목은 그 페이지로 — 링크 글자는 노션의 등급(A·B+…).
+    # LinkColumn은 글자를 URL에서 정규식으로만 뽑을 수 있어 등급을 프래그먼트(#A)로 싣는다
+    # (ui_surge 종목명 링크와 같은 방법). 노션을 못 읽어도 표는 링크 없이 그대로 뜬다.
+    try:
+        notion = notion_db_index()
+    except Exception:
+        notion = {}
+    def _notion_link(name):
+        hit = notion.get("".join(str(name).split()))
+        return f"{hit[0]}#{hit[1] or '노션'}" if hit else None
+    disp_df['노션'] = disp_df['종목명'].map(_notion_link)
     disp_df['최신뉴스_링크'] = disp_df.get('최신뉴스_링크', "")
     
     section_title(f"통합 분석 결과 ({len(filtered_df)}건)")
@@ -133,9 +145,12 @@ def _render_new_high_body():
     # ---------------------------------------------------------
     edited_df = st.data_editor(
         # 💡 [핵심] 요청하신 순서대로 컬럼 배열 완벽 변경! (버튼들은 맨 뒤로)
-        disp_df[['종목명', '등락률', '시가총액', '추정 사유', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크', '코드']],
+        disp_df[['종목명', '노션', '등락률', '시가총액', '추정 사유', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크', '코드']],
         column_config={
             "종목명": st.column_config.TextColumn("종목명", width="small"),
+            "노션": st.column_config.LinkColumn(
+                "노션", display_text=r"#(.+)$", width="small",
+                help="노션 기업분석 DB에 있는 종목 — 등급이 보이고, 누르면 그 페이지가 열린다"),
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),
             "최신뉴스": st.column_config.TextColumn("최신뉴스 헤드라인", width="medium"),
             "시가총액": st.column_config.TextColumn("시가총액"),
@@ -151,7 +166,7 @@ def _render_new_high_body():
             ),
             "코드": None  
         },
-        disabled=['종목명', '등락률', '시가총액', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크'], 
+        disabled=['종목명', '노션', '등락률', '시가총액', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크'], 
         hide_index=True, 
         use_container_width=True, 
         key=f"high_price_editor_v2_{selected_file}" # 💡 [강제 초기화] 키 값을 바꿔버립니다!
