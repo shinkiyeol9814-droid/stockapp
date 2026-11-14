@@ -1509,8 +1509,15 @@ def _get_flow_stats():
 
 
 def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
-                     bars: bool = False) -> go.Figure:
-    """수급 카드용 작은 차트. warn을 주면 그 이상 구간 배경을 칠하고 기준선을 긋는다."""
+                     bars: bool = False, overlay: pd.Series | None = None,
+                     overlay_fmt: str = ",.1f", overlay_unit: str = "") -> go.Figure:
+    """수급 카드용 작은 차트. warn을 주면 그 이상 구간 배경을 칠하고 기준선을 긋는다.
+
+    overlay는 오른쪽 축에 겹치는 보조 계열이다(2026-11-14 요청: 예탁금 대비 신용잔고
+    카드에 고객예탁금을 같이). 신용잔고 카드가 지수를 겹치는 것과 **같은 회색 점선** —
+    매크로 탭에서 빨강·파랑은 '올랐다/내렸다'라 계열 구분에 쓰지 않는다.
+    비율만 보면 분모(예탁금)가 줄어 올라간 건지 분자(잔고)가 늘어 올라간 건지 모른다.
+    """
     hi, lo = float(s.max()), float(s.min())
     if bars:
         base_y, top_y = 0.0, hi * 1.18 or 1.0
@@ -1565,6 +1572,18 @@ def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
             font=dict(size=9.5, color=color),
             bgcolor="rgba(255,255,255,0.72)", borderpad=1,
         ))
+    y2 = dict(overlaying="y", visible=False, fixedrange=True)
+    if overlay is not None and not overlay.dropna().empty:
+        o = overlay.dropna()
+        ohi, olo = float(o.max()), float(o.min())
+        ospan = (ohi - olo) or abs(ohi) or 1.0
+        # 두 선이 서로를 가리지 않게 보조 계열 쪽을 조금 더 넓게 잡는다(신용잔고 카드와 같게).
+        y2["range"] = [olo - ospan * 0.22, ohi + ospan * 0.16]
+        fig.add_trace(go.Scatter(
+            x=o.index, y=o.values, mode="lines", yaxis="y2",
+            line=dict(color=_CRD_IDX_LINE, width=1.2, dash="dot"), showlegend=False,
+            hovertemplate=f"예탁금 <b>%{{y:{overlay_fmt}}}{overlay_unit}</b><extra></extra>",
+        ))
     fig.update_layout(
         height=110, margin=dict(l=0, r=2, t=8, b=18), bargap=0.15,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -1573,6 +1592,7 @@ def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
                    tickfont=dict(size=9, color="#888"), ticklen=0, **_year_ticks(s.index)),
         yaxis=dict(range=[base_y, top_y], showgrid=False, zeroline=False,
                    fixedrange=True, showticklabels=False),
+        yaxis2=y2,
         annotations=notes,
     )
     return fig
@@ -1694,14 +1714,17 @@ def _crd_market_body(name: str, full: pd.Series | None, win: pd.Series | None,
 
 def _flow_card(key: str, name: str, s: pd.Series, unit: str, fmt: str, sub: str,
                badge: tuple | None = None, warn: float | None = None,
-               bars: bool = False) -> None:
+               bars: bool = False, overlay: pd.Series | None = None,
+               overlay_fmt: str = ",.1f", overlay_unit: str = "") -> None:
     with st.container(key=f"mcard_flow_{key}"):
-        _flow_card_body(name, s, unit, fmt, sub, badge, warn, bars)
+        _flow_card_body(name, s, unit, fmt, sub, badge, warn, bars,
+                        overlay, overlay_fmt, overlay_unit)
 
 
 def _flow_card_body(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
                     badge: tuple | None = None, warn: float | None = None,
-                    bars: bool = False) -> None:
+                    bars: bool = False, overlay: pd.Series | None = None,
+                    overlay_fmt: str = ",.1f", overlay_unit: str = "") -> None:
     if s is None or s.dropna().empty:
         st.markdown(f"<div style='font-size:11px;color:#888;'>{name}</div>"
                     f"<div style='font-size:18px;font-weight:700;color:#ccc;'>N/A</div>",
@@ -1728,7 +1751,8 @@ def _flow_card_body(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
         f"{s.index[-1]:%m/%d}</span></div>",
         unsafe_allow_html=True,
     )
-    st.plotly_chart(_make_flow_chart(s, fmt, warn, bars), use_container_width=True,
+    st.plotly_chart(_make_flow_chart(s, fmt, warn, bars, overlay, overlay_fmt, overlay_unit),
+                    use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False, "staticPlot": False})
     if sub:
         st.markdown(f"<div style='font-size:10.5px;color:#9aa5b1;margin-top:1px;'>{sub}</div>",
@@ -1780,12 +1804,15 @@ _FLOW_HELP = """
 - **반대매매**는 평소의 3~5배로 치솟았다가 며칠 안에 꺾이는 자리가 저점 근처인 경우가 많다.
   평균 수준이면 강제 청산이 아니라 **자발적 상환**이다 — 같은 감소라도 뜻이 전혀 다르다.
 - **예탁금 대비 신용잔고**가 40%를 넘으면 경계, 45% 이상이면 과열. 30%대 초반까지
-  내려오면 부담이 꽤 풀린 상태다.
+  내려오면 부담이 꽤 풀린 상태다. 같은 장의 **회색 점선이 고객예탁금**이다 — 비율만
+  보면 분모(예탁금)가 줄어 오른 것인지 분자(잔고)가 늘어 오른 것인지 갈리지 않는다.
+  둘이 같이 줄면 디레버리징이고, 예탁금만 빠지면 자금 이탈이다.
 - **예탁금**이 줄다 멈추고 늘기 시작하면 대기 자금이 돌아오는 신호다.
 - **시장별 잔고**는 지수와 **벌어지는 자리**를 본다. 지수가 빠지는데 잔고가 안 줄면
   청산이 남았고, 지수가 멈췄는데 잔고만 계속 줄면 끝나가는 국면이다.
-- ⚠️ 전부 **후행 지표**다. 저점 '확인'에는 쓰되 예측에는 못 쓴다. 발표도 2영업일쯤 늦어
-  급락 당일의 청산은 아직 숫자에 없다.
+- ⚠️ 전부 **후행 지표**다. 저점 '확인'에는 쓰되 예측에는 못 쓴다. 숫자가 들어오는 것도
+  2~3영업일 늦어 급락 당일의 청산은 아직 보이지 않는다 — 금투협이 내놓은 것을
+  공공데이터포털이 한 번 더 받아 여는 구조라, 금투협 사이트보다 하루쯤 더 늦다.
 """
 
 
@@ -1842,9 +1869,16 @@ def _render_flow_section() -> None:
 
     cols = st.columns(2)
     with cols[0]:
+        # 비율만 보면 분모(예탁금)가 줄어 오른 건지 분자(잔고)가 늘어 오른 건지 갈리지
+        # 않는다 — 고객예탁금을 회색 점선으로 같이 겹친다(2026-11-14 요청).
+        dep = None if dpsg is None else (dpsg / 1e4).dropna()      # 억원 -> 조원
+        # 1개월 증감은 맨 위 요약 줄이 이미 말한다 — 여기는 현재값만.
+        dep_sub = ("" if dep is None or dep.empty else
+                   f"회색 점선 고객예탁금 <b>{float(dep.iloc[-1]):,.1f}조</b>")
         # 경계선은 차트 안에 '경계 40.0'으로 이미 그려진다 — 밑에 또 적지 않는다.
-        _flow_card("ratio", "예탁금 대비 신용잔고", ratio, "%", ".1f", "",
-                   ratio_badge, warn=_CRD_WARN)
+        _flow_card("ratio", "예탁금 대비 신용잔고", ratio, "%", ".1f", dep_sub,
+                   ratio_badge, warn=_CRD_WARN,
+                   overlay=dep, overlay_fmt=",.1f", overlay_unit="조")
     with cols[1]:
         # ⚠️ 이 통계는 '미수금 반대매매'만이다 — 규모가 훨씬 큰 신용융자 담보부족
         # 청산은 어느 공식 통계에도 없다. 그 한계를 카드 밑 한 줄로 못박아 둔다.
