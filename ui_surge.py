@@ -29,7 +29,7 @@ import requests
 import streamlit as st
 
 from ui_common import page_header
-from ui_company import notion_grade_links, notion_grade_column
+from ui_company import notion_grade_links, notion_grade_column, clear_notion_cache
 from ui_mobile import disable_keyboard
 
 # Pages가 1순위(CDN), 실패하면 raw. 둘 다 공개 URL이라 토큰이 필요 없다.
@@ -530,6 +530,7 @@ def render_surge():
         _get_day.clear()
         _get_flow_index.clear()
         _get_flow_day.clear()
+        clear_notion_cache()          # 노션에서 등급을 고쳤을 때 바로 반영되게
         st.rerun()
 
     # 원본 사이트처럼 두 화면 — 거래대금 급증(장중 4번) / 투신 수급(장 마감 뒤 하루 1번)

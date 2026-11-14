@@ -8,7 +8,7 @@ import requests
 import base64
 
 from ui_mobile import disable_keyboard
-from ui_company import notion_grade_links, notion_grade_column
+from ui_company import notion_grade_links, notion_grade_column, clear_notion_cache
 
 GITHUB_REPO = "shinkiyeol9814-droid/stockapp"
 GITHUB_BRANCH = "main" 
@@ -60,6 +60,7 @@ def render_new_high_menu():
     # 2026-10-30: 섹터별 탭을 이 탭 아래로 합쳤다(그 메뉴 자리는 기업분석). 새로고침은 섹터 캐시도 비운다.
     if page_header("신고가 트래킹", "newhigh"):
         clear_sector_cache()
+        clear_notion_cache()          # 노션에서 등급을 고쳤을 때 바로 반영되게
         st.rerun()
     _render_new_high_body()
     render_sector_section()

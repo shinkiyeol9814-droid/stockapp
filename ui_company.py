@@ -161,6 +161,12 @@ def notion_grade_links(names) -> list:
     return out
 
 
+def clear_notion_cache() -> None:
+    """등급 열을 띄우는 화면의 새로고침 버튼이 같이 부른다. 안 비우면 노션에서 등급을
+    고쳐도 TTL 10분이 끝날 때까지 옛 값이 남아, 즉시 반영할 방법이 아예 없었다."""
+    notion_db_index.clear()
+
+
 def notion_grade_column(label: str = "노션", width="small"):
     """표의 등급 열. 호출부가 column_config에 그대로 넣는다."""
     return st.column_config.LinkColumn(label, display_text=r"#(.+)$", width=width,

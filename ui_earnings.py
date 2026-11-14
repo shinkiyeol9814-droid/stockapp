@@ -10,7 +10,7 @@ from github import Github, UnknownObjectException
 from earnings_store import available_quarters, load_quarter
 from ui_mobile import disable_keyboard
 from ui_common import naver_link as _naver_link
-from ui_company import notion_grade_map
+from ui_company import notion_grade_map, clear_notion_cache
 
 BASE_DIR = Path(__file__).parent
 FAVORITES_FILE = "data/earnings/favorites.json"
@@ -40,20 +40,21 @@ def _code_index():
     try:
         from krx_listing import fetch_krx_listing
         df = fetch_krx_listing()
-        by_name, by_pref = {}, {}
+        by_name, by_pref, names = {}, {}, {}
         for c, n in zip(df["Code"].astype(str), df["Name"].astype(str)):
             c = c.zfill(6)
             by_name.setdefault("".join(n.split()), []).append(c)
             by_pref.setdefault(c[:5], []).append(c)
-        return by_name, by_pref
+            names[c] = str(n)
+        return by_name, by_pref, names
     except Exception as e:
         print(f"[ui_earnings] 종목목록 조회 실패(링크 생략): {type(e).__name__}: {e}")
-        return {}, {}
+        return {}, {}, {}
 
 
-def _stock_href(name: str, stored: str) -> str:
-    """네이버 금융 주소. 확실하지 않으면 빈 문자열(링크 없이 이름만 찍힌다)."""
-    by_name, by_pref = _code_index()
+def _resolve_code(name: str, stored: str) -> str:
+    """6자리 종목코드. 확실하지 않으면 빈 문자열."""
+    by_name, by_pref, _ = _code_index()
     prefix = str(stored or "").lstrip("A")[:5]
     cands = by_name.get("".join(str(name).split())) or []
     if len(prefix) != 5:
@@ -64,7 +65,21 @@ def _stock_href(name: str, stored: str) -> str:
     else:
         hit = by_pref.get(prefix) or []
         code = hit[0] if len(hit) == 1 else ""
+    return code
+
+
+def _stock_href(name: str, stored: str) -> str:
+    """네이버 금융 주소. 확실하지 않으면 빈 문자열(링크 없이 이름만 찍힌다)."""
+    code = _resolve_code(name, stored)
     return _naver_link(code, name).split("#")[0] if code else ""
+
+
+def _listing_name(name: str, stored: str) -> str:
+    """노션 조회용 **종목목록 기준 이름**. 실적 데이터의 이름은 텔레그램에서 온 표기라
+    `한국전력공사`·`케이티앤지`처럼 상장 이름과 다른 경우가 있어, 그대로 노션에 물으면
+    등급이 안 붙는다. 다른 화면은 애초에 KRX 이름을 쓰므로 이 보정이 필요 없다."""
+    _, _, names = _code_index()
+    return names.get(_resolve_code(name, stored)) or name
 
 @st.cache_resource
 def get_github_repo():
@@ -220,6 +235,7 @@ def render_earnings_menu():
         st.session_state.pop('favorites', None)
         st.session_state.pop('batch_enabled', None)
         st.session_state.pop('ea_batch_cb', None)
+        clear_notion_cache()          # 노션에서 등급을 고쳤을 때 바로 반영되게
         st.rerun()
 
     # 💡 수집 ON/OFF와 관심종목 필터는 원래 화면 폭을 나눠 쓰는 버튼 두 개였다(휴대폰에선
@@ -381,7 +397,7 @@ def render_earnings_menu():
                          f"border-bottom:1px dotted #bbb;'>{name_html}</a>")
 
         # 노션 기업분석 DB에 있으면 등급 알약 — 표의 '노션' 열과 같은 것(2026-11-14 요청).
-        hit = notion.get("".join(str(corp_name).split()))
+        hit = notion.get("".join(_listing_name(corp_name, code).split()))
         grade_html = ""
         if hit:
             grade_html = (
