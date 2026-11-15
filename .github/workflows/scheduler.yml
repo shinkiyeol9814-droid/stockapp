@@ -60,7 +60,9 @@ jobs:
 
           [ $SM -eq 0 ] && [ $((SH % 3)) -eq 0 ]         && run keep_alive.yml
           [ $WEEKDAY = 1 ] && [ $SH -eq 18 ] && [ $SM -eq 0 ]  && run macro_batch.yml
-          [ $WEEKDAY = 1 ] && [ $SH -eq 18 ] && [ $SM -eq 30 ] && run index_valuation.yml
           [ $WEEKDAY = 1 ] && [ $SH -eq 19 ] && [ $SM -eq 0 ]  && run dart_batch.yml
+          # 지수 PER·PBR만 23:30이다 — KRX가 장 마감 당일 늦은 저녁에야 올린다(실측은
+          # index_valuation.py 머리 주석). 18:30에 받으면 PER·PBR이 0으로 저장된다.
+          [ $WEEKDAY = 1 ] && [ $SH -eq 23 ] && [ $SM -eq 30 ] && run index_valuation.yml
           [ $TUE_SAT = 1 ] && [ $SH -eq 8 ]  && [ $SM -eq 0 ]  && run macro_batch.yml -f only=us_debt
           exit 0

@@ -4,7 +4,7 @@ name: Index PER/PBR Batch (KOSPI/KOSDAQ)
 # 상세는 index_valuation.py 머리 주석.
 on:
   schedule:
-    - cron: '30 9 * * 1-5'   # 월~금 KST 18:30 — 장 마감 후 KRX 확정치
+    - cron: '30 14 * * 1-5'  # 월~금 KST 23:30 — KRX가 PER·PBR을 올린 뒤 (18:30엔 아직 0)
   workflow_dispatch:
     inputs:
       since:
