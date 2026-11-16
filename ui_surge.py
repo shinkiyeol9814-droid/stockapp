@@ -28,7 +28,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from ui_common import page_header
+from ui_common import page_header, naver_link, naver_name_column
 from ui_company import notion_grade_links, notion_grade_column, clear_notion_cache
 from ui_mobile import disable_keyboard
 
@@ -142,10 +142,9 @@ _TABLE_COLS = {
     "포착":        dict(kind="text",   label="포착 시각", width="small",
                         help="왼쪽부터 10:05 · 12:05 · 14:05 · 종가. ●는 그 시각에 잡힌 것"),
     "등급":        dict(kind="text",   label="등급", width="small"),
-    # 종목명 자체에 네이버 금융 링크를 건다. st.dataframe은 셀에 HTML을 못 넣고
-    # LinkColumn의 display_text는 "URL에 적용하는 정규식" 하나뿐이라, 이름을
-    # URL 프래그먼트(#종목명)로 실어 보내고 거기서 되뽑는다. 프래그먼트는 서버로
-    # 전송되지 않으므로 네이버 요청에는 아무 영향이 없다.
+    # 종목명 자체에 네이버 금융 링크를 건다 — 만드는 쪽도 읽는 쪽도 ui_common의
+    # naver_link / naver_name_column이다(왜 프래그먼트로 실어 보내는지, 왜 뒤에
+    # 공백을 채우는지는 그쪽 머리말에 적어 두었다).
     # 폭은 픽셀로 — "medium"(약 200px)은 이름에 비해 빈칸이 너무 컸다.
     "종목":        dict(kind="namelink", label="종목", width=110),
     # 노션 기업분석 DB의 등급 — 신고가 표와 같은 열(2026-11-14 요청).
@@ -160,9 +159,6 @@ _TABLE_COLS = {
     "회전율":      dict(kind="num",    label="회전율", fmt="%.1f%%", width="small"),
 }
 
-# 프래그먼트에서 종목명만 떼어내는 패턴 — LinkColumn.display_text에 그대로 넘긴다.
-_NAME_FROM_URL = r"#(.+)$"
-
 
 def _table_df(rows) -> pd.DataFrame:
     out = []
@@ -175,8 +171,8 @@ def _table_df(rows) -> pd.DataFrame:
             "포착": "".join("●" if sl in r["on"] else "○" for sl in SLOTS),
             "등급": "★" * (r["grade"] or 0),
             # 이름이 비면 정규식이 안 걸려 URL이 그대로 보이므로 코드로 메운다.
-            "종목": (f"https://finance.naver.com/item/main.naver?code={r['code']}"
-                     f"#{str(st_.get('n') or r['code'])}"),
+            # (뒤에 붙는 공백은 탭 영역 — ui_common.pad_tap_target 머리말 참고)
+            "종목": naver_link(r["code"], st_.get("n")),
             "노션": str(st_.get("n") or ""),      # 아래에서 링크로 바꾼다
             "최근 뉴스": str(nw[0]) if nw else "",
             "3개월": closes or None,
@@ -205,9 +201,8 @@ def _render_table(rows) -> None:
         elif kind == "notion":
             cfg[col] = notion_grade_column(label, width=width)
         elif kind == "namelink":
-            cfg[col] = st.column_config.LinkColumn(label, display_text=_NAME_FROM_URL,
-                                                   width=width,
-                                                   help="누르면 네이버 금융 종목 페이지가 열립니다")
+            cfg[col] = naver_name_column(label, width=width,
+                                         help="누르면 네이버 금융 종목 페이지가 열립니다")
         else:
             cfg[col] = st.column_config.TextColumn(label, width=width, help=spec.get("help"))
     # 등락률만 한국 관례 색을 입힌다(상승 빨강·하락 파랑). 숫자 열에 Styler를
@@ -383,8 +378,7 @@ def _pill_tier(p: float, box: float) -> int:
 
 def _render_flow_table(rows: list, nd: int, box: float) -> None:
     df = pd.DataFrame([{
-        "종목": (f"https://finance.naver.com/item/main.naver?code={r['code']}"
-                 f"#{str(r.get('n') or r['code'])}"),
+        "종목": naver_link(r["code"], r.get("n")),
         "노션": str(r.get("n") or ""),        # 아래에서 링크로 바꾼다
         "추이": _flow_bars_uri(r.get("s")),
         "3개월": [k[3] for k in (r.get("ohlc") or [])] or None,
@@ -400,8 +394,8 @@ def _render_flow_table(rows: list, nd: int, box: float) -> None:
     df["노션"] = notion_grade_links(df["노션"])
     cc = st.column_config
     cfg = {
-        "종목": cc.LinkColumn("종목", display_text=_NAME_FROM_URL, width=110,
-                             help="누르면 네이버 금융 종목 페이지가 열립니다"),
+        "종목": naver_name_column("종목", width=110,
+                                  help="누르면 네이버 금융 종목 페이지가 열립니다"),
         "노션": notion_grade_column(),
         "추이": cc.ImageColumn("투신 순매수 추이", width=100,
                               help=f"최근 {nd}거래일 — 위 빨강 순매수, 아래 파랑 순매도"),

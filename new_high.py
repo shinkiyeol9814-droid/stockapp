@@ -144,7 +144,7 @@ def _render_new_high_body():
         # 💡 [핵심] 요청하신 순서대로 컬럼 배열 완벽 변경! (버튼들은 맨 뒤로)
         disp_df[['종목명', '노션', '등락률', '시가총액', '추정 사유', '돌파기간', '최신뉴스', '가치평가_이동', '최신뉴스_링크', '코드']],
         column_config={
-            "종목명": naver_name_column("종목명", width="small",
+            "종목명": naver_name_column("종목명",
                                          help="누르면 네이버 금융 종목 페이지가 열린다"),
             "노션": notion_grade_column(),
             "추정 사유": st.column_config.TextColumn("추정 사유 (수정 가능)", width="large"),

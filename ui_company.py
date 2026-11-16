@@ -38,7 +38,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ui_common import page_header
+from ui_common import page_header, pad_tap_target
 
 _DEFAULT_URL = ("https://app.notion.com/p/f421915b8386403298f400aa1c74c0fe"
                 "?v=0b94653f9226464fb504d30d3bc3ddec&pvs=12")
@@ -150,14 +150,18 @@ def notion_grade_map() -> dict:
         return {}
 
 
-def notion_grade_links(names) -> list:
-    """종목명 목록 -> '주소#등급' 목록. 노션은 한 번만 읽는다. 없으면 빈 문자열."""
+def notion_grade_links(names, width_px: int = 75) -> list:
+    """종목명 목록 -> '주소#등급' 목록. 노션은 한 번만 읽는다. 없으면 빈 문자열.
+
+    등급 뒤에는 보이지 않는 공백을 채워 넣는다 — 'A' 한 글자의 탭 영역은 15x19px이라
+    휴대폰에서 사실상 못 누른다(ui_common.pad_tap_target 머리말 참고).
+    width_px 기본값 75는 notion_grade_column의 "small" 폭이다."""
     m = notion_grade_map()
     out = []
     for n in names:
         hit = m.get("".join(str(n).split()))
         # 등급이 비어 있어도 링크는 살린다 — 정규식이 안 걸리면 URL이 통째로 보인다.
-        out.append(f"{hit[0]}#{hit[1] or '노션'}" if hit else "")
+        out.append(f"{hit[0]}#{pad_tap_target(hit[1] or '노션', width_px)}" if hit else "")
     return out
 
 
