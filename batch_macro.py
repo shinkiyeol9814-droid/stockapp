@@ -10,7 +10,7 @@ import html as html_mod
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -80,6 +80,15 @@ def _save(path: str, raw: list) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(raw, f)
+
+
+def _warn(msg: str) -> None:
+    """
+    GitHub Actions 경고 주석. print와 달리 **공개 API로 읽히고** 실행 요약 위에
+    노란 배너로 뜬다 — 러너 로그는 리포 admin 토큰이 있어야 받을 수 있다
+    (DART 배치의 ::notice:: 요약과 같은 이유).
+    """
+    print(f"::warning title=매크로 배치::{msg}")
 
 
 def _append_if_new(path: str, price: float | None) -> bool:
@@ -390,7 +399,7 @@ def _fetch_fred(series: dict, tag: str) -> dict:
         try:
             r = requests.get(_FRED_CSV.format(sid), headers=_UA_HEADERS, timeout=25)
             if r.status_code != 200:
-                print(f"[{tag}] {key}({sid}): HTTP {r.status_code}")
+                _warn(f"FRED {key}({sid}) HTTP {r.status_code} — 이 계열은 갱신되지 않습니다")
                 continue
             rows = []
             for line in r.text.splitlines()[1:]:
@@ -410,7 +419,7 @@ def _fetch_fred(series: dict, tag: str) -> dict:
                 out[key] = rows
                 print(f"[{tag}] {key}({sid}): {len(rows)}건 (최신 {rows[-1][1]})")
         except Exception as e:
-            print(f"[{tag}] {key} 실패: {type(e).__name__}: {e}")
+            _warn(f"FRED {key}({sid}) 실패: {type(e).__name__}: {e}")
     return out
 
 
@@ -538,8 +547,157 @@ def _replace_if_changed(path: str, series: list | None) -> bool:
     return True
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 신선도 점검 (`python batch_macro.py --audit`)
+#
+# ⚠️ **왜 필요한가 — 이 배치는 소스가 죽어도 초록불로 끝난다.** 각 fetch는 실패를
+# print만 하고 넘어간다(한 소스가 막혀도 나머지 이력은 지키려고 일부러 그렇게 했다).
+# 그래서 워크플로우는 계속 성공인데 특정 파일만 몇 주씩 멈출 수 있다 — FRED 두 계열
+# (신용 스프레드·미국 물가)이 2026-11-08 기능 추가 이후 **러너에서 단 한 번도
+# 성공하지 못한 채** 8일을 그렇게 갔고, 화면 카드의 날짜(11/05)를 사람이 눈으로
+# 보고서야 알았다. 같은 기간 야후·CNN·재무부 소스는 매일 멀쩡히 들어왔다.
+#
+# 그래서 커밋이 끝난 뒤 파일을 다시 읽어 "마지막 데이터가 며칠 전인지"를 본다.
+# 문제가 있으면 ::warning:: 주석 + 종료코드 1이다. 주석은 공개 API로 읽히고,
+# 단계가 빨간불이면 GitHub이 리포 주인에게 메일을 보낸다 — 사람이 알아차리는
+# 경로는 그것뿐이다. 커밋 **뒤에** 돌리므로 점검이 실패해도 받아온 데이터는 남는다.
+#
+# ⚠️ 허용 일수는 넉넉하게 잡는다. 거짓 경보가 한 번 나면 그 뒤의 진짜 경보까지
+#    같이 무시된다. 특히 DRAM·DDR4·리튬은 **값이 안 바뀌면 점을 아예 안 찍으므로**
+#    (_append_if_new) 3~5일 정체가 정상이다 — 그걸 고장이라 부르면 안 된다.
+_FRESHNESS = [
+    ("DRAM 스팟(DDR5)",     _DRAM_CACHE,      12),
+    ("DDR4 스팟",           _DDR4_CACHE,      12),
+    ("리튬(TE)",            _LITHIUM_CACHE,   12),   # 중국 연휴가 길다
+    ("시장 지표(야후)",      _MARKET_CACHE,     6),
+    ("공포·탐욕 지수",       _FNG_CACHE,        6),
+    ("미국 연방부채",        _USDEBT_CACHE,     7),
+    ("신용 스프레드(FRED)",  _CREDIT_CACHE,     6),
+    ("S&P 밸류에이션",       _SP500_CACHE,     45),   # PER 월간·PBR 분기
+    # 월간. 넷 중 core_PCE가 가장 늦어(발표가 익월 말) 늘 70~80일이 된다 — 그 계열에
+    # 맞춰 느슨하게 잡는다. FRED가 아예 막히는 건 어차피 위 _fetch_fred가 즉시 경고한다.
+    ("미국 물가(FRED)",      _INFLATION_CACHE, 95),
+]
+
+
+def _read_any(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _latest_ms(obj) -> int | None:
+    """
+    [[ts, 값], ...] 또는 {계열: [[ts, 값], ...]} 에서 마지막 시각.
+    ts는 epoch_ms(캐시 파일)일 수도 "YYYY-MM-DD"(compare·index_val)일 수도 있다.
+    """
+    if isinstance(obj, dict):
+        got = [g for g in (_latest_ms(v) for v in obj.values()) if g]
+        # 계열 하나만 끊겨도 잡아야 하므로 가장 뒤처진 쪽을 본다
+        return min(got) if got else None
+    if isinstance(obj, list) and obj:
+        last = obj[-1]
+        if isinstance(last, (list, tuple)) and last:
+            ts = last[0]
+            if isinstance(ts, str):
+                try:
+                    return _date_to_ms(date.fromisoformat(ts[:10]))
+                except ValueError:
+                    return None
+            if isinstance(ts, (int, float)):
+                return int(ts)
+    return None
+
+
+def _check(name: str, path: str, allow: int, today: date) -> str | None:
+    """허용 일수를 넘었으면 사람이 읽을 한 줄, 멀쩡하면 None."""
+    ms = _latest_ms(_read_any(path))
+    rel = os.path.relpath(path, _DIR).replace(os.sep, "/")
+    if ms is None:
+        return f"{name}: 파일이 없거나 비어 있습니다 ({rel})"
+    d = datetime.fromtimestamp(ms / 1000, timezone.utc).date()
+    age = (today - d).days
+    if age > allow:
+        return f"{name}: 최신 데이터가 {d} — {age}일 전입니다 (허용 {allow}일, {rel})"
+    return None
+
+
+def audit_freshness() -> list[str]:
+    today = datetime.now(KST).date()
+    problems = [p for p in (_check(n, pa, a, today) for n, pa, a in _FRESHNESS) if p]
+
+    # 비교 차트(S&P·미국채 10년)는 연도별 파일 — 올해 것을 본다.
+    p = _check("비교 차트(S&P·금리)",
+               os.path.join(_COMPARE_DIR, f"{today.year}.json"), 6, today)
+    if p:
+        problems.append(p)
+
+    # ── 아래는 batch_macro가 아니라 같은 워크플로우의 다른 단계·다른 배치가 쓴다 ──
+    # 둘 다 continue-on-error거나 별도 워크플로우라, 조용히 멈춰도 여기 말고는
+    # 드러나는 곳이 없다. 매크로 배치가 평일 매일 도니 일일 점검 자리로 쓴다.
+    sector = os.path.join(_DIR, "data", "sector", "daily")
+    days = sorted(f[:-5] for f in os.listdir(sector) if f.endswith(".json"))         if os.path.isdir(sector) else []
+    if not days:
+        problems.append("섹터 등락률: data/sector/daily 가 비어 있습니다")
+    else:
+        try:
+            age = (today - date.fromisoformat(days[-1])).days
+            if age > 10:      # 설·추석 연휴(최대 5영업일)를 넘겨도 안 울리게
+                problems.append(f"섹터 등락률: 최신 파일이 {days[-1]} — {age}일 전입니다")
+        except ValueError:
+            problems.append(f"섹터 등락률: 파일명이 날짜가 아닙니다 ({days[-1]})")
+
+    iv = os.path.join(_MACRO_DIR, "index_val", f"{today.year}.json")
+    p = _check("지수 PER·PBR", iv, 10, today)
+    if p:
+        problems.append(p)
+    else:
+        # ⚠️ 날짜만으로는 못 잡는 고장이 하나 있다 — 줄은 들어왔는데 PER·PBR만 0인 것.
+        #    KRX가 장 마감 당일 늦은 저녁에야 올리므로 이른 시각에 받으면 이렇게 된다
+        #    (2026-11-13 금요일분이 실제로 0으로 남아 월요일까지 화면이 11/12에 멈췄다).
+        for mk, rows in (_read_any(iv) or {}).items():
+            if rows and len(rows[-1]) >= 3 and not (rows[-1][1] and rows[-1][2]):
+                problems.append(f"지수 PER·PBR: {mk} {rows[-1][0]} 줄의 PER·PBR이 0입니다"
+                                " — KRX 공개 전에 받은 값입니다")
+
+    # 종목목록 시드는 날짜 칼럼이 없어 신선도를 못 재므로 크기만 본다(최후 폴백이라
+    # 조금 묵은 건 괜찮지만, 잘린 파일이 남는 건 치명적이다 — krx_listing.py 머리말).
+    seed = os.path.join(_DIR, "data", "listing", "krx_listing.csv")
+    try:
+        with open(seed, "r", encoding="utf-8") as f:
+            n = sum(1 for _ in f) - 1
+        if n < 2000:
+            problems.append(f"종목목록 시드: {n}행뿐입니다 (data/listing/krx_listing.csv)")
+    except OSError:
+        problems.append("종목목록 시드: 읽을 수 없습니다 (data/listing/krx_listing.csv)")
+
+    return problems
+
+
 if __name__ == "__main__":
     import sys
+
+    try:
+        # 윈도우 콘솔(cp949)에서 '—' 같은 글자를 못 찍어 배치가 통째로 죽는다.
+        # 러너는 UTF-8이라 영향이 없지만, 로컬에서 돌려볼 때 걸린다.
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    # 💡 `--audit` — 받아오기는 하지 않고 "안 들어온 것"만 점검한다(위 주석 참고).
+    #    워크플로우가 커밋 뒤에 이 모드로 한 번 더 부른다.
+    if "--audit" in sys.argv:
+        _problems = audit_freshness()
+        for _p in _problems:
+            _warn(_p)
+        if _problems:
+            print(f"::error title=매크로 신선도::{len(_problems)}건이 들어오지 않았습니다"
+                  " — 위 경고를 보세요")
+            sys.exit(1)
+        print("::notice title=매크로 신선도::모든 소스가 최신입니다")
+        sys.exit(0)
 
     # 💡 `--only us_debt` — 미 연방부채만 갱신하는 모드.
     #

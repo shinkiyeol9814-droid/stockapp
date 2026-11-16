@@ -192,6 +192,16 @@ def update(since: int | None = None) -> bool:
             data[name] = [merged[k] for k in sorted(merged)]
         changed |= _save_year(y, data)
     print("저장:", "변경 있음" if changed else "변경 없음")
+
+    # ⚠️ 줄은 들어왔는데 PER·PBR만 0인 경우가 있다 — KRX가 아직 안 올렸을 때다.
+    # 조용히 넘어가면 그 날짜가 영영 0으로 남아 화면 밴드가 하루 전에서 멈춘다
+    # (2026-11-13 금요일분이 그랬고, 월요일에 사용자가 눈으로 보고서야 알았다).
+    # 다음 실행이 마지막 저장일부터 다시 받으므로 저절로 메워지지만, 안 메워지는
+    # 경우(공개 시각이 또 밀렸다)를 알아차리려면 경고가 남아 있어야 한다.
+    for name, rows in fetched.items():
+        if rows and not (rows[-1][1] and rows[-1][2]):
+            print(f"::warning title=지수 PER·PBR::{name} {rows[-1][0]} 의 PER·PBR이 0입니다"
+                  " — KRX가 아직 안 올렸습니다. 다음 실행이 같은 날짜를 다시 받습니다")
     return changed
 
 
