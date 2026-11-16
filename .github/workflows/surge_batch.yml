@@ -33,19 +33,32 @@ jobs:
       # 커밋되면서 Streamlit Cloud가 그때마다 앱을 재시작했다 — 장중 하루
       # 70회 이상이고, 재시작 순간에 접속하면 인증 리디렉션이 꼬여
       # ERR_TOO_MANY_REDIRECTS로 앱이 아예 안 열린다.
+      # 실적 데이터(q_*.json)도 2026-11-16부터 batch-state에 있다 — 이 배치가
+      # get_today_earnings_map()에서 읽는다. 클론 하나로 둘 다 가져오고, 저장
+      # 단계에서도 같은 클론을 다시 쓴다. 4.4MB라 pip install 옆에서는 티도 안 난다.
       - name: Restore alert state
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p data/surge_alert
-          if curl -fsSL -H "Authorization: token $GH_TOKEN"                   -H "Accept: application/vnd.github.raw"                   "https://api.github.com/repos/${{ github.repository }}/contents/data/surge_alert/alerted_today.json?ref=batch-state"                   -o data/surge_alert/alerted_today.json; then
-            echo "batch-state에서 상태 복원 ($(wc -c < data/surge_alert/alerted_today.json) bytes)"
+          URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
+          WORK="$RUNNER_TEMP/state"
+          rm -rf "$WORK"
+          mkdir -p data/surge_alert data/earnings
+          if git clone --depth 1 --branch batch-state "$URL" "$WORK" 2>/dev/null; then
+            cp "$WORK"/data/surge_alert/alerted_today.json data/surge_alert/ 2>/dev/null || true
+            cp "$WORK"/data/earnings/* data/earnings/ 2>/dev/null || true
+            echo "복원: 실적 $(ls data/earnings/ | wc -l)개 파일"
           else
-            # 브랜치나 파일이 없으면 빈 상태로 시작한다. 그날 알림이 한 번
-            # 중복될 수 있을 뿐, 배치가 멈추지는 않는다.
-            echo '{}' > data/surge_alert/alerted_today.json
-            echo "::warning::batch-state에 상태가 없어 빈 상태로 시작합니다"
+            git clone --depth 1 "$URL" "$WORK"
+            git -C "$WORK" checkout --orphan batch-state
+            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
+            echo "::warning::batch-state가 없어 빈 상태로 시작합니다"
           fi
+          # 브랜치나 파일이 없으면 빈 상태로 시작한다. 그날 알림이 한 번
+          # 중복될 수 있을 뿐, 배치가 멈추지는 않는다.
+          # (실적이 비면 get_today_earnings_map()이 빈 dict를 돌려줘 알림에 서프라이즈
+          #  정보만 빠진다 — batch_surge_alert가 예외를 삼킨다.)
+          [ -s data/surge_alert/alerted_today.json ] || echo '{}' > data/surge_alert/alerted_today.json
 
       - name: Run Script
         env:
@@ -63,14 +76,8 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
-          WORK="$RUNNER_TEMP/state"
-          rm -rf "$WORK"
-          git clone --depth 1 --branch batch-state "$URL" "$WORK" 2>/dev/null || {
-            git clone --depth 1 "$URL" "$WORK"
-            git -C "$WORK" checkout --orphan batch-state
-            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
-          }
+          WORK="$RUNNER_TEMP/state"      # 복원 단계가 만든 클론을 그대로 쓴다
+          [ -d "$WORK/.git" ] || { echo "::error::복원 단계의 클론이 없습니다"; exit 1; }
           mkdir -p "$WORK/data/surge_alert"
           cp data/surge_alert/alerted_today.json "$WORK/data/surge_alert/alerted_today.json"
           git -C "$WORK" add data/surge_alert/alerted_today.json

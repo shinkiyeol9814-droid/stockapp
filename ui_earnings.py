@@ -7,6 +7,7 @@ import html
 from pathlib import Path
 from github import Github, UnknownObjectException
 
+import earnings_store
 from earnings_store import available_quarters, load_quarter
 from ui_mobile import disable_keyboard
 from ui_common import naver_link as _naver_link
@@ -22,6 +23,8 @@ FAVORITES_FILE = "data/earnings/favorites.json"
 FAVORITES_BRANCH = "batch-state"
 LOCAL_FAVORITES_FILE = BASE_DIR / "data" / "earnings" / "favorites.json"
 BATCH_CONFIG_FILE = "data/earnings/batch_config.json"
+# 배치 ON/OFF도 관심종목과 같이 batch-state에 둔다(2026-11-16) — main에 쓰면
+# 토글 한 번이 앱 재시작 한 번이다. 워크플로우도 batch-state에서 받아 읽는다.
 LOCAL_BATCH_CONFIG_FILE = BASE_DIR / "data" / "earnings" / "batch_config.json"
 
 
@@ -116,7 +119,10 @@ def load_batch_config():
     repo = get_github_repo()
     if repo:
         try:
-            file_content = repo.get_contents(BATCH_CONFIG_FILE)
+            try:
+                file_content = repo.get_contents(BATCH_CONFIG_FILE, ref=FAVORITES_BRANCH)
+            except UnknownObjectException:      # 아직 옮기기 전 — main의 마지막 값
+                file_content = repo.get_contents(BATCH_CONFIG_FILE)
             data = json.loads(file_content.decoded_content.decode('utf-8'))
             return data.get("enabled", True)
         except Exception:
@@ -132,12 +138,14 @@ def save_batch_config(enabled: bool):
     content_str = json.dumps({"enabled": enabled}, ensure_ascii=False)
     if repo:
         try:
-            file = repo.get_contents(BATCH_CONFIG_FILE)
-            repo.update_file(BATCH_CONFIG_FILE, f"Batch {'ON' if enabled else 'OFF'}", content_str, file.sha)
+            file = repo.get_contents(BATCH_CONFIG_FILE, ref=FAVORITES_BRANCH)
+            repo.update_file(BATCH_CONFIG_FILE, f"Batch {'ON' if enabled else 'OFF'}", content_str,
+                             file.sha, branch=FAVORITES_BRANCH)
             return True
         except Exception:
             try:
-                repo.create_file(BATCH_CONFIG_FILE, f"Batch {'ON' if enabled else 'OFF'}", content_str)
+                repo.create_file(BATCH_CONFIG_FILE, f"Batch {'ON' if enabled else 'OFF'}", content_str,
+                                 branch=FAVORITES_BRANCH)
                 return True
             except Exception:
                 return False
@@ -195,6 +203,10 @@ def get_growth_color(val):
     return "#555555" 
 
 def render_earnings_menu():
+    # 실적 데이터는 batch-state 브랜치에 있다(earnings_store 머리 주석). 토큰을 넘기면
+    # raw(CDN) 대신 Contents API로 읽어 배치가 올린 직후에도 바로 보인다.
+    earnings_store.set_token(st.secrets.get("GH_PAT") or st.secrets.get("GITHUB_TOKEN", ""))
+
     refresh_count = st.session_state.get('auto_refresh_count', 0)
 
     if 'favorites' not in st.session_state or refresh_count > st.session_state.get('last_refresh', -1):

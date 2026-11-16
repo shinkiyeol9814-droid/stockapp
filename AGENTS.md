@@ -69,7 +69,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `valuation.py` | 가치평가 탭 UI + 공유 데이터 함수(`get_hybrid_financials` 등) |
 | `ui_surge.py` | **거래대금 급증 스크리너 탭 — 별도 리포 `kosdaq-surge`가 만든 JSON을 읽어 그리기만 함** |
 | `ui_macro.py` | 매크로 지표 탭 (지수 밴드/외국인 보유액/환율/금리/원자재/메모리/미국부채/**수급 건전성**/**신용 스프레드**/지수·금리 비교) |
-| `ui_earnings.py` | 실적 탭 — 관심종목(별)은 **`batch-state` 브랜치**의 `data/earnings/favorites.json`에 저장(2026-11-09~, main 커밋은 앱 재시작이라 — 아래 '배포 브랜치에 커밋하지 않는 것') |
+| `ui_earnings.py` | 실적 탭 — 관심종목(별)·배치 ON/OFF·**실적 데이터 본체**가 전부 **`batch-state` 브랜치**에 있다(main 커밋은 앱 재시작이라 — 아래 '배포 브랜치에 커밋하지 않는 것') |
 | `ui_report.py` | 레포트 탭 |
 | `new_high.py` | 신고가 탭 (아래에 섹터별 등락률 섹션. 종목별 뉴스 펼침은 2026-10-30 제거). '노션' 열 — 노션 기업분석 DB에 있는 종목은 그 페이지 링크, 글자는 노션 등급(2026-11-13, `ui_company.notion_db_index`로 공백 뺀 종목명 매칭) |
 | `ui_sector.py` | 섹터별 등락률 (Top5 + 이슈 뉴스) — 2026-10-30부터 탭이 아니라 신고가 탭 아래 섹션(`render_sector_section`) |
@@ -78,7 +78,7 @@ st.metric(..., delta_color="inverse")  # 여전히 초록 포함
 | `trade_tenday.py` | **수출입 10일 단위 잠정치 (관세청, 지연 1일) — 월간 확정치가 1~2개월 늦어 월중 방향을 보는 유일한 경로** |
 | `trade_items.py` | **수출입 세부품목 카탈로그 (HS코드 ↔ 관련 상장종목, 73개/11테마)** |
 | `krx_listing.py` | **KRX 종목목록 조회 (다중 소스 폴백 + 디스크 캐시)** |
-| `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리)** |
+| `earnings_store.py` | **실적 데이터 저장소 (분기별 파일 분리). 파일은 `batch-state` 브랜치에 있다 — 로컬에 있으면 로컬, 없으면 원격(2026-11-16~)** |
 | `market_calendar.py` | **KRX 개장일 판정 — 배치가 휴장일에 헛돌지 않게 (`skip_if_closed`)** |
 | `kofia_flow.py` | **투자자예탁금·신용거래융자 잔고·반대매매 (금투협 통계, data.go.kr 15094809) — 앱이 직접 조회, 배치 없음** |
 | `lithium_source.py` | **리튬(TE) 현재가 + 그 값의 실제 날짜(직전 GFEX 거래일) — 배치·앱 공용** |
@@ -133,8 +133,12 @@ data/
   listing/krx_listing.csv        # 종목목록 시드 (최후 폴백, 배치가 매일 갱신)
   macro/{dram,ddr4,lithium}_cache.json   # 스팟 가격 누적 (예전엔 리포지토리 루트)
   macro/us_debt_cache.json       # 미국 연방부채 (재무부 API, 3년치)
-  earnings/index.json            # 보유 분기 목록
-  earnings/q_2026_2Q.json        # 분기별 실적 (단일 4MB 파일에서 분리)
+  earnings/…                     # ⚠️ main에 없다 — batch-state 브랜치에 있다(아래 '배포 브랜치')
+    index.json                   #   보유 분기 목록
+    q_2026_2Q.json               #   분기별 실적 (단일 4MB 파일에서 분리)
+    batch_config.json            #   배치 ON/OFF (앱이 쓴다)
+    favorites.json               #   관심종목 (앱이 쓴다)
+    last_sync.txt                #   수집 재개 지점 (배치 전용)
   broker_report/*.json           # 날짜별, 180일 보존
   new_high/*.json                # 날짜별, 180일 보존
   dart/{종목코드}.json            # 재고자산·수주잔고·가동률 (dart 배치가 수집, 앱은 읽기만)
@@ -433,8 +437,28 @@ ECOS의 `sample` 키는 **1회 10건 제한**(`ERROR-301`)이라 시계열에 �
 main에 push하면 Streamlit Cloud가 **앱을 재시작**하고, 그 순간 접속하면 인증 리디렉션이 꼬일 수 있다
 (아래 '절전과 리디렉션 루프'). 그래서 앱이 읽지 않거나 자주 바뀌는 상태는 `batch-state` 브랜치에 둔다:
 급등알림 `alerted_today.json`, 실적 `last_sync.txt`, **관심종목 `favorites.json`**(별 하나에 커밋 하나 —
-한 달 66번 재시작이었다). main의 `data/earnings/favorites.json`은 옮기기 전 마지막 값이고, batch-state에
-파일이 없을 때만 읽는다. batch-state는 세 곳이 같이 쓰므로 배치의 push는 rebase 후 3회 재시도한다.
+한 달 66번 재시작이었다), **배치 ON/OFF `batch_config.json`**, 그리고 2026-11-16부터 **실적 데이터 본체**
+(`q_*.json`·`index.json`). main의 `favorites.json`·`batch_config.json`은 옮기기 전 마지막 값이고, batch-state에
+파일이 없을 때만 읽는다. batch-state는 네 곳이 같이 쓰므로 배치의 push는 rebase 후 재시도한다.
+
+> **실적 데이터를 옮긴 이유와 읽는 법** — 배치가 평일 08:00~18:00을 30분마다 도는데 `q_*.json`을
+> main에 커밋하니 **앱이 하루 20번 재시작**했다. 옮긴 뒤 main 커밋은 0이다.
+> `earnings_store`가 **로컬 파일이 있으면 로컬, 없으면 batch-state**로 갈린다 — 배치 러너는
+> 워크플로우가 받아 두니 로컬, 앱은 없으니 원격이다. 그래서 **`data/earnings/q_*.json`과
+> `index.json`은 `.gitignore`에 있다. 빼지 말 것** — main에 그 파일이 생기는 순간 앱이
+> '로컬이 있다'로 보고 옛 값을 영영 읽는다.
+> - 리포가 공개라 토큰 없이 raw로 받힌다(실측 1.8MB 0.19초 · 1.1MB 0.13초). 토큰이 있으면
+>   Contents API를 먼저 쓴다 — `ui_earnings`가 `set_token()`으로 넘긴다.
+> - ⚠️ **raw의 404는 믿지 말 것.** CDN이 직전 404를 몇 분 물고 있어, 방금 올린 파일이 없는 것처럼
+>   보인다(실측: batch-state에 올린 직후 raw는 계속 404인데 API는 바로 200). 새 분기 파일이 처음
+>   생길 때 걸리는 자리라 `_fetch_remote`가 raw 404면 API로 한 번 더 확인한다.
+> - 조회가 **실패**하면 `data/earnings/.cache/`의 마지막 사본으로 버틴다. 받은 내용을 `data/earnings/`에
+>   쓰면 안 된다 — 그 순간 '로컬이 있다'가 되어 그 값에 묶인다.
+> - 워크플로우의 저장 단계는 **이 배치가 쓰는 파일만**(`q_*.json`·`index.json`·`last_sync.txt`) 되돌려
+>   놓는다. `favorites.json`·`batch_config.json`은 주인이 앱이라, 통째로 덮으면 배치가 도는 몇 분 사이에
+>   누른 별이 옛 값으로 되돌아간다.
+> - 급등알림 배치(`surge_batch.yml`)도 `get_today_earnings_map()`에서 실적을 읽으므로 같은 클론으로
+>   같이 받는다(4.4MB — 그 워크플로우가 매번 하는 `pip install` 옆에서는 티도 안 난다).
 
 ### 정기 실행은 cron-job.org tick 하나로 (`scheduler.yml`, 2026-11-09)
 GitHub 자체 `schedule`은 **7~10시간 늦게** 돈다(실측: 18:00 예정 매크로가 01:30, 18:30 지수 PER·PBR이

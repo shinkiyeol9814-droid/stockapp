@@ -2,10 +2,11 @@ name: Earnings Screening Auto Batch
 
 on:
   repository_dispatch:
-    types: [run_earnings_batch] 
+    types: [run_earnings_batch]
   workflow_dispatch:
 
-# 💡 [핵심 추가] 두 개의 배치가 겹치지 않게 철벽 방어!
+# 💡 두 개의 배치가 겹치지 않게 — batch-state에 force 없이 쌓아 올리므로
+# 동시에 돌면 서로의 커밋 위로 rebase 하느라 느려지기만 한다.
 concurrency:
   group: "earnings-batch"
   cancel-in-progress: false # 돌고 있는 게 있으면 새 작업은 대기(skip)합니다.
@@ -15,6 +16,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # 💡 실적 데이터 전체(q_*.json · index.json · batch_config.json · last_sync.txt)가
+      # 배포 브랜치(main)가 아니라 batch-state에 있다(2026-11-16). main에 두면 이 배치가
+      # 30분마다 커밋하면서 Streamlit Cloud가 그때마다 앱을 재시작했다 — 평일 하루 20번이고,
+      # 재시작 순간에 접속하면 인증 리디렉션이 꼬여 앱이 아예 안 열린다
+      # (급등알림 상태·관심종목을 옮긴 것과 같은 이유, surge_batch.yml 주석 참고).
+      # 클론은 저장 단계에서도 그대로 다시 쓴다.
+      - name: Restore earnings state
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
+          WORK="$RUNNER_TEMP/state"
+          rm -rf "$WORK"
+          git clone --depth 1 --branch batch-state "$URL" "$WORK" 2>/dev/null || {
+            git clone --depth 1 "$URL" "$WORK"
+            git -C "$WORK" checkout --orphan batch-state
+            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
+          }
+          mkdir -p data/earnings "$WORK/data/earnings"
+          cp "$WORK"/data/earnings/* data/earnings/ 2>/dev/null || true
+          echo "복원: $(ls data/earnings/ | tr '\n' ' ')"
 
       - name: Check batch enabled flag
         id: check_flag
@@ -46,20 +69,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 수집 재개 지점(last_sync.txt)은 batch-state에 있다 — 아래 저장 단계 주석 참고.
-      - name: Restore sync marker
-        if: steps.check_flag.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p data/earnings
-          if curl -fsSL -H "Authorization: token $GH_TOKEN"                   -H "Accept: application/vnd.github.raw"                   "https://api.github.com/repos/${{ github.repository }}/contents/data/earnings/last_sync.txt?ref=batch-state"                   -o data/earnings/last_sync.txt; then
-            echo "재개 지점 복원: $(cat data/earnings/last_sync.txt)"
-          else
-            rm -f data/earnings/last_sync.txt
-            echo "::warning::batch-state에 재개 지점이 없어 배치 기본값으로 시작합니다"
-          fi
-
       - name: Run Script
         if: steps.check_flag.outputs.skip != 'true'
         env:
@@ -71,61 +80,35 @@ jobs:
           EARNINGS_CHANNEL: ${{ secrets.EARNINGS_CHANNEL }}
         run: python batch_earnings.py
 
-      # 💡 last_sync.txt는 '언제까지 읽었나'를 기억하는 배치 전용 메모다 —
-      # 앱은 읽지 않는다. 그런데 main에 있으면 30분마다 타임스탬프 한 줄이
-      # 바뀌며 커밋이 생기고, 그 push가 Streamlit Cloud 재배포를 일으킨다.
-      # 실적 데이터는 그대로인데 앱만 하루 20~30번 재시작했다.
-      # 급등알림 상태와 같은 방식으로 batch-state 브랜치에 둔다.
-      - name: Save sync marker (off the deploy branch)
+      # 💡 main에는 아무것도 커밋하지 않는다 — 그게 이 구조의 전부다.
+      - name: Save earnings state (off the deploy branch)
         if: steps.check_flag.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          [ -f data/earnings/last_sync.txt ] || { echo "마커 없음 — 건너뜀"; exit 0; }
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
           WORK="$RUNNER_TEMP/state"
-          rm -rf "$WORK"
-          git clone --depth 1 --branch batch-state "$URL" "$WORK" 2>/dev/null || {
-            git clone --depth 1 "$URL" "$WORK"
-            git -C "$WORK" checkout --orphan batch-state
-            git -C "$WORK" rm -rf . >/dev/null 2>&1 || true
-          }
+          [ -d "$WORK/.git" ] || { echo "::error::복원 단계의 클론이 없습니다"; exit 1; }
           mkdir -p "$WORK/data/earnings"
-          cp data/earnings/last_sync.txt "$WORK/data/earnings/last_sync.txt"
-          git -C "$WORK" add data/earnings/last_sync.txt
-          git -C "$WORK" commit -m "Earnings sync marker" || { echo "변경 없음"; exit 0; }
-          # batch-state는 급등알림·실적 배치와 앱(관심종목 저장)이 같이 쓴다 — 받고 나서 올리기 전에
-          # 다른 쪽이 먼저 올렸으면 거절되므로 위에 다시 얹어 세 번까지 재시도한다(파일이 서로 달라 충돌은 없다).
-          for i in 1 2 3; do
-            git -C "$WORK" push origin batch-state && exit 0
-            git -C "$WORK" pull --rebase origin batch-state || true
-          done
-          exit 1
-
-      - name: Commit and Push
-        if: steps.check_flag.outputs.skip != 'true'
-        run: |
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "action@github.com"
-          # 💡 예전엔 `git add data/` 로 data 폴더 전체를 담았다. 그러면 이 배치가
-          # 만들지도 않은 다른 배치의 상태 파일(급등알림 alerted_today.json 등)까지
-          # 커밋에 끌려들어와, 5분마다 도는 급등 배치와 불필요하게 충돌했다.
-          # 이 배치가 실제로 쓰는 경로만 스테이징한다.
-          # last_sync.txt는 위에서 batch-state로 보냈으므로 main에는 담지 않는다.
-          git add data/earnings/
-          git reset -q data/earnings/last_sync.txt 2>/dev/null || true
-          git commit -m "Auto-update: AWAKE Earnings data" || { echo "No changes to commit"; exit 0; }
-          # 💡 다른 배치가 그 사이 push 했으면 rebase 후 재시도한다.
-          # 급등 배치가 5분 간격이라 몇 분 걸리는 배치는 경합이 흔하다.
-          BR="${{ github.ref_name }}"
+          # ⚠️ **이 배치가 쓰는 파일만 되돌려 놓는다.** favorites.json·batch_config.json은
+          # 같은 폴더에 있지만 주인이 앱이다 — 통째로 덮으면, 배치가 도는 몇 분 사이에
+          # 사용자가 누른 별이나 ON/OFF가 복원 시점의 옛 값으로 되돌아간다.
+          # 보관기간이 지나 배치가 지운 분기 파일은 저쪽에서도 지워야 한다(그냥 덮어쓰기만
+          # 하면 batch-state에 영영 남는다).
+          rm -f "$WORK"/data/earnings/q_*.json
+          cp data/earnings/q_*.json data/earnings/index.json "$WORK/data/earnings/"
+          if [ -f data/earnings/last_sync.txt ]; then
+            cp data/earnings/last_sync.txt "$WORK/data/earnings/"
+          fi
+          git -C "$WORK" add -A data/earnings/
+          git -C "$WORK" commit -m "Auto-update: AWAKE Earnings data" || { echo "변경 없음"; exit 0; }
+          # batch-state는 급등알림·실적 배치와 앱(관심종목·배치 ON/OFF)이 같이 쓴다 — 받고 나서
+          # 올리기 전에 다른 쪽이 먼저 올렸으면 거절되므로 위에 다시 얹어 다섯 번까지 재시도한다.
+          # 파일이 서로 달라 내용 충돌은 안 나지만, 관심종목은 같은 폴더라 순서만 밀린다.
           for i in 1 2 3 4 5; do
-            if git pull --rebase --autostash origin "$BR" && git push origin "$BR"; then
-              echo "push 성공 (시도 $i)"; exit 0
-            fi
-            git rebase --abort 2>/dev/null || true
+            git -C "$WORK" push origin batch-state && { echo "push 성공 (시도 $i)"; exit 0; }
+            git -C "$WORK" pull --rebase origin batch-state || git -C "$WORK" rebase --abort || true
             sleep $((i * 5))
           done
           echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
-

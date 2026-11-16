@@ -37,3 +37,10 @@ data/surge_alert/
 # 실적 배치 수집 재개 지점 — batch-state 브랜치에서 관리한다.
 # main에 있으면 30분마다 타임스탬프가 바뀌며 앱이 재배포된다.
 data/earnings/last_sync.txt
+# 실적 데이터 본체는 batch-state 브랜치에 있다(2026-11-16, earnings_store 머리 주석).
+# main에 두면 배치가 30분마다 커밋해 Streamlit Cloud가 하루 20번 앱을 재시작했다.
+# ⚠️ 여기서 빼면 안 된다 — main에 이 파일이 생기는 순간 앱이 '로컬이 있다'로 보고
+#    batch-state 대신 그 옛 파일을 영영 읽는다.
+data/earnings/q_*.json
+data/earnings/index.json
+data/earnings/.cache/

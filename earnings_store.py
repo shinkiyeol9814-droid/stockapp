@@ -13,6 +13,20 @@ earnings_store.py — 실적 데이터 저장소 (분기별 파일 분리).
     과거 분기 파일은 한 번 쓰이면 다시 안 바뀌므로 git이 더 이상 안 불어난다.
   · UI는 선택된 분기 파일만 읽는다 → 실적 탭 진입이 빨라진다.
 
+━━ 어디에 두나 (2026-11-16~) ━━
+분기 파일·index.json·batch_config.json은 **batch-state 브랜치**에 있다. main에 두면
+배치가 30분마다 커밋하면서 Streamlit Cloud가 그때마다 앱을 재시작한다 — 평일 하루
+20번이었다(급등알림 상태·관심종목을 옮긴 것과 같은 이유, surge_batch.yml 주석 참고).
+
+그래서 읽기가 두 갈래다. **분기하는 기준은 로컬 파일이 있느냐 하나다**:
+  · 있으면 로컬 → 배치 러너(워크플로우가 batch-state에서 받아 둔다)와 로컬 개발
+  · 없으면 batch-state에서 받는다 → 앱(Streamlit Cloud)
+받은 내용을 EARNINGS_DIR에 쓰지 말 것 — 그 순간 '로컬이 있다'가 되어 영영 그 값에
+묶인다. 실패 대비 사본은 `.cache/`에 따로 두고, 조회가 **실패했을 때만** 쓴다.
+
+리포가 공개라 토큰 없이 raw로 받힌다(2026-11-16 실측: 1.8MB 0.19초, 1.1MB 0.13초).
+토큰이 있으면 Contents API를 먼저 쓴다 — raw는 CDN이 몇 분 캐시해서 그만큼 늦는다.
+
 ━━ 호환성 ━━
 기존 단일 파일(`earnings_data.json`)이 남아 있으면 그대로 읽어들여
 분기별 파일로 옮긴다(마이그레이션). 분기별 파일이 아직 없는 배포에서도
@@ -62,6 +76,88 @@ def _write_json(path, data):
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
 
 
+# ── batch-state에서 읽기 (앱 경로) ──────────────────────────────────────────
+_REPO = os.environ.get("EARNINGS_REPO") or "shinkiyeol9814-droid/stockapp"
+_BRANCH = os.environ.get("EARNINGS_BRANCH") or "batch-state"
+_RAW = "https://raw.githubusercontent.com/{repo}/{branch}/data/earnings/{name}"
+_API = "https://api.github.com/repos/{repo}/contents/data/earnings/{name}"
+_CACHE_DIR = os.path.join(EARNINGS_DIR, ".cache")
+_TIMEOUT = 8
+_FAIL = object()        # "못 받았다" — "없다"(None)와 구분해야 사본을 쓸지 정할 수 있다
+_token = os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN") or ""
+
+
+def set_token(tok: str) -> None:
+    """앱이 st.secrets의 토큰을 한 번 넘겨 준다 — 있으면 CDN을 안 거쳐 항상 최신이다."""
+    global _token
+    _token = str(tok or "")
+
+
+def _fetch_remote(name: str):
+    """JSON / 없으면 None / 못 받았으면 _FAIL.
+
+    ⚠️ **raw의 404는 믿지 말 것.** CDN이 직전 404를 몇 분 물고 있어서, 방금 올린
+    파일이 한동안 없는 것처럼 보인다(2026-11-16 실측: batch-state에 올린 직후 raw는
+    계속 404인데 Contents API는 바로 200). 새 분기 파일이 처음 생길 때 딱 걸리는
+    자리라, raw가 404면 API로 한 번 더 확인하고 나서 '없다'로 친다.
+    """
+    import requests
+
+    api_hdr = {"Accept": "application/vnd.github.raw"}
+    api = (_API.format(repo=_REPO, name=name), api_hdr, {"ref": _BRANCH}, True)
+    rawu = (_RAW.format(repo=_REPO, branch=_BRANCH, name=name), {}, None, False)
+    if _token:
+        # 토큰이 있으면 API가 먼저다 — 항상 최신이고 시간당 5,000건이다.
+        tries = [(api[0], dict(api_hdr, Authorization=f"token {_token}"), api[2], True), rawu]
+    else:
+        tries = [rawu, api]          # 익명 API는 시간당 60건이라 404 확인용으로만
+
+    missing = False
+    for url, headers, params, authoritative in tries:
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=_TIMEOUT)
+        except Exception as e:
+            print(f"[earnings_store] {name} 조회 실패: {type(e).__name__}: {e}")
+            continue
+        if r.status_code == 404:
+            if authoritative:
+                return None      # 그 분기가 없는 것 — 사본으로 되살리면 안 된다
+            missing = True
+            continue
+        if r.status_code != 200:
+            print(f"[earnings_store] {name} 조회 HTTP {r.status_code}")
+            continue
+        try:
+            return r.json()
+        except ValueError:
+            print(f"[earnings_store] {name} JSON 파싱 실패 ({len(r.content)}바이트)")
+    return None if missing else _FAIL
+
+
+def _save_cache(name: str, data) -> None:
+    # 읽기 전용 파일시스템 등에서 실패해도 조회 자체는 성공했으니 조용히 넘어간다.
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        with open(os.path.join(_CACHE_DIR, name), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+    except OSError:
+        pass
+
+
+def _read_store(name: str, default):
+    """로컬에 있으면 로컬, 없으면 batch-state. 못 받으면 마지막 사본."""
+    local = os.path.join(EARNINGS_DIR, name)
+    if os.path.exists(local):
+        return _read_json(local, default)
+    got = _fetch_remote(name)
+    if got is _FAIL:
+        return _read_json(os.path.join(_CACHE_DIR, name), default)
+    if got is None:
+        return default
+    _save_cache(name, got)
+    return got
+
+
 def _quarter_sort_key(q: str):
     """'2026.2Q' → (2026, 2). 분기미상 등은 맨 뒤로."""
     m = re.match(r"(\d{4})\.(\d)[Qq]", str(q or ""))
@@ -70,7 +166,7 @@ def _quarter_sort_key(q: str):
 
 def available_quarters() -> list[str]:
     """보유 중인 분기 목록 (최신순). 인덱스가 없으면 디렉터리에서 유추."""
-    idx = _read_json(INDEX_FILE, None)
+    idx = _read_store("index.json", None)
     if isinstance(idx, dict) and idx.get("quarters"):
         qs = list(idx["quarters"])
     else:
@@ -93,7 +189,7 @@ def available_quarters() -> list[str]:
 
 def load_quarter(quarter: str) -> list[dict]:
     """한 분기만 읽는다 (UI가 쓰는 경로). 분기 파일이 없으면 레거시에서 걸러낸다."""
-    rows = _read_json(quarter_path(quarter), None)
+    rows = _read_store(os.path.basename(quarter_path(quarter)), None)
     if rows is not None:
         return rows
     return [r for r in _read_json(LEGACY_FILE, []) if (r.get("해당분기") or _UNKNOWN) == quarter]
@@ -104,7 +200,7 @@ def load_all() -> list[dict]:
     out = []
     seen_any = False
     for q in available_quarters():
-        rows = _read_json(quarter_path(q), None)
+        rows = _read_store(os.path.basename(quarter_path(q)), None)
         if rows is not None:
             seen_any = True
             out.extend(rows)
