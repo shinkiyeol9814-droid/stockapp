@@ -10,6 +10,7 @@ st-key-hdr_* / st-key-inline_*)가 맡는다.
 """
 import concurrent.futures
 import html
+import re
 import threading
 import time
 
@@ -81,9 +82,14 @@ def pad_tap_target(text: str, width_px: int = NAME_COL_PX) -> str:
 
 
 def naver_link(code, name=None, width_px: int = NAME_COL_PX) -> str:
-    """'…?code=005930#삼성전자'. 코드가 없으면 빈 문자열(칸이 비고 링크도 없다)."""
-    c = str(code or "").strip()
-    if not c.isdigit() or len(c) != 6:
+    """'…/stock/005930#삼성전자'. 코드가 없으면 빈 문자열(칸이 비고 링크도 없다).
+
+    ⚠️ 코드가 숫자만은 아니다 — KRX가 신규 상장·우선주에 영문이 섞인 6자리를 준다
+    (매드업 0039P0, 삼성에피스홀딩스 0126Z0, CJ4우(전환) 00104K). 숫자만 받던 시절엔
+    그 종목들의 이름 칸이 통째로 비었다(2026-11-17 제보, 저장된 급증·투신 파일에 42종목).
+    네이버는 이 코드로도 종목 페이지가 정상으로 열린다(휴대폰·데스크톱 실측)."""
+    c = str(code or "").strip().upper()
+    if not re.fullmatch(r"[0-9][0-9A-Z]{5}", c):      # 첫 자리는 늘 숫자 — 실적의 잘린 코드(A04391)는 거른다
         return ""
     # 이름이 비면 정규식이 안 걸려 URL이 통째로 보이므로 코드로 메운다.
     # 뒤의 공백은 탭 영역을 넓히려는 것 — 프래그먼트라 네이버 요청에는 안 간다.
