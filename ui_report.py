@@ -7,7 +7,7 @@ import glob
 import re
 import html
 
-from ui_mobile import disable_keyboard
+from ui_mobile import disable_keyboard
 from report_dedupe import dedupe
 
 # 💡 하이브리드 포맷 리더: 신규/구형 파일 모두 호환하여 예쁜 옵션 리스트 생성
@@ -84,8 +84,13 @@ def render_report_summary():
             results = dedupe(results)
             merged = raw_n - len(results)
             dup_note = f" | 🔁 중복 {merged}건 제외" if merged else ""
+            # stockinfo7(@companyreport)에서 새로 들어온 몫 — 그쪽이 실제로 돌고 있는지
+            # 화면에서도 보이게(2026-11-18 추가. 그 전 파일엔 0건이라 안 적는다).
+            n_si7 = sum(1 for r in results
+                        if isinstance(r, dict) and r.get('source_type') == 'stockinfo7')
+            si7_note = f" (그중 stockinfo7 {n_si7}건)" if n_si7 else ""
             st.caption(f"📅 레포트 추출 및 분석 시점: {analysis_time} | "
-                       f"📊 총 {len(results)}개의 레포트가 분석되었습니다.{dup_note}")
+                       f"📊 총 {len(results)}개의 레포트가 분석되었습니다.{si7_note}{dup_note}")
             
             if results:
                 df = pd.DataFrame(results)

@@ -71,3 +71,11 @@ jobs:
             sleep $((i * 5))
           done
           echo "::error::push 실패 - 5회 재시도 후 포기"; exit 1
+
+      # 💡 stockinfo7(@companyreport) 수집이 조용히 0건으로 끝나지 않게 하는 관문.
+      # 받으러 간 PDF가 한 건도 안 왔거나 목록을 못 읽었으면 상태 파일에 'problem'이 남고,
+      # 여기서 빨간불이 된다 → GitHub이 리포 주인에게 메일을 보낸다(경고 주석은 메일이 안 간다).
+      # 커밋 **뒤에** 둔다: 빨간불이어도 텔레그램 쪽 분석 결과는 이미 저장돼 있다.
+      - name: Validate stockinfo7
+        if: always()
+        run: python stockinfo7_reports.py --audit

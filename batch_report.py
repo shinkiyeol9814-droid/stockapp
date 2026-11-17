@@ -1,7 +1,7 @@
 import os
 import io
 import re
-import json
+import json
 import glob
 import asyncio
 import time
@@ -14,7 +14,7 @@ from telethon.sessions import StringSession
 from google import genai
 import FinanceDataReader as fdr
 
-from krx_listing import fetch_krx_listing, fetch_krx_marcap
+from krx_listing import fetch_krx_listing, fetch_krx_marcap
 from report_dedupe import dedupe
 
 # 환경 변수 설정
@@ -182,6 +182,75 @@ def _extract_report_text(pdf_path, max_pages=8, budget=6000):
     return "\n".join(out)
 
 
+# 💡 기업 리포트만 남기는 거름망 — 텔레그램 PDF 채널과 stockinfo7이 같이 쓴다.
+#    이름(파일명·제목)에 블랙리스트 낱말이 있으면 산업·시황 노트로 보고 버리고,
+#    본문에 투자의견·목표가 낱말이 하나도 없으면 버린다.
+_BLACKLIST = [
+    '산업', '시황', 'weekly', '위클리', 'daily', '데일리',
+    'morning', '모닝', 'macro', '매크로', '전략', 'strategy',
+    'etf', '채권', 'spot',
+    '섹터', '마켓', '클로징', '증시', '부동산', '포트폴리오', '시장_전망'
+]
+_WHITELIST = ['목표주가', '목표가', '투자의견', 'target price', '매수', 'buy', 'not rated', 'n/r']
+
+
+def _is_wanted(name, text):
+    """(남길지, 버린 사유). text가 비어 있으면 이름만 본다 — stockinfo7이 PDF를 받기 전에
+    한 번 거르는 데 쓴다(받아 봐야 버릴 걸 안 받으려고)."""
+    low = str(name or "").lower()
+    black = [w for w in _BLACKLIST if w in low]
+    if black:
+        return False, f"블랙리스트 키워드 '{black[0]}' 포함"
+    if text and not any(w in text.lower() for w in _WHITELIST):
+        return False, "투자의견/목표가 등 핵심 키워드 없음"
+    return True, ""
+
+
+def _recent_results(days=5):
+    """최근 며칠 결과 파일의 리포트들 — stockinfo7이 이미 받은 걸 다시 받지 않게."""
+    cutoff = (datetime.utcnow() + timedelta(hours=9) - timedelta(days=days)).strftime("%Y%m%d")
+    out = []
+    for path in glob.glob(os.path.join(_REPORT_DIR, "*report_*.json")):
+        m = re.search(r"_(\d{8})\.json$", path)
+        if not m or m.group(1) < cutoff:
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            out.extend(r for r in (d.get("results") or []) if isinstance(r, dict))
+        except Exception:
+            continue
+    return out
+
+
+def collect_stockinfo7(first_id):
+    """stockinfo7(텔레그램 @companyreport) 리포트 → 문서 목록. 사정은 stockinfo7_reports 머리말.
+    여기서 실패해도 텔레그램 수집분은 그대로 분석한다(모듈이 예외를 삼키고 상태에 남긴다)."""
+    import stockinfo7_reports as si7
+    from report_dedupe import is_same_report
+
+    print("\n📥 stockinfo7(@companyreport) 리포트 수집 시작")
+    have = _recent_results()
+
+    def already_have(stock, broker, title):
+        probe = {"종목명": stock, "증권사": broker, "레포트 제목": title}
+        return any(is_same_report(probe, r) for r in have)
+
+    try:
+        docs = si7.collect(_extract_report_text, _is_wanted, already_have)
+    except Exception as e:
+        # 모듈 안에서 못 잡은 버그 — 그래도 텔레그램 쪽은 살린다. 점검이 잡도록 남긴다.
+        state = si7.load_state()
+        state["problem"] = f"수집 중 예외: {type(e).__name__}: {e}"
+        si7.save_state(state)
+        print(f"::warning title=레포트 stockinfo7::{state['problem']}")
+        return []
+    for i, d in enumerate(docs):
+        d["id"] = str(first_id + i)
+        print(f"  📄 [성공] {d['source']} (ID: {d['id']})")
+    return docs
+
+
 # 💡 데이터 수집 함수 (Fix된 시간 구간 적용)
 async def get_all_reports_from_telegram(client, start_time, end_time):
     print(f"\n📥 텔레그램 레포트 수집 시작")
@@ -245,24 +314,9 @@ async def get_all_reports_from_telegram(client, start_time, end_time):
                         if not valid_text:
                             print(f"  ⏩ [제외] {file_name} (사유: 유효 텍스트 없음/통이미지)")
                         else:
-                            file_name_lower = file_name.lower()
-                            text_lower = valid_text.lower()
-                            
-                            blacklist = [
-                                '산업', '시황', 'weekly', '위클리', 'daily', '데일리', 
-                                'morning', '모닝', 'macro', '매크로', '전략', 'strategy', 
-                                'etf', '채권', 'spot', 
-                                '섹터', '마켓', '클로징', '증시', '부동산', '포트폴리오', '시장_전망'
-                            ]
-                            matched_black = [w for w in blacklist if w in file_name_lower]
-                            
-                            whitelist = ['목표주가', '목표가', '투자의견', 'target price', '매수', 'buy', 'not rated', 'n/r']
-                            has_white = any(w in text_lower for w in whitelist)
-                            
-                            if matched_black:
-                                print(f"  ⏩ [제외] {file_name} (사유: 블랙리스트 키워드 '{matched_black[0]}' 포함)")
-                            elif not has_white:
-                                print(f"  ⏩ [제외] {file_name} (사유: 투자의견/목표가 등 핵심 키워드 없음)")
+                            wanted, why = _is_wanted(file_name, valid_text)
+                            if not wanted:
+                                print(f"  ⏩ [제외] {file_name} (사유: {why})")
                             else:
                                 docs_to_process.append({
                                     "id": str(doc_id_counter),
@@ -479,7 +533,9 @@ def save_and_match_to_json(analyzed_data, df_listing, file_name, report_type_nam
                 item['source_type'] = 'butler_works'
                 unique_results[dup_key] = item
         else:
-            item['source_type'] = 'butler_works' if is_butler else 'pdf'
+            src = str(item.get('source') or '')
+            item['source_type'] = ('butler_works' if is_butler
+                                   else 'stockinfo7' if src.startswith('stockinfo7:') else 'pdf')
             unique_results[dup_key] = item
             new_matched_count += 1
             
@@ -564,6 +620,9 @@ async def main():
     
     docs_to_process = await get_all_reports_from_telegram(client_tg, fetch_start, fetch_end)
     await client_tg.disconnect()
+
+    # stockinfo7은 시간 구간이 아니라 id 순번으로 이어 읽는다(지난번 마지막 id 다음부터).
+    docs_to_process += collect_stockinfo7(len(docs_to_process) + 1)
     
     if not docs_to_process:
         print("조건에 맞는 새로운 레포트/텍스트가 없습니다.")
