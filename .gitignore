@@ -24,6 +24,9 @@ temp_pdfs/
 # 섹터 탭 런타임 스냅샷 (장 시작 전 직전 장 상태를 보여주기 위한 캐시)
 # 매 조회마다 바뀌고, 커밋되면 오래된 값이 "직전 장"으로 표시될 수 있다.
 data/sector/last_snapshot.json
+# 매크로 배치가 "이번 실행에서 통째로 못 받아온 소스"를 적어 두는 쪽지.
+# 같은 잡 안에서 --audit이 읽고 버린다 (batch_macro._FAIL_MARK 머리말).
+data/macro/.fetch_fail.json
 
 # DART corp_code 매핑 캐시 (7일마다 자동 재생성 · 175KB)
 # 커밋해도 되지만 주기적으로 통째로 바뀌어 diff만 키운다.

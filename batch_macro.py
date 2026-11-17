@@ -91,6 +91,34 @@ def _warn(msg: str) -> None:
     print(f"::warning title=매크로 배치::{msg}")
 
 
+# 💡 "이번 실행에서 받아오기를 시도했는데 통째로 실패한 것"을 적어 두는 쪽지.
+#
+# ⚠️ 왜 필요한가: --audit은 **파일의 마지막 날짜**만 보므로, 허용 일수 안쪽에서
+#    소스가 죽으면 조용히 넘어간다. 2026-11-17 FRED 6계열이 전멸했는데 신용
+#    스프레드 파일이 5일 전(허용 6일)이라 점검은 "모든 소스가 최신"이라고 했다.
+#    경고 주석은 떴지만 그건 메일이 안 간다 — 빨간불만 간다.
+#
+# 같은 잡 안에서만 쓰는 임시 쪽지라 커밋되면 안 된다(.gitignore에 있다).
+_FAIL_MARK = os.path.join(_MACRO_DIR, ".fetch_fail.json")
+_FRED_TAGS = {"credit": "신용 스프레드(FRED)", "inflation": "미국 물가(FRED)"}
+
+
+def _mark_fail(name: str, msg: str | None) -> None:
+    """msg가 있으면 적고, None이면 지운다(이번엔 성공했다는 뜻)."""
+    try:
+        cur = _read_any(_FAIL_MARK)
+        cur = cur if isinstance(cur, dict) else {}
+        if msg is None:
+            cur.pop(name, None)
+        else:
+            cur[name] = msg
+        os.makedirs(_MACRO_DIR, exist_ok=True)
+        with open(_FAIL_MARK, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False)
+    except OSError:
+        pass          # 쪽지를 못 써도 배치 자체는 계속 돈다
+
+
 def _append_if_new(path: str, price: float | None) -> bool:
     if price is None:
         return False
@@ -363,7 +391,25 @@ def fetch_sp500_valuation() -> dict:
 #
 # 레벨(지수값)을 그대로 저장한다 — YoY 계산은 앱에서 한다. 정의를 바꿔도
 # 다시 받을 필요가 없고, 레벨이 원본이라 검증도 쉽다.
+#
+# ⚠️ **fred.stlouisfed.org(웹)는 수시로 멈춘다 — api.stlouisfed.org(API)는 멀쩡하다.**
+# 2026-11-17 실측. 그날 18:00 러너 실행에서 6개 계열이 **전부** 25초 read timeout이었고
+# (경고 주석으로 남았다), 같은 시각 로컬에서 재보니 8초 타임아웃으로 **12번 연속 실패**였다.
+# curl도 똑같이 멈추니 파이썬 클라이언트 문제가 아니고, 러너 IP 문제도 아니다.
+# 그런데 **같은 순간** api.stlouisfed.org는 0.7초에 응답했다(키가 없어 400이지만 그게
+# '살아 있다'는 증거다). fred.stlouisfed.org는 CSV뿐 아니라 **루트 페이지와 alfred까지**
+# 같이 멈췄다 — 즉 웹 프런트엔드만 죽는다. 멀쩡한 구간과 먹통 구간이 몇 분 단위로
+# 번갈아 오므로(실측: 0.5초 성공 두 번 → 12번 연속 실패) 재시도만으로는 못 메운다.
+#
+# 그래서 받는 순서는 **API(키가 있으면) → CSV**다. 키는 무료·즉시 발급이고
+# (https://fredaccount.stlouisfed.org/apikeys) Actions Secret `FRED_API_KEY`로 넣는다.
+# 키가 없으면 예전처럼 CSV만 쓰되 짧은 타임아웃으로 여러 번 두드린다 — 성공하는
+# 응답은 **0.5~0.7초**에 오므로 10초를 넘긴 시도는 기다려도 안 온다.
 _FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
+_FRED_API = ("https://api.stlouisfed.org/fred/series/observations"
+             "?series_id={sid}&api_key={key}&file_type=json")
+_FRED_TRIES = 4           # 시도 횟수(엔드포인트별)
+_FRED_TIMEOUT = 10        # 초. 성공은 1초 안에 오므로 길게 잡아도 소득이 없다
 _INFLATION_SERIES = {
     "cpi":      "CPIAUCSL",   # 소비자물가 (계절조정, 1947~)
     "core_cpi": "CPILFESL",   # 식품·에너지 제외 (1957~)
@@ -392,34 +438,75 @@ _CREDIT_SERIES = {
 _CREDIT_KEEP_DAYS = 365 * 20
 
 
+def _fred_rows(pairs) -> list:
+    """[(날짜문자열, 값문자열), ...] -> [[epoch_ms, 값], ...]. 결측은 버린다."""
+    rows = []
+    for ds, vs in pairs:
+        if vs in (".", "", None):
+            continue              # FRED는 결측을 "."으로 준다
+        try:
+            d = datetime.strptime(str(ds).strip()[:10], "%Y-%m-%d").date()
+            rows.append([_date_to_ms(d), round(float(vs), 4)])
+        except ValueError:
+            continue
+    rows.sort()
+    return rows
+
+
+def _fred_one(key: str, sid: str) -> tuple[list, str]:
+    """한 계열을 받아 ([[ms, 값], ...], 실패사유)로 돌려준다. 성공하면 사유는 빈 문자열.
+
+    API(키가 있을 때) -> CSV 순서로, 엔드포인트마다 _FRED_TRIES번 두드린다
+    (왜 두 경로인지는 위 _FRED_CSV 머리말)."""
+    import time
+
+    key_env = (os.environ.get("FRED_API_KEY") or "").strip()
+    plans = []
+    if key_env:
+        plans.append(("API", _FRED_API.format(sid=sid, key=key_env)))
+    plans.append(("CSV", _FRED_CSV.format(sid)))
+
+    last = "시도하지 않았습니다"
+    for kind, url in plans:
+        for i in range(_FRED_TRIES):
+            try:
+                r = requests.get(url, headers=_UA_HEADERS, timeout=_FRED_TIMEOUT)
+                if r.status_code != 200:
+                    last = f"{kind} HTTP {r.status_code}"
+                    if r.status_code in (400, 403, 404):
+                        break     # 키가 틀렸거나 계열이 없는 것 — 재시도해도 같다
+                    continue
+                if kind == "API":
+                    obs = (r.json().get("observations") or [])
+                    rows = _fred_rows([(o.get("date"), o.get("value")) for o in obs])
+                else:
+                    rows = _fred_rows(
+                        [tuple(ln.strip().split(",")[:2])
+                         for ln in r.text.splitlines()[1:] if "," in ln])
+                if rows:
+                    return rows, ""
+                last = f"{kind} 응답에 값이 없습니다"
+            except Exception as e:
+                last = f"{kind} {type(e).__name__}: {e}"
+            time.sleep(1.5 * (i + 1))
+    return [], last
+
+
 def _fetch_fred(series: dict, tag: str) -> dict:
     """{키: [[epoch_ms, 값], ...]}. 실패한 항목은 빼고 돌려준다."""
     out = {}
     for key, sid in series.items():
-        try:
-            r = requests.get(_FRED_CSV.format(sid), headers=_UA_HEADERS, timeout=25)
-            if r.status_code != 200:
-                _warn(f"FRED {key}({sid}) HTTP {r.status_code} — 이 계열은 갱신되지 않습니다")
-                continue
-            rows = []
-            for line in r.text.splitlines()[1:]:
-                parts = line.strip().split(",")
-                if len(parts) < 2 or parts[1] in (".", ""):
-                    continue          # FRED는 결측을 "."으로 준다
-                try:
-                    d = datetime.strptime(parts[0].strip(), "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-                try:
-                    rows.append([_date_to_ms(d), round(float(parts[1]), 4)])
-                except ValueError:
-                    continue
-            if rows:
-                rows.sort()
-                out[key] = rows
-                print(f"[{tag}] {key}({sid}): {len(rows)}건 (최신 {rows[-1][1]})")
-        except Exception as e:
-            _warn(f"FRED {key}({sid}) 실패: {type(e).__name__}: {e}")
+        rows, why = _fred_one(key, sid)
+        if rows:
+            out[key] = rows
+            print(f"[{tag}] {key}({sid}): {len(rows)}건 (최신 {rows[-1][1]})")
+        else:
+            _warn(f"FRED {key}({sid}) 실패: {why} — 이 계열은 갱신되지 않습니다")
+    # 💡 한 계열도 못 받았으면 쪽지를 남긴다 — --audit이 이걸 보고 빨간불을 낸다
+    #    (파일 날짜가 허용 범위 안이라 조용히 넘어가던 자리. _FAIL_MARK 머리말 참고).
+    _mark_fail(_FRED_TAGS.get(tag, tag),
+               f"{len(series)}개 계열을 전부 못 받았습니다 — 마지막 사유: {why}"
+               if series and not out else None)
     return out
 
 
@@ -627,6 +714,11 @@ def _check(name: str, path: str, allow: int, today: date) -> str | None:
 def audit_freshness() -> list[str]:
     today = datetime.now(KST).date()
     problems = [p for p in (_check(n, pa, a, today) for n, pa, a in _FRESHNESS) if p]
+
+    # 이번 실행에서 **아예 못 받아온 것** — 파일 날짜가 허용 범위 안이어도 빨간불이다
+    # (_FAIL_MARK 머리말: 날짜만 보면 소스가 죽은 날을 놓친다).
+    for name, why in (_read_any(_FAIL_MARK) or {}).items():
+        problems.append(f"{name}: {why}")
 
     # 비교 차트(S&P·미국채 10년)는 연도별 파일 — 올해 것을 본다.
     p = _check("비교 차트(S&P·금리)",

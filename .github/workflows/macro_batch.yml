@@ -48,6 +48,10 @@ jobs:
         env:
           SCHED: ${{ github.event.schedule }}
           ONLY: ${{ github.event.inputs.only }}
+          # 💡 FRED는 웹(fred.stlouisfed.org)이 수시로 멈추는데 API
+          # (api.stlouisfed.org)는 멀쩡하다 — batch_macro._FRED_CSV 머리말.
+          # 키가 없으면 예전처럼 CSV만 재시도하므로, 비어 있어도 배치는 돈다.
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           # 저녁 스케줄에서는 부채만 갱신한다 (이유는 batch_macro.py __main__ 주석).
           if [ "$SCHED" = "0 23 * * 1-5" ] || [ "$ONLY" = "us_debt" ]; then

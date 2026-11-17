@@ -489,13 +489,33 @@ GitHub 자체 `schedule`은 **7~10시간 늦게** 돈다(실측: 18:00 예정 �
 > **딱 한 줄**, 11/08에 기능을 붙이며 로컬에서 만든 그 파일 그대로였다 — 즉 **러너에서 단 한 번도
 > 성공한 적이 없다.** `us_inflation.json`도 같았다. 같은 스크립트의 FRED가 **아닌** 것들
 > (야후 `market_cache`·`compare`, CNN `fng`, 재무부 `us_debt`)은 매일 멀쩡히 들어왔고,
-> `compare`는 스크립트 **맨 마지막** 단계라 중간에 죽은 것도 아니다. FRED CSV는 같은 시각
-> 로컬에서는 정상(11/12까지, 793행)이라 **러너(미국 클라우드 IP)에서만** 막히는 것으로 보인다.
-> 실패 사유(403인지 타임아웃인지)는 아직 모른다 — 러너 로그는 admin 토큰이 필요해서
-> 익명으로는 `Must have admin rights`다. 그래서 먼저 경고부터 남기게 했다.
+> `compare`는 스크립트 **맨 마지막** 단계라 중간에 죽은 것도 아니다.
+>
+> **2026-11-17에 사유가 잡혔다 — `fred.stlouisfed.org`(웹)의 read timeout이다.**
+> 그날 18:00 러너 실행의 공개 주석에 6개 계열이 전부
+> `ReadTimeout ... (read timeout=25)`로 남았다(로그는 admin 토큰이 필요하지만
+> **주석은 익명 API로 읽힌다** — 그래서 경고부터 남기게 한 것이 바로 먹혔다).
+> 러너 IP 문제도 파이썬 문제도 아니다: 같은 시각 **로컬에서 8초 타임아웃으로
+> 12번 연속 실패**했고 `curl`도 똑같이 멈췄다. 그런데 **같은 순간**
+> `api.stlouisfed.org`는 0.7초에 응답했고(키가 없어 400이지만 그게 살아 있다는
+> 증거다), `fred.stlouisfed.org`는 CSV뿐 아니라 **루트 페이지와 `alfred`까지**
+> 같이 멈췄다 — 즉 **웹 프런트엔드만 죽는다.** 멀쩡한 구간과 먹통 구간이 몇 분
+> 단위로 번갈아 온다(0.5초 성공 두 번 → 12번 연속 실패 → 1초 성공).
 
+- **받는 순서는 API(`FRED_API_KEY`가 있으면) → CSV다**(`_fred_one`). 엔드포인트마다
+  네 번 두드리고 타임아웃은 10초다 — 성공하는 응답은 0.5~0.7초에 오므로 더 기다려도
+  안 온다. 키는 무료·즉시 발급(https://fredaccount.stlouisfed.org/apikeys)이고
+  Actions Secret `FRED_API_KEY`로 넣는다. **없어도 돈다** — 그때는 CSV만 재시도한다.
 - `_fetch_fred`는 실패를 **즉시** `::warning::`으로 올린다. 주석은 로그와 달리 공개 API로
   읽히고 실행 요약에 노란 배너로 뜬다(DART 배치의 `::notice::`와 같은 이유).
+- ⚠️ **날짜만 보는 점검은 소스가 죽은 날을 놓친다 — 그래서 '쪽지'를 같이 둔다.**
+  11-17에 FRED 6계열이 전멸했는데 신용 스프레드 파일이 5일 전(허용 6일)이라 점검은
+  `모든 소스가 최신입니다`라고 했다. 경고는 떴지만 **경고는 메일이 안 간다.**
+  그래서 `_fetch_fred`가 한 계열도 못 받으면 `data/macro/.fetch_fail.json`에 적고
+  (`_mark_fail`), `--audit`이 그걸 읽어 **빨간불**을 낸다. 성공하면 지운다.
+  같은 잡 안에서만 쓰는 쪽지라 **`.gitignore`에 있다** — 커밋되면 안 된다.
+  허용 일수를 조이는 쪽은 택하지 않았다(연휴에 거짓 경보가 난다).
+
 - 커밋이 끝난 뒤 `python batch_macro.py --audit`을 한 번 더 돌려 파일을 다시 읽고
   "마지막 데이터가 며칠 전인지"를 본다. 문제가 있으면 경고 + **종료코드 1**이다.
   커밋 **뒤**라서 점검이 빨간불이어도 그날 받아온 데이터는 남는다.
@@ -965,6 +985,7 @@ Streamlit이 내려주는 index.html `<head>`에는 color-scheme 선언이 없�
 | `GEMINI_API_KEY_A` | Gemini AI 분석 |
 | `DART_API_KEY` | DART 재고자산·수주잔고·가동률 수집 (`dart_batch.yml`) |
 | `KRX_ID` / `KRX_PW` | KRX 정보데이터시스템 로그인 — 지수 PER·PBR (`index_valuation.yml`) |
+| `FRED_API_KEY` | 신용 스프레드·미국 물가 (`macro_batch.yml`) — **선택.** 없으면 CSV만 재시도한다 |
 | `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | 텔레그램 접속 |
 | `TELEGRAM_SESSION` / `TELEGRAM_SESSION_BATCH` | 텔레그램 세션 문자열 |
 | `SURGE_ALERT_CHAT` | 급등주 알림 대상 (초대 링크 / @유저네임 / 채널 ID) |
