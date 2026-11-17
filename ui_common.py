@@ -22,7 +22,11 @@ from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ct
 # 수단은 **URL에 거는 정규식(display_text)** 하나뿐이다. 그래서 종목명을 URL
 # 프래그먼트(#이름)로 실어 보내고 거기서 되뽑는다. 프래그먼트는 서버로 전송되지
 # 않으므로 네이버 요청에는 아무 영향이 없다(ui_surge가 먼저 쓰던 방법).
-NAVER_ITEM = "https://finance.naver.com/item/main.naver?code={code}"
+# ⚠️ finance.naver.com/item/main.naver?code=… 를 쓰지 말 것(2026-11-17 휴대폰 제보).
+# 휴대폰에서는 m.stock.naver.com/item/index.nhn?code=… 로 갔다가 거기서 다시 모바일 **첫 화면**으로
+# 301되어 종목이 사라진다(안드로이드·아이폰 둘 다 실측). 데스크톱은 이미 아래 주소로 302되고 있어
+# 처음부터 새 주소를 쓴다 — 휴대폰은 m.stock…/total, 데스크톱은 stock…/price로 각자 맞게 간다.
+NAVER_ITEM = "https://stock.naver.com/domestic/stock/{code}"
 NAME_FROM_URL = r"#(.+)$"      # LinkColumn(display_text=...)에 그대로 넘긴다
 
 # 종목명 열의 기본 폭(픽셀). "small"(75px)은 한글 일곱 자(약 79px)를 못 담았고,

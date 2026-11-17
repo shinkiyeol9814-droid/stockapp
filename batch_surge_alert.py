@@ -25,7 +25,8 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors import UserAlreadyParticipantError
 
-from ui_sector import get_sector_performance
+from ui_sector import get_sector_performance, _industry_map
+import sector_groups
 from earnings_store import load_all as load_all_earnings
 
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
@@ -89,20 +90,30 @@ def fetch_top_gainers(market: str):
         return {}, None
 
 
+_INDUSTRY = None
+
+
 def get_stock_sector(code: str):
-    """종목코드로 소속 업종코드/업종명을 알아낸다. 실패하면 (None, None)."""
+    """종목코드 → (업종코드, 업종명). 실패하면 (None, None).
+
+    💡 get_sector_performance()는 2026-11-11부터 KIND 업종을 묶음 25개로 모아 집계하고,
+    그 표의 '업종코드' 칸에는 **묶음 이름**이 들어 있다. 그래서 종목도 같은 분류(KIND 업종 →
+    sector_groups 묶음)로 찾아야 맞는다 — 둘 다 묶음 이름을 돌려준다.
+    예전엔 네이버 종목 페이지에서 업종 번호를 긁었는데, (1) 그 번호는 묶음 표와 애초에 안
+    맞았고 (2) 2026-11 네이버가 그 페이지를 stock.naver.com으로 302시켜 긁기 자체가
+    실패했다 — 알림이 전부 '업종 확인 불가'였다(2026-11-17 확인).
+    """
+    global _INDUSTRY
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        res = requests.get(url, headers=HEADERS, timeout=7)
-        # 💡 sise_group.naver 계열은 EUC-KR인데 이 페이지(item/main.naver)는
-        # UTF-8이다 — 다른 곳과 똑같이 euc-kr로 강제하면 업종명이 깨진다.
-        res.encoding = "utf-8"
-        m = re.search(r'sise_group_detail\.naver\?type=upjong&no=(\d+)">([^<]+)<', res.text)
-        if m:
-            return m.group(1), m.group(2)
+        if _INDUSTRY is None:
+            _INDUSTRY = _industry_map()          # KIND 한 번, 실패하면 디스크 캐시
+        name = _INDUSTRY.get(str(code))
+        if not name:
+            return None, None
+        group = sector_groups.group_of(name)
+        return group, group
     except Exception:
-        pass
-    return None, None
+        return None, None
 
 
 def get_today_earnings_map():
@@ -134,6 +145,8 @@ def build_theme_comment(code: str, sector_df):
     sector_ratio = float(row.iloc[0]["등락률_num"])
     if sector_ratio >= THEME_THRESHOLD:
         return f"🔥 테마성 (「{sector_name}」 업종 전체 평균 {sector_ratio:+.2f}% 동반 상승)"
+    if sector_ratio <= -THEME_THRESHOLD:     # 업종은 빠지는데 혼자 오른 경우 — '잠잠함'이라 적으면 틀린 말이다
+        return f"🎯 단일 종목 역행 (「{sector_name}」 업종 평균은 {sector_ratio:+.2f}%로 약세)"
     return f"🎯 단일 종목 특이 움직임 (「{sector_name}」 업종 평균은 {sector_ratio:+.2f}%로 잠잠함)"
 
 
