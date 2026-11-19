@@ -176,6 +176,36 @@ def _market_cache_history(ticker: str, period: str = "1y") -> pd.DataFrame | Non
     return df if not df.empty else None
 
 
+# 주말·휴일 없이 도는 것 — 일봉에 빈 날이 있으면 야후 쪽 누락이다.
+_ALWAYS_OPEN = {"BTC-USD"}
+
+
+def _fill_daily_gaps(hist: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
+    """빠진 날 D의 종가를 **D+1의 시가**로 메운다 — 24시간 자산은 UTC 자정이 경계라 둘이 같은 값이다.
+
+    💡 2026-11-19 실측: BTC-USD 일봉이 11/17 다음에 바로 11/19였다(11/18 통째로 없음 —
+    `history`·`download` 둘 다). 1시간봉으로 메워 보려 했으나 거기도 23시 봉이 빠져 1% 어긋났다
+    (62,377 vs 실제 62,987). 11/19 일봉의 시가가 정확히 62,987.285 = 야후의 전일종가였다.
+    연속으로 이틀 넘게 빠지면 마지막 날만 메워진다."""
+    try:
+        opens = hist["Open"].copy()
+        if opens.index.tz is not None:
+            opens.index = opens.index.tz_convert(None)
+        days = pd.DatetimeIndex(df.index).normalize()
+        want = pd.date_range(days[0], days[-1], freq="D")
+        missing = want.difference(days)
+        if missing.empty:
+            return df
+        nxt = pd.Series(opens.values, index=pd.DatetimeIndex(opens.index).normalize() - pd.Timedelta(days=1))
+        add = nxt[nxt.index.isin(missing)].dropna()
+        if add.empty:
+            return df
+        return pd.concat([df, add.to_frame("price")]).sort_index()
+    except Exception as e:
+        print(f"[ui_macro] 빈 날 메우기 실패: {type(e).__name__}: {e}")
+        return df
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
     """
@@ -199,6 +229,8 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
                 df.index = df.index.tz_convert(None)
             if period in _YF_PERIOD:
                 df = df[df.index >= df.index[-1] - pd.Timedelta(days=expected_days)]
+            if ticker in _ALWAYS_OPEN:
+                df = _fill_daily_gaps(hist, df)
             last_df = df
             span_days = (df.index[-1] - df.index[0]).days
             if span_days >= expected_days * 0.5:
@@ -414,47 +446,116 @@ def _milestone_note(full: pd.DataFrame | None, last: float):
     return None
 
 
-_NAVER_BOND_API = "https://api.stock.naver.com/marketindex/bond/{code}"
+_NAVER_MI_API = "https://api.stock.naver.com/marketindex/{cat}/{code}"
+_NAVER_HDR = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Referer": "https://m.stock.naver.com/",
+    "Accept": "application/json, text/plain, */*",
+}
 
-# 야후 티커 → 네이버(레피니티브) 채권 코드.
-# 💡 왜 필요한가 — ^TNX는 CBOE가 산출하는 "지수"라서 미국 정규장에만 틱이
-# 갱신된다. 그래서 한국 낮 시간에는 값이 전날 미국 종가에 얼어붙어 있고,
-# 24시간 돌아가는 현물 국채 시장을 보는 네이버와 한 세션씩 어긋났다
-# (예: 네이버 4.7920 / -0.25% vs 앱 4.81 / +0.46% — 방향까지 반대).
-# 등락률 기준(전일종가)도 서로 달라 혼란이 컸다. 현재값/등락률은 네이버
-# 실시간(delayTime=0, 레피니티브)으로 받고, 과거 일별 시계열(스파크라인)은
-# 야후 일봉을 그대로 쓴다 — 일별 종가는 두 소스가 사실상 동일하다.
-_NAVER_BOND_MAP = {"^TNX": "US10YT=RR"}
+# 야후 티커 → 네이버 시장지표 (카테고리, 코드). 이 카드들은 현재가·전일대비·차트를
+# **전부 네이버 한 곳에서** 받는다(2026-11-19). 야후는 네이버가 막혔을 때의 예비다.
+#
+# ⚠️ 왜 야후를 버렸나 — 선물 카드가 한국 낮 시간마다 틀렸다(2026-11-19 제보, WTI).
+#   1) **야후 일봉의 마지막 봉은 정산가가 아니라 '지금 값'이다.** CME는 17:00 CT에 닫고
+#      같은 날 18:00 ET(=KST 08:00)에 다음 세션을 여는데, 야후는 새 세션 시세를 **전날
+#      날짜의 봉**에 덮어쓴다. 11/18 정산 83.26이 사라지고 그 자리에 11/19 아침 81.89가
+#      '11/18'로 찍혔다 — 차트가 그날 -3.2%를 -4.8%로 그렸다. 금(3,741.9 → 3,749.3)·
+#      은·구리도 같은 시간대엔 전부 이렇다.
+#   2) **CL=F는 만기 전에 다음 월물로 넘어간다.** 11/19 아침 야후 CL=F는 이미 1월물
+#      (CLF27, 정산 82.31)인데 과거 봉은 12월물(86.01)이라 한 선에 두 계약이 섞였다.
+#      네이버 CLcv1은 최근월물(12월물 83.26)이라 화면이 사용자가 보는 숫자와 달랐다.
+#   네이버는 일별 시세가 **정산가 + 거래일 날짜**로 깔끔하게 오고(`localTradedAt` 16:00 CT),
+#   현재가는 10분 지연이다. 사용자가 대조하는 곳도 네이버라 숫자가 그대로 맞는다.
+#
+# 엔/달러·비트코인은 야후에 남겼다 — 네이버 USDJPY는 하루 한 번 종가뿐이고(실시간 없음),
+# 비트코인은 달러 시세가 없다. 둘 다 24시간 현물이라 위 1)·2) 문제도 없다.
+# 원/달러는 **하나은행 매매기준율**이다(네이버 환율 화면과 같다 — 서울 외환시장 종가와는
+# 몇 원 다를 수 있다).
+_NAVER_MI_MAP = {
+    "USDKRW=X": ("exchange", "FX_USDKRW"),
+    "^TNX":     ("bond",     "US10YT=RR"),   # ^TNX는 미국 정규장에만 틱이 서서 한국 낮엔 멈춰 있다
+    "CL=F":     ("energy",   "CLcv1"),
+    "GC=F":     ("metals",   "GCcv1"),
+    "SI=F":     ("metals",   "SIcv1"),
+    "HG=F":     ("metals",   "HGcv1"),
+}
+# 일별 시세는 한 쪽에 60일이 상한(그 이상은 400). 원자재·채권은 **3년치만** 준다(13쪽에서
+# 빈 목록 — 2026-11-19 실측 2023-11-20부터). 환율은 더 길다. 5년 차트를 덮을 만큼만 받는다.
+_NAVER_MI_PAGE = 60
+_NAVER_MI_MAX_PAGES = 26
+
+
+def _num(v) -> float:
+    return float(str(v).replace(",", ""))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _get_naver_bond_quote(reuters_code: str):
-    """
-    네이버 채권 금리 실시간 시세 → (현재값, 전일종가, 갱신시각).
-    실패하면 (None, None, None) — 호출부가 야후로 폴백한다.
-    """
-    try:
-        res = requests.get(
-            _NAVER_BOND_API.format(code=reuters_code),
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "Referer": "https://m.stock.naver.com/",
-                "Accept": "application/json, text/plain, */*",
-            },
-            timeout=7,
-        )
-        j = res.json()
-        # 💡 필드명이 closePrice지만 장중에는 "현재값"이다(종가가 아니다).
-        # 전일종가는 따로 안 주므로 현재값 - 변동폭으로 되돌려 계산한다.
-        last = float(j["closePrice"])
-        prev = last - float(j["fluctuations"])
-        if last <= 0 or prev <= 0:
-            return None, None, None
-        ts = datetime.fromisoformat(j["localTradedAt"]).astimezone(_KST)
-        return last, prev, ts
-    except Exception as e:
-        print(f"[ui_macro] 네이버 채권({reuters_code}) 조회 실패: {type(e).__name__}: {e}")
-        return None, None, None
+def _get_naver_mi_quote(cat: str, code: str):
+    """네이버 시장지표 현재가 → (현재값, 전일종가, 갱신시각 KST). 실패는 예외로 올린다.
+
+    필드명이 closePrice지만 장중에는 '현재값'이다. 전일종가는 따로 안 주므로 현재값 -
+    변동폭으로 되돌린다 — 그래서 전일대비가 네이버 화면과 소수점까지 같다."""
+    r = requests.get(_NAVER_MI_API.format(cat=cat, code=code), headers=_NAVER_HDR, timeout=7)
+    r.raise_for_status()
+    j = r.json()
+    j = j.get("exchangeInfo") or j          # 환율만 한 겹 더 싸서 준다
+    last = _num(j["closePrice"])
+    prev = last - _num(j["fluctuations"])
+    if last <= 0 or prev <= 0:
+        raise ValueError(f"네이버 {code} 값이 이상함: {last}, {prev}")
+    ts = datetime.fromisoformat(j["localTradedAt"]).astimezone(_KST)
+    return last, prev, ts
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _get_naver_mi_daily(cat: str, code: str) -> pd.DataFrame:
+    """네이버 시장지표 일별 종가(선물은 정산가) → price 열, 거래일 날짜 인덱스.
+
+    날짜는 `localTradedAt`의 **거래소 현지 날짜**다(WTI 11/18 16:00 CT → 11/18).
+    쪽을 7개씩 병렬로 받고 빈 쪽이 나오면 멈춘다. 한 쪽이라도 실패하면 예외 —
+    토막 난 이력을 30분 붙잡지 않게."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    url = _NAVER_MI_API.format(cat=cat, code=code) + "/prices"
+
+    def _page(n):
+        r = requests.get(url, params={"page": n, "pageSize": _NAVER_MI_PAGE},
+                         headers=_NAVER_HDR, timeout=10)
+        r.raise_for_status()
+        return r.json() or []
+
+    rows, n = [], 1
+    with ThreadPoolExecutor(max_workers=7) as ex:
+        while n <= _NAVER_MI_MAX_PAGES:
+            batch = list(ex.map(_page, range(n, min(n + 7, _NAVER_MI_MAX_PAGES + 1))))
+            for p in batch:
+                rows += [(pd.Timestamp(x["localTradedAt"][:10]), _num(x["closePrice"])) for x in p]
+            if any(len(p) < _NAVER_MI_PAGE for p in batch):
+                break
+            n += 7
+    if not rows:
+        raise ValueError(f"네이버 {code} 일별 시세가 비었음")
+    df = pd.DataFrame(rows, columns=["date", "price"]).drop_duplicates("date").set_index("date")
+    return df.sort_index()
+
+
+def _naver_history(ticker: str, days: int | None = None) -> pd.DataFrame:
+    """네이버 일별 시세. 네이버가 주는 기간(원자재 3년)보다 길게 필요하면 그 앞을 야후로 잇는다.
+    days=None이면 잇는 데까지 전부(마일스톤 배지용). 실패는 예외 — 호출부가 야후로 돌아간다."""
+    nv = _get_naver_mi_daily(*_NAVER_MI_MAP[ticker])
+    need_from = None if days is None else nv.index[-1] - pd.Timedelta(days=days)
+    if need_from is None or need_from < nv.index[0]:
+        # 이음매 앞쪽만 야후로 — 계약 롤 시점 차이로 몇 센트 어긋날 수 있지만 3년 전 일이다.
+        yf_full = _get_full_history(ticker)
+        if yf_full is not None and not yf_full.empty:
+            older = yf_full.copy()
+            older.index = pd.DatetimeIndex(older.index).normalize()
+            older = older[older.index < nv.index[0]]
+            nv = pd.concat([older[["price"]], nv])
+    if need_from is not None:
+        nv = nv[nv.index >= need_from]
+    return nv
 
 
 def _news_rss(query: str):
@@ -811,6 +912,16 @@ def _index_today_html(idx: str, label: str, df: pd.DataFrame | None) -> str:
     if live:
         v, chg, pct, t, status = live
         when = (f"{t:%m/%d %H:%M} " if t else "") + ("장중" if status == "OPEN" else "종가")
+        # 💡 개장 전(PREOPEN)엔 네이버가 전일 종가를 '보합 0.00'으로 준다. 그대로 적으면
+        # "오늘 09:57 종가 ─0.00"이 되어 장이 멈춘 것처럼 읽힌다 — 2026-11-19 수능일(10시 개장)에
+        # 실제로 그렇게 떴다. 그때는 배치가 받아 둔 전일 종가의 등락을 그대로 보여 준다.
+        if status == "PREOPEN":
+            if df is not None and len(df) >= 2 and abs(float(df["close"].iloc[-1]) - v) < 0.01:
+                prev = float(df["close"].iloc[-2])
+                chg, pct = v - prev, (v / prev - 1) * 100 if prev else 0.0
+                when = f"{df.index[-1]:%m/%d} 종가 · 개장 전"
+            else:
+                when = "전일 종가 · 개장 전"
     elif df is not None and len(df) >= 2:
         # 네이버가 막히면 배치가 받아 둔 최근 두 종가로 대신한다.
         v, prev = float(df["close"].iloc[-1]), float(df["close"].iloc[-2])
@@ -1135,7 +1246,8 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
     flow_html = ""
     if val_df is not None and float(val_df["foreign"].abs().max()) > 0:
         live = _get_flow_live(idx)
-        if live:
+        # 개장 전엔 네이버가 오늘 날짜로 0·0·0을 준다 — '오늘(잠정) 0'은 거짓 정보라 확정치로 돌아간다.
+        if live and any(live[:3]):
             today, when = live[0] * 1e8, "오늘(잠정)"
         else:
             today, when = float(val_df["foreign"].iloc[-1]), f"{val_df.index[-1]:%m/%d}"
@@ -2322,7 +2434,9 @@ def _make_sparkline(hist: pd.DataFrame, unit: str, fmt: str, period: str,
                        fillcolor=fill, line=dict(width=0))
                   for lo, hi, _lbl, _c, fill in bands] + shapes
 
-    dtick = {"1mo": "W1", "3mo": "M1", "6mo": "M1", "1y": "M2", "3y": "M6", "5y": "M12"}.get(period, "M1")
+    # 💡 1개월이 예전엔 "W1"이었는데 plotly 날짜축 dtick에 그런 값은 없다(밀리초 숫자나
+    # "M<n>"만). 무시되고 자동 눈금이 되어 휴대폰에서 날짜 30개가 겹쳐 찍혔다(2026-11-19 제보).
+    dtick = {"1mo": 7 * 86400000, "3mo": "M1", "6mo": "M1", "1y": "M2", "3y": "M6", "5y": "M12"}.get(period, "M1")
     # 여러 해에 걸치면 "03월"만으로는 어느 해인지 몰라 연도를 넣는다
     tfmt  = {"1mo": "%d일", "3y": "%y.%m", "5y": "%Y"}.get(period, "%m월")
 
@@ -2382,6 +2496,9 @@ def render_macro():
     # 새로고침 버튼은 남겨야 해서 빈 제목으로 같은 줄만 그린다.
     if page_header("", "macro"):
         _get_price_history.clear()
+        _get_last_and_prev_close.clear()
+        _get_naver_mi_quote.clear()
+        _get_naver_mi_daily.clear()
         _get_lithium_price_history.clear()
         _get_dram_price_history.clear()
         _get_ddr4_price_history.clear()
@@ -2430,8 +2547,12 @@ def render_macro():
             return nm, _get_us_debt_history(period)
         elif tk == "_FNG_":
             return nm, _get_fng_history(period)
-        else:
-            return nm, _get_price_history(tk, period)
+        elif tk in _NAVER_MI_MAP:
+            try:
+                return nm, _naver_history(tk, _PERIOD_DAYS.get(period, 365))
+            except Exception as e:
+                print(f"[ui_macro] 네이버 {tk} 일별 실패 → 야후: {type(e).__name__}: {e}")
+        return nm, _get_price_history(tk, period)
 
     def _fetch_full(item):
         """마일스톤 판정용 전체 이력. 캐시 기반은 잘라내지 않은 원본."""
@@ -2446,18 +2567,24 @@ def render_macro():
             return nm, _get_us_debt_history("max")
         elif tk == "_FNG_":
             return nm, _get_fng_history("max")
+        elif tk in _NAVER_MI_MAP:
+            try:
+                return nm, _naver_history(tk)
+            except Exception:
+                pass
         return nm, _get_full_history(tk)
 
     def _fetch_last_prev(item):
         nm, tk = item[0], item[1]
         if tk.startswith("_"):
             return nm, (None, None, None)
-        # 채권 금리는 네이버 실시간 우선 (^TNX는 미국 정규장만 갱신됨).
-        # 네이버가 실패하면 기존 야후 경로로 폴백한다.
-        if tk in _NAVER_BOND_MAP:
-            q = _get_naver_bond_quote(_NAVER_BOND_MAP[tk])
-            if q[0] is not None:
-                return nm, q
+        # 네이버 지표(환율·국채·원자재)는 차트와 같은 곳에서 현재가를 받는다 — 헤더의
+        # 전일대비 기준(전일종가)이 차트의 마지막 일별 점과 같은 값이 되게. 실패하면 야후.
+        if tk in _NAVER_MI_MAP:
+            try:
+                return nm, _get_naver_mi_quote(*_NAVER_MI_MAP[tk])
+            except Exception as e:
+                print(f"[ui_macro] 네이버 {tk} 현재가 실패 → 야후: {type(e).__name__}: {e}")
         return nm, _get_last_and_prev_close(tk)
 
     # 시세·실시간가·전체이력·뉴스를 한 번에 병렬로 — 오래 걸리면 0~100% 진행률을 띄운다.
@@ -2544,11 +2671,19 @@ def render_macro():
                         # 💡 get_info()가 실패하면 fi_time이 None으로 온다
                         # (fast_info는 성공한 경우) — 그대로 .date()를 부르면
                         # AttributeError로 매크로 탭 전체가 죽으므로 먼저 방어한다.
-                        if last_update is not None and last_update.date() > hist.index[-1].date():
-                            new_row = pd.DataFrame(
-                                {"price": [last]}, index=[pd.Timestamp(last_update.date())]
-                            )
-                            hist = pd.concat([hist, new_row])
+                        # 💡 같은 날이면 마지막 점을 현재가로 바꾼다(환율은 오늘 줄이 장중 값으로
+                        # 이미 있다). 정산 직후(KST 07시대)엔 현재가 == 정산가라 다음 날 점을
+                        # 새로 찍으면 평평한 가짜 하루가 생기므로, 값이 같으면 잇지 않는다.
+                        if last_update is not None:
+                            last_d = hist.index[-1].date()
+                            if last_update.date() > last_d and abs(last - float(hist["price"].iloc[-1])) > 1e-9:
+                                new_row = pd.DataFrame(
+                                    {"price": [last]}, index=[pd.Timestamp(last_update.date())]
+                                )
+                                hist = pd.concat([hist, new_row])
+                            elif last_update.date() == last_d:
+                                hist = hist.copy()
+                                hist.iloc[-1, hist.columns.get_loc("price")] = last
                     else:
                         is_stale_snapshot = True
                 spot_at = None
@@ -2589,7 +2724,9 @@ def render_macro():
                     else:
                         update_txt = f"{spot_at:%m/%d %H:%M} 확인"
                 elif is_cache_based and last_update:
-                    update_txt = f"{last_update:%m/%d %H:%M} 기준"
+                    # 일 단위 값엔 시각이 없다 — 00:00을 붙이면 자정에 받은 값처럼 읽힌다.
+                    _fmt_t = "%m/%d" if (last_update.hour, last_update.minute) == (0, 0) else "%m/%d %H:%M"
+                    update_txt = f"{last_update:{_fmt_t}} 기준"
                 elif last_update:
                     age_hours = (datetime.now(_KST) - last_update).total_seconds() / 3600
                     # 💡 예전엔 age_hours >= 24 만 보고 경고를 띄웠다. 그러면 금요일
