@@ -301,16 +301,61 @@ _MARKET_TICKERS = ["USDKRW=X", "JPY=X", "^TNX", "CL=F", "GC=F", "SI=F", "HG=F", 
 _MARKET_KEEP_DAYS = 400   # 화면 차트가 최대 1년치 — 여유분만 남긴다
 
 
+# 앱(ui_macro._NAVER_MI_MAP)과 같은 표 — 이 티커들은 네이버 일별 시세로 받는다(2026-11-19).
+# ⚠️ 야후 선물 일봉은 KST 08시 이후 마지막 봉이 '전날 정산가'가 아니라 새 세션의 현재가다.
+# 이 배치는 18:00 KST에 돌아서 매번 그 봉을 받아 적고 있었다(11/18 WTI 82.14 — 실제 정산 83.26).
+# CL=F는 만기 전 월물 교체까지 섞인다. 네이버는 정산가 + 거래일 날짜로 온다.
+_MARKET_NAVER = {
+    "USDKRW=X": ("exchange", "FX_USDKRW"),
+    "^TNX":     ("bond",     "US10YT=RR"),
+    "CL=F":     ("energy",   "CLcv1"),
+    "GC=F":     ("metals",   "GCcv1"),
+    "SI=F":     ("metals",   "SIcv1"),
+    "HG=F":     ("metals",   "HGcv1"),
+}
+
+
+def _naver_daily_rows(cat: str, code: str, pages: int = 8) -> list:
+    """네이버 시장지표 일별 → [[epoch_ms(UTC 자정), 종가], ...] (오래된 순). 실패는 예외."""
+    hdr = {"User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/"}
+    by_day = {}
+    for n in range(1, pages + 1):
+        r = requests.get(f"https://api.stock.naver.com/marketindex/{cat}/{code}/prices",
+                         params={"page": n, "pageSize": 60}, headers=hdr, timeout=15)
+        r.raise_for_status()
+        items = r.json() or []
+        for x in items:
+            d = date.fromisoformat(x["localTradedAt"][:10])
+            by_day.setdefault(d, float(str(x["closePrice"]).replace(",", "")))
+        if len(items) < 60:
+            break
+    if not by_day:
+        raise ValueError("빈 응답")
+    return [[_date_to_ms(d), round(by_day[d], 6)] for d in sorted(by_day)]
+
+
 def fetch_market_series() -> dict:
-    """티커 → [[epoch_ms(UTC 자정), 종가], ...]. 실패한 티커는 빼고 돌려준다."""
+    """티커 → [[epoch_ms(UTC 자정), 종가], ...]. 실패한 티커는 빼고 돌려준다.
+    네이버로 받은 티커는 키에 남기지 않고 `fetch_market_series.replaced`에 적는다 —
+    병합할 때 예전 야후 행(유령 날짜·현재가 봉)을 남기지 않고 통째로 갈아 끼우려고."""
+    out, replaced = {}, set()
+    for tk, (cat, code) in _MARKET_NAVER.items():
+        try:
+            out[tk] = _naver_daily_rows(cat, code)
+            replaced.add(tk)
+            print(f"[market] {tk}: 네이버 {len(out[tk])}건 (최신 {out[tk][-1][1]})")
+        except Exception as e:
+            print(f"[market] {tk} 네이버 실패 → 야후: {type(e).__name__}: {e}")
+    fetch_market_series.replaced = replaced
     try:
         import yfinance as yf
     except ImportError:
         print("[market] yfinance 미설치 — 건너뜀")
-        return {}
+        return out
 
-    out = {}
     for tk in _MARKET_TICKERS:
+        if tk in out:
+            continue
         try:
             hist = yf.Ticker(tk).history(period="2y")
             if hist.empty:
@@ -589,7 +634,8 @@ def update_compare_series(period: str = "2y") -> bool:
     return changed
 
 
-def _merge_market(path: str, fresh: dict, keep_days: int = _MARKET_KEEP_DAYS) -> bool:
+def _merge_market(path: str, fresh: dict, keep_days: int = _MARKET_KEEP_DAYS,
+                  replace: set | frozenset = frozenset()) -> bool:
     """
     기존 파일과 병합해 저장. 일부 티커만 실패해도 나머지 이력은 지키고,
     받아온 날짜는 덮어쓴다(장중에 받은 값이 종가로 정정될 수 있다).
@@ -607,7 +653,8 @@ def _merge_market(path: str, fresh: dict, keep_days: int = _MARKET_KEEP_DAYS) ->
     cutoff = _date_to_ms(datetime.now(KST).date() - timedelta(days=keep_days))
     merged = dict(cur)
     for tk, rows in fresh.items():
-        by_ts = {int(ts): v for ts, v in cur.get(tk, []) if isinstance(ts, (int, float))}
+        by_ts = ({} if tk in replace else
+                 {int(ts): v for ts, v in cur.get(tk, []) if isinstance(ts, (int, float))})
         by_ts.update({int(ts): v for ts, v in rows})
         merged[tk] = [[ts, by_ts[ts]] for ts in sorted(by_ts) if ts >= cutoff]
 
@@ -814,7 +861,9 @@ if __name__ == "__main__":
         updated["lithium"] = update_lithium()
         updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
         updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
-        updated["market"] = _merge_market(_MARKET_CACHE, fetch_market_series())
+        _fresh = fetch_market_series()
+        updated["market"] = _merge_market(_MARKET_CACHE, _fresh,
+                                          replace=getattr(fetch_market_series, "replaced", set()))
         updated["fng"] = _merge_list(_FNG_CACHE, fetch_fng_series(), _FNG_KEEP_DAYS)
         updated["sp500"] = _merge_market(_SP500_CACHE, fetch_sp500_valuation(),
                                          _SP500_KEEP_DAYS)
