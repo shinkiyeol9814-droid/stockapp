@@ -1,12 +1,15 @@
 {
- "last_id": 139583,
- "retry": {},
+ "last_id": 139599,
+ "retry": {
+  "139594": 1,
+  "139599": 1
+ },
  "last_run": {
-  "new": 10,
+  "new": 16,
   "have": 0,
-  "skip": 8,
-  "pdf": 2,
-  "docs": 2,
-  "fail": 0
+  "skip": 11,
+  "pdf": 3,
+  "docs": 3,
+  "fail": 2
  }
 }
