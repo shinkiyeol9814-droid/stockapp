@@ -248,6 +248,40 @@ def _get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame | None:
 _KST = timezone(timedelta(hours=9))
 
 
+# 기준일 글자에 다는 설명 — "이 날짜가 왜 이 날짜인가 / 언제 바뀌나"(2026-11-20 요청).
+# 배치 시각은 scheduler.yml(cron-job.org tick)을 따른다. 바꾸면 여기도 같이 고칠 것.
+_UPD_TIP = {
+    "krx": "KRX 확정치. 장 마감 당일 밤 23:30 배치가 받습니다 — 그 전엔 전 거래일 값입니다.",
+    "sp500": "multpl.com (PER 월간·PBR 분기, 이번 달 값은 매일 바뀜). 미국 장 마감 뒤 "
+             "KST 08:00(화~토)과 18:00 배치가 받아, 아침 8시 이후면 전날 미국 종가 기준입니다.",
+    "naver": "네이버 시세 — 원자재 10분 지연, 미국채는 실시간, 원/달러는 하나은행 고시. "
+             "화면을 열 때 받고 5분간 재사용합니다. 차트의 과거 점은 거래일 종가(선물은 정산가).",
+    "yahoo": "야후 시세 — 화면을 열 때 받고 5분간 재사용합니다.",
+    "btc": "야후 시세 — 화면을 열 때 받고 5분간 재사용합니다. '전일'은 UTC 자정(KST 09:00) 가격 기준.",
+    "lithium": "Trading Economics 탄산리튬 현재가. 화면을 열 때 확인(1시간 재사용)하고 평일 18:00 배치가 "
+               "쌓습니다. 날짜는 그 값이 나온 중국(GFEX) 거래일이라 한국 날짜보다 하루 늦을 수 있습니다.",
+    "debt": "미 재무부 Debt to the Penny. D일 부채를 D+1 영업일 오후 4시(ET)에 공개해서 "
+            "KST 08:00(화~토) 배치가 받습니다 — 그래서 보통 전전날 날짜입니다.",
+    "dram": "DRAMeXchange 현물 평균가. 화면을 열 때 확인(1시간 재사용)하고 평일 18:00 배치가 쌓습니다. "
+            "대만 영업일에만 바뀌고, 값이 그대로면 새 점을 찍지 않아 'OO 이후 무변동'으로 적습니다.",
+    "fng": "CNN Fear & Greed. 미국 장중에 바뀝니다. 화면을 열 때 받고, KST 08:00·18:00 배치가 일별 값을 쌓습니다.",
+    "kofia": "금융투자협회 통계(공공데이터포털 중계). 원천이 2~3영업일 늦게 공개됩니다 — 앱 문제가 아닙니다. "
+             "화면을 열 때 받습니다.",
+    "credit": "FRED (ICE BofA OAS). 미국 다음 날 오전에 공개돼 한국 기준 1~2일 늦습니다. "
+              "KST 08:00(화~토)·18:00 배치가 받습니다.",
+    "foreign": "KRX 종목별 외국인 보유량을 합산. 장 마감 당일 밤 23:30 배치가 받습니다.",
+    "index_live": "네이버 실시간 지수. 화면을 열 때 받습니다.",
+    "snapshot": "실시간 조회가 실패해 배치가 저장해 둔 마지막 값으로 그렸습니다.",
+}
+
+
+def _tip(text: str, key: str) -> str:
+    """기준일 글자에 설명을 단다 — 마우스를 올리면(데스크톱) 또는 누르면(휴대폰) 뜬다.
+    title 속성은 휴대폰에서 안 보여서 CSS(:hover/:focus)로 띄운다 — 모양은 app.py 3-4."""
+    tip = html.escape(_UPD_TIP.get(key, key), quote=True)
+    return f"<span class='upd-tip' tabindex='0' data-tip='{tip}'>{text}</span>"
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_last_and_prev_close(ticker: str):
     """
@@ -933,7 +967,8 @@ def _index_today_html(idx: str, label: str, df: pd.DataFrame | None) -> str:
     arrow = "▲" if chg > 0 else "▼" if chg < 0 else "─"
     return (f"<div style='margin:10px 0 2px;font-size:14px;'><b>{label} {v:,.2f}</b> "
             f"<span style='color:{clr};font-weight:600;'>{arrow}{abs(chg):,.2f} ({pct:+.2f}%)</span> "
-            f"<span style='font-size:11px;color:#aaa;'>· {when}</span></div>")
+            f"<span style='font-size:11px;color:#aaa;'>· "
+            f"{_tip(when, 'index_live' if live else 'krx')}</span></div>")
 
 
 def _fmt_shares(v) -> str:
@@ -1057,7 +1092,7 @@ def _make_band_chart(s: pd.Series, unit: str, close: pd.Series | None = None,
 def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
                       close: pd.Series | None = None, index_name: str = "",
                       volume: pd.Series | None = None, value: pd.Series | None = None,
-                      foreign: pd.Series | None = None) -> None:
+                      foreign: pd.Series | None = None, tip: str = "krx") -> None:
     # KRX는 값이 없을 때 0을, 계산 불가일 때 9999.99를 넣는다(코스닥 PER: 2006~2010 합산 이익이
     # 0 근처라 753일이 0, 2007-08-14에 9999.99). 둘 다 빼야 최고·평균선이 안 틀어진다.
     # 2006~07·2014년 코스닥 PER 300배대는 실제 값(이익이 0에 가까웠던 해)이라 남긴다.
@@ -1089,7 +1124,7 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
         f"<span style='font-size:11.5px;color:{clr};font-weight:600;white-space:nowrap;'>"
         f"평균 대비 {vs_mean:+.1f}%</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{s.index[-1]:%m/%d}</span></div>",
+        f"{_tip(f'{s.index[-1]:%m/%d}', tip)}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value, foreign), use_container_width=True,
@@ -1268,7 +1303,7 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
         f"시총 대비 {cur_ratio:.2f}%</span>"
         f"<span style='font-size:11.5px;white-space:nowrap;'>{chgs}</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{h.index[-1]:%m/%d} 기준</span></div>"
+        f"{_tip(f'{h.index[-1]:%m/%d} 기준', 'foreign')}</span></div>"
         + flow_html
         + "<div style='height:8px;'></div>",
         unsafe_allow_html=True,
@@ -1323,7 +1358,7 @@ def _render_sp500_band(years, span_label: str) -> None:
                 continue
             if years:
                 s_ = s_[s_.index >= s_.index[-1] - pd.DateOffset(years=years)]
-            _render_band_card(f"S&P 500 {title}", s_, "배", span_label)
+            _render_band_card(f"S&P 500 {title}", s_, "배", span_label, tip="sp500")
 
 
 def _render_valuation_band() -> None:
@@ -1810,7 +1845,7 @@ def _crd_market_body(name: str, full: pd.Series | None, win: pd.Series | None,
         f"<span style='font-size:11.5px;color:{_sign_color(d1)};white-space:nowrap;'>"
         f"전일 {d1:+,.2f}조</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{win.index[-1]:%m/%d}</span></div>",
+        f"{_tip(f'{win.index[-1]:%m/%d}', 'kofia')}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_crd_idx_chart(win, idx), use_container_width=True,
@@ -1860,7 +1895,7 @@ def _flow_card_body(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
         f"<span style='font-size:11.5px;color:{clr};white-space:nowrap;'>"
         f"전일 {format(d1, '+' + fmt)}{unit}</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{s.index[-1]:%m/%d}</span></div>",
+        f"{_tip(f'{s.index[-1]:%m/%d}', 'kofia')}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_flow_chart(s, fmt, warn, bars, overlay, overlay_fmt, overlay_unit),
@@ -2142,7 +2177,7 @@ def _credit_card_body(key: str, name: str, s: pd.Series) -> None:
         f"<span style='font-size:11.5px;color:{clr(d1)};white-space:nowrap;'>"
         f"전일 {d1:+.2f}%p</span>{mom_html}"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{s.index[-1]:%m/%d}</span></div>",
+        f"{_tip(f'{s.index[-1]:%m/%d}', 'credit')}</span></div>",
         unsafe_allow_html=True,
     )
     # 카드 밑 설명("투기등급 회사채 − 국채")은 뺐다 — 섹션 캡션이 이미 OAS가
@@ -2760,6 +2795,11 @@ def render_macro():
                 # 달라도 밑선이 맞는다. 좁은 화면에서는 뒤(기준시각)부터 줄바꿈된다.
                 meta = ""
                 if update_txt:
+                    _tk_tip = ("snapshot" if is_stale_snapshot else
+                               {"_LITHIUM_": "lithium", "_USDEBT_": "debt", "_DRAM_": "dram",
+                                "_DDR4_": "dram", "_FNG_": "fng", "BTC-USD": "btc"}.get(ticker)
+                               or ("naver" if ticker in _NAVER_MI_MAP else "yahoo"))
+                    update_txt = _tip(update_txt, _tk_tip)
                     meta = (f"<span style='font-size:10px;color:{update_clr};"
                             f"{'font-weight:600;' if update_bold else ''}"
                             f"margin-left:7px;white-space:nowrap;'>{update_txt}</span>")

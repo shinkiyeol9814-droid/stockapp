@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "us_debt면 부채만 (scheduler.yml이 KST 08:00에 이렇게 부른다)"
+        description: "us_debt면 미국 장 마감 데이터만(부채·S&P PER·공포탐욕·스프레드·비교) — scheduler.yml이 KST 08:00에 이렇게 부른다"
         required: false
         default: ""
 

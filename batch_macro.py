@@ -391,6 +391,22 @@ _SP500_NUM = re.compile(r"-?\d+(?:\.\d+)?")
 _SP500_KEEP_DAYS = 365 * 40
 
 
+def _us_closed_through() -> date:
+    """미국 정규장(16:00 ET)이 끝난 마지막 날짜(ET 기준). 16:30 ET 전이면 전날까지.
+
+    ⚠️ 장중에 받은 '오늘' 값을 종가처럼 저장하지 않으려는 것(2026-11-20 발견). 이 배치는
+    tick이 끊겼을 때 GitHub 예비 schedule로 **미국 장중**(KST 새벽 2~3시)에 돌기도 하는데,
+    그때 야후 ^GSPC 일봉의 오늘 봉은 장중 값이다 — 11/19 S&P가 7,244.89로 저장됐고 실제
+    종가는 7,175.83이었다. multpl의 이번 달 줄도 같은 날짜로 장중 PER을 준다."""
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        now = datetime.now(timezone.utc) - timedelta(hours=5)   # EST 고정 — 여름엔 1시간 보수적
+    d = now.date()
+    return d if (now.hour, now.minute) >= (16, 30) else d - timedelta(days=1)
+
+
 def fetch_sp500_valuation() -> dict:
     """{"per": [[epoch_ms, 값], ...], "pbr": [...]}. 실패한 항목은 빼고 돌려준다."""
     out = {}
@@ -403,6 +419,7 @@ def fetch_sp500_valuation() -> dict:
             i = r.text.find("<table")
             body = r.text[i:r.text.find("</table>", i)] if i >= 0 else ""
             rows = []
+            done = _us_closed_through()
             for d, cell in _SP500_ROW.findall(body):
                 txt = html_mod.unescape(re.sub(r"<[^>]+>", " ", cell)).replace(",", "")
                 m = _SP500_NUM.search(txt)
@@ -411,6 +428,8 @@ def fetch_sp500_valuation() -> dict:
                 try:
                     dt = datetime.strptime(re.sub(r"\s+", " ", d), "%b %d, %Y").date()
                 except ValueError:
+                    continue
+                if dt > done:          # 장이 아직 안 끝난 날의 PER은 장중 값이다
                     continue
                 rows.append([_date_to_ms(dt), round(float(m.group()), 4)])
             if rows:
@@ -598,7 +617,9 @@ def update_compare_series(period: str = "2y") -> bool:
             if c is None or c.empty:
                 print(f"[compare] {tk}: 빈 응답")
                 continue
-            fresh[key] = {ts.date().isoformat(): round(float(v), 4) for ts, v in c.items()}
+            done = _us_closed_through()      # 오늘 봉은 장이 끝나기 전엔 장중 값이다
+            fresh[key] = {ts.date().isoformat(): round(float(v), 4) for ts, v in c.items()
+                          if ts.date() <= done}
             print(f"[compare] {tk}: {len(fresh[key])}건 (최신 {c.iloc[-1]:.3f})")
         except Exception as e:
             print(f"[compare] {tk} 실패: {type(e).__name__}: {e}")
@@ -854,23 +875,30 @@ if __name__ == "__main__":
         i = sys.argv.index("--only")
         only = sys.argv[i + 1] if i + 1 < len(sys.argv) else None
 
+    # 💡 2026-11-20부터 아침 실행(`--only us_debt`, KST 08:00 화~토)은 부채만이 아니라
+    # **미국 장 마감에 묶인 것 전부**를 받는다 — S&P PER·PBR, 공포·탐욕, 신용 스프레드,
+    # 지수·금리 비교, 시세 스냅샷. 18:00 실행만으로는 미국 장이 끝나고 12시간 뒤에야 들어와
+    # 오전 내내 화면이 하루 늦었다(사용자 제보: S&P PER이 11/20 아침에 11/18). 위 주석의
+    # 'KST 날짜로 찍는 스팟 가격(DRAM·리튬)'만 여전히 18:00 실행 전용이다 — 이것들은 날짜를
+    # 원천이 준다(market 스냅샷도 네이버 거래일·야후 봉 날짜). 이름은 scheduler·워크플로우가
+    # 이미 쓰는 값이라 그대로 둔다.
     updated = {}
     if only in (None, "us_debt"):
         updated["us_debt"] = _replace_if_changed(_USDEBT_CACHE, fetch_us_debt_series())
-    if only is None:
-        updated["lithium"] = update_lithium()
-        updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
-        updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
         _fresh = fetch_market_series()
         updated["market"] = _merge_market(_MARKET_CACHE, _fresh,
                                           replace=getattr(fetch_market_series, "replaced", set()))
         updated["fng"] = _merge_list(_FNG_CACHE, fetch_fng_series(), _FNG_KEEP_DAYS)
         updated["sp500"] = _merge_market(_SP500_CACHE, fetch_sp500_valuation(),
                                          _SP500_KEEP_DAYS)
-        updated["inflation"] = _merge_market(_INFLATION_CACHE, fetch_us_inflation(),
-                                             _INFLATION_KEEP_DAYS)
         updated["credit"] = _merge_market(_CREDIT_CACHE, fetch_us_credit(),
                                           _CREDIT_KEEP_DAYS)
         updated["compare"] = update_compare_series()
+    if only is None:
+        updated["lithium"] = update_lithium()
+        updated["dram"] = _append_if_new(_DRAM_CACHE, fetch_dram_price())
+        updated["ddr4"] = _append_if_new(_DDR4_CACHE, fetch_ddr4_price())
+        updated["inflation"] = _merge_market(_INFLATION_CACHE, fetch_us_inflation(),
+                                             _INFLATION_KEEP_DAYS)
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")

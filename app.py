@@ -153,6 +153,38 @@ st.markdown("""
             margin-bottom: 0;
         }
 
+        /* 3-4. 기준일 설명 말풍선(ui_macro._tip) — "이 날짜가 언제 바뀌나"(2026-11-20 요청).
+           title 속성은 휴대폰에서 안 보여서 CSS로 띄운다: 데스크톱은 마우스를 올리면,
+           휴대폰은 누르면(tabindex로 focus를 받는다) 뜨고 다른 곳을 누르면 닫힌다.
+           날짜가 오른쪽 끝에 있기도, 좁은 화면에서 왼쪽으로 줄바꿈되기도 해서 날짜 기준으로
+           띄우면 화면 밖으로 나간다 — 말풍선은 그 글 덩어리(카드 머리) 폭에 맞춰 바로 아래에 편다. */
+        .upd-tip {
+            cursor: help;
+            border-bottom: 1px dotted #c4c4cc;
+            outline: none;
+        }
+        [data-testid="stMarkdownContainer"]:has(.upd-tip) {
+            position: relative;
+        }
+        .upd-tip:hover::after, .upd-tip:focus::after {
+            content: attr(data-tip);
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: calc(100% - 6px);
+            z-index: 1000;
+            white-space: normal;
+            text-align: left;
+            background: #333;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 400;
+            line-height: 1.5;
+            padding: 6px 8px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+        }
+
         /* 4. 버튼 클릭 잔상·트랜지션 제거 */
         div[data-testid="stButton"] > button,
         div[data-testid="stFormSubmitButton"] > button {
