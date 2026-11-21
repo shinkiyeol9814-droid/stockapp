@@ -189,4 +189,7 @@ if __name__ == "__main__":
         since = int(sys.argv[sys.argv.index("--backfill") + 1])
     else:
         skip_if_closed("외국인 보유 비중")
-    update(since)
+    # 값이 바뀐 실행에서만 수집 시각을 남긴다 (사유는 collected_at.py 머리말).
+    if update(since):
+        import collected_at
+        collected_at.mark(collected_at.KRX, "foreign")

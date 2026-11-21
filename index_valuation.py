@@ -211,4 +211,8 @@ if __name__ == "__main__":
     since = None
     if "--since" in sys.argv:
         since = int(sys.argv[sys.argv.index("--since") + 1])
-    update(since)
+    # 값이 실제로 바뀐 실행에서만 수집 시각을 남긴다 — 화면 밴드 카드가 `11/20 23:31 수집`
+    # 으로 적는다. 왜 '바뀐 것만'인지는 collected_at.py 머리말.
+    if update(since):
+        import collected_at
+        collected_at.mark(collected_at.KRX, "index_val")

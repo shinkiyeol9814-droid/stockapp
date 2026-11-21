@@ -902,3 +902,10 @@ if __name__ == "__main__":
                                              _INFLATION_KEEP_DAYS)
 
     print(f"{datetime.now(KST).date()} 갱신 결과({only or 'all'}): {updated}")
+
+    # 💡 "이 값이 언제 들어왔나"를 쪽지에 남긴다 — 화면이 날짜 옆에 시각으로 적는다
+    #    (2026-11-21 요청). **바뀐 것만** 찍는다: 받아보기만 한 시각을 매번 찍으면
+    #    이 파일 하나 때문에 실행마다 커밋이 생겨 앱이 재시작한다. 자세한 사유는
+    #    collected_at.py 머리말.
+    import collected_at
+    collected_at.mark(collected_at.MACRO, [k for k, v in updated.items() if v])

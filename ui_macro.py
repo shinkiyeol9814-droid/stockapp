@@ -16,6 +16,7 @@ import urllib.parse
 
 import kofia_flow
 import lithium_source
+import collected_at
 from ui_common import (page_header, section_title, section_title_select,
                        run_with_progress)
 
@@ -272,14 +273,61 @@ _UPD_TIP = {
     "foreign": "KRX 종목별 외국인 보유량을 합산. 장 마감 당일 밤 23:30 배치가 받습니다.",
     "index_live": "네이버 실시간 지수. 화면을 열 때 받습니다.",
     "snapshot": "실시간 조회가 실패해 배치가 저장해 둔 마지막 값으로 그렸습니다.",
+    "compare": "야후 S&P 500 종가·미국채 10년 금리. 미국 장 마감 뒤 "
+               "KST 08:00(화~토)·18:00 배치가 받습니다.",
 }
 
+# 수집 시각 쪽지의 키(collected_at) ↔ 위 말풍선 키. 같은 이름이면 적지 않아도 된다.
+_COLLECT_FOR_TIP = {"krx": "index_val", "sp500": "sp500", "foreign": "foreign",
+                    "credit": "credit", "compare": "compare"}
 
-def _tip(text: str, key: str) -> str:
+# 수집 시각을 같이 적을 때 말풍선 끝에 붙이는 한 줄 — 6개 키에 같은 문장을
+# 따로 적지 않으려고 여기 한 번만 둔다.
+_COLLECT_NOTE = "뒤의 시각은 이 값이 우리 쪽에 들어온 때입니다."
+
+
+def _tip(text: str, key: str, extra: str = "") -> str:
     """기준일 글자에 설명을 단다 — 마우스를 올리면(데스크톱) 또는 누르면(휴대폰) 뜬다.
     title 속성은 휴대폰에서 안 보여서 CSS(:hover/:focus)로 띄운다 — 모양은 app.py 3-4."""
-    tip = html.escape(_UPD_TIP.get(key, key), quote=True)
+    tip = _UPD_TIP.get(key, key)
+    if extra:
+        tip = f"{tip} {extra}"
+    tip = html.escape(tip, quote=True)
     return f"<span class='upd-tip' tabindex='0' data-tip='{tip}'>{text}</span>"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_collected() -> dict:
+    """{소스키: datetime(KST)} — 배치가 '이 값을 언제 받았는지' 적어 둔 쪽지 둘을 합친다."""
+    out = {}
+    for p in (collected_at.MACRO, collected_at.KRX):
+        out.update(collected_at.load(p))
+    return out
+
+
+def _stamp(data_date, tip: str, verb: str = "수집", at: datetime | None = None) -> str:
+    """
+    카드 머리 오른쪽의 '기준일' 한 토막 — 데이터 날짜 + 그 값이 들어온 시각.
+
+    시세 카드는 원천이 시각을 줘서 예전부터 `11/20 18:01 기준`으로 적었는데, 날짜만 있는
+    일 단위 값(PER·PBR·외국인·신용 스프레드·수급)은 `11/20`만 떠서 "며칠 전에 받아 놓고
+    멈춘 값"과 구분이 안 됐다(2026-11-21 요청).
+
+    ⚠️ **두 날짜는 다를 수 있다.** 신용 스프레드는 미국 기준 하루 늦게 공개돼 11/19 값이
+    11/21 02:30에 들어온다. 같은 날이면 날짜를 한 번만 적고(`11/20 23:31 수집`), 다르면
+    둘 다 적는다(`11/19 · 11/21 02:30 수집`) — 시각만 붙이면 그 시각이 데이터 날짜의
+    시각으로 읽힌다.
+
+    시각을 모르면(쪽지가 아직 없는 과거 데이터, 조회 실패) **예전처럼 날짜만** 적는다 —
+    없는 시각을 지어내지 않는다.
+    """
+    d = f"{data_date:%m/%d}"
+    got = at or _get_collected().get(_COLLECT_FOR_TIP.get(tip, tip))
+    if got is None:
+        return _tip(d, tip)
+    same = got.date() == pd.Timestamp(data_date).date()
+    txt = f"{d} {got:%H:%M} {verb}" if same else f"{d} · {got:%m/%d %H:%M} {verb}"
+    return _tip(txt, tip, _COLLECT_NOTE)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1124,7 +1172,7 @@ def _render_band_card(name: str, s: pd.Series, unit: str, span_label: str,
         f"<span style='font-size:11.5px;color:{clr};font-weight:600;white-space:nowrap;'>"
         f"평균 대비 {vs_mean:+.1f}%</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{_tip(f'{s.index[-1]:%m/%d}', tip)}</span></div>",
+        f"{_stamp(s.index[-1], tip)}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_band_chart(s, unit, close, index_name, volume, value, foreign), use_container_width=True,
@@ -1303,7 +1351,7 @@ def _render_foreign_card(idx: str, label: str, val_df: pd.DataFrame | None, year
         f"시총 대비 {cur_ratio:.2f}%</span>"
         f"<span style='font-size:11.5px;white-space:nowrap;'>{chgs}</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{_tip(f'{h.index[-1]:%m/%d} 기준', 'foreign')}</span></div>"
+        f"{_stamp(h.index[-1], 'foreign')}</span></div>"
         + flow_html
         + "<div style='height:8px;'></div>",
         unsafe_allow_html=True,
@@ -1586,6 +1634,20 @@ def _render_compare_section() -> None:
                         use_container_width=True, config=cfg)
         st.markdown(_rate_summary_html(kospi, "코스피", yld, span_label),
                     unsafe_allow_html=True)
+        # 💡 이 섹션만 기준일이 통째로 없었다 — 차트와 등락률 한 줄뿐이라 "언제까지
+        # 데이터냐"를 화면이 전혀 말하지 않았다(2026-11-21 제보). 계열 둘의 원천·배치가
+        # 서로 달라(코스피=KRX 23:30 · 금리=야후 08:00/18:00) 한 줄에 나란히 적는다.
+        # ⚠️ 두 토막을 ' · '로 잇지 말 것 — 날짜가 다를 때 _stamp 안에서도 '·'를 쓰므로
+        # `코스피 11/20 23:31 수집 · 미국채 11/20 · 11/21 08:01 수집`처럼 점이 세 개가 되어
+        # 어디까지가 한 계열인지 뭉개진다(실측). 카드 머리와 같은 flex 간격으로 가른다.
+        _parts = [f"코스피 {_stamp(kospi.index[-1], 'krx')}"]
+        if yld is not None and not yld.empty:
+            _parts.append(f"미국채 {_stamp(yld.index[-1], 'compare')}")
+        st.markdown(
+            "<div style='font-size:11px;color:#aaa;margin-top:1px;display:flex;"
+            "flex-wrap:wrap;column-gap:13px;row-gap:0;'>"
+            + "".join(f"<span style='white-space:nowrap;'>{p}</span>" for p in _parts)
+            + "</div>", unsafe_allow_html=True)
 
     # 일간 변동률의 상관 — 수준이 아니라 '같이 흔들리는 정도'를 본다.
     #
@@ -1630,10 +1692,20 @@ _FLOW_PERIODS = {"3개월": 3, "6개월": 6, "1년": 12, "3년": 36, "전체": N
 _CRD_WARN, _CRD_HOT = 40.0, 45.0
 _FLOW_API_URL = "https://www.data.go.kr/data/15094809/openapi.do"
 
+# 수급 조회가 돌아간 시각. 카드 넷까지 인자로 넘기면 함수 넷(_crd_market_card·
+# _crd_market_body·_flow_card·_flow_card_body)의 서명이 전부 늘어나므로, 섹션이
+# 그리기 직전에 여기 담아 둔다 — 한 스크립트 실행 안에서만 쓰고, 섹션이 카드를
+# 부르는 쪽이라 순서가 보장된다.
+_FLOW_AT: datetime | None = None
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_flow_stats():
-    """(DataFrame|None, 설정오류문구). 금액 단위는 억원.
+    """(DataFrame|None, 설정오류문구, 받은시각|None). 금액 단위는 억원.
+
+    세 번째 값은 **이 조회가 실제로 돌아간 시각**이다 — 수급은 배치가 쌓지 않고 앱이
+    화면을 열 때 직접 받으므로(API가 전체 이력을 매번 준다) 쪽지 파일이 없다. 캐시
+    적중일 때도 "그때 받은 시각"이 그대로 돌아와야 해서 반환값에 담는다.
 
     💡 보통은 "캐시 함수는 실패를 반환하지 말고 예외로 올린다"가 규칙이다(빈 결과가
     TTL 동안 캐시되면 일시 장애가 한 시간짜리 '데이터 없음'이 된다). 여기서는
@@ -1644,15 +1716,15 @@ def _get_flow_stats():
     """
     key = st.secrets.get("DATA_GO_KR_KEY", "")
     if not key:
-        return None, "DATA_GO_KR_KEY가 설정돼 있지 않습니다."
+        return None, "DATA_GO_KR_KEY가 설정돼 있지 않습니다.", None
     try:
-        return kofia_flow.fetch_flow(key), ""
+        return kofia_flow.fetch_flow(key), "", datetime.now(_KST)
     except kofia_flow.KofiaNotRegistered:
         return None, (
             "이 키로는 아직 조회할 수 없습니다 — 공공데이터포털에서 "
             f"[금융투자협회 종합통계정보]({_FLOW_API_URL}) 활용신청을 한 번 하면 "
             "지금 쓰는 키 그대로 열립니다."
-        )
+        ), None
 
 
 def _make_flow_chart(s: pd.Series, fmt: str, warn: float | None = None,
@@ -1845,7 +1917,7 @@ def _crd_market_body(name: str, full: pd.Series | None, win: pd.Series | None,
         f"<span style='font-size:11.5px;color:{_sign_color(d1)};white-space:nowrap;'>"
         f"전일 {d1:+,.2f}조</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{_tip(f'{win.index[-1]:%m/%d}', 'kofia')}</span></div>",
+        f"{_stamp(win.index[-1], 'kofia', '조회', _FLOW_AT)}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_crd_idx_chart(win, idx), use_container_width=True,
@@ -1895,7 +1967,7 @@ def _flow_card_body(name: str, s: pd.Series, unit: str, fmt: str, sub: str,
         f"<span style='font-size:11.5px;color:{clr};white-space:nowrap;'>"
         f"전일 {format(d1, '+' + fmt)}{unit}</span>"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{_tip(f'{s.index[-1]:%m/%d}', 'kofia')}</span></div>",
+        f"{_stamp(s.index[-1], 'kofia', '조회', _FLOW_AT)}</span></div>",
         unsafe_allow_html=True,
     )
     st.plotly_chart(_make_flow_chart(s, fmt, warn, bars, overlay, overlay_fmt, overlay_unit),
@@ -1965,7 +2037,7 @@ _FLOW_HELP = """
 
 def _render_flow_section() -> None:
     try:
-        df, cfg_err = _get_flow_stats()
+        df, cfg_err, fetched_at = _get_flow_stats()
     except Exception as e:                      # 네트워크·429·포털 장애 — 다음 새로고침에 재시도
         section_title("수급 건전성")
         st.caption(f"금융투자협회 통계를 불러오지 못했습니다 ({type(e).__name__}). "
@@ -1976,6 +2048,8 @@ def _render_flow_section() -> None:
         st.caption(cfg_err)
         return
 
+    global _FLOW_AT
+    _FLOW_AT = fetched_at            # 아래 카드 넷이 '조회 시각'으로 읽는다
     span_label = section_title_select("수급 건전성", _FLOW_PERIODS, key="flow", index=2)
     months = _FLOW_PERIODS[span_label]
     w = df if not months else df[df.index >= df.index[-1] - pd.DateOffset(months=months)]
@@ -2177,7 +2251,7 @@ def _credit_card_body(key: str, name: str, s: pd.Series) -> None:
         f"<span style='font-size:11.5px;color:{clr(d1)};white-space:nowrap;'>"
         f"전일 {d1:+.2f}%p</span>{mom_html}"
         f"<span style='font-size:11.5px;color:#888;white-space:nowrap;'>"
-        f"{_tip(f'{s.index[-1]:%m/%d}', 'credit')}</span></div>",
+        f"{_stamp(s.index[-1], 'credit')}</span></div>",
         unsafe_allow_html=True,
     )
     # 카드 밑 설명("투기등급 회사채 − 국채")은 뺐다 — 섹션 캡션이 이미 OAS가
@@ -2546,6 +2620,7 @@ def render_macro():
         _get_foreign_holding.clear()
         _get_flow_stats.clear()
         _get_us_credit.clear()
+        _get_collected.clear()      # 수집 시각 쪽지도 같이 — 새 배치가 돌았을 수 있다
         st.rerun()
 
     # 💡 예전엔 여기서 라디오로 "시장 지표 / 수출 동향"을 토글했다.

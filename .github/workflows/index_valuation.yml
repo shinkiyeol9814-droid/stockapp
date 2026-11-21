@@ -70,6 +70,9 @@ jobs:
           git add data/macro/index_val/
           # 외국인 보유 단계가 실패해 폴더가 없으면 git add가 pathspec 오류로 스텝을 죽인다.
           if [ -d data/macro/foreign_hold ]; then git add data/macro/foreign_hold/; fi
+          # "이 값이 언제 들어왔나" 쪽지 — 화면이 날짜 옆에 시각으로 적는다(collected_at.py).
+          # ⚠️ index_val/ 안에 두면 앱이 연도별 파일로 파싱하려 들어 밖에 둔다.
+          if [ -f data/macro/krx_collected.json ]; then git add data/macro/krx_collected.json; fi
           git commit -m "Auto-update: KOSPI/KOSDAQ PER & PBR" || { echo "No changes to commit"; exit 0; }
           BR="${{ github.ref_name }}"
           for i in 1 2 3 4 5; do
