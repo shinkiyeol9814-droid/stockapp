@@ -1,12 +1,12 @@
 {
- "last_id": 139754,
+ "last_id": 139761,
  "retry": {},
  "last_run": {
-  "new": 18,
+  "new": 7,
   "have": 0,
-  "skip": 10,
-  "pdf": 8,
-  "docs": 8,
+  "skip": 5,
+  "pdf": 2,
+  "docs": 2,
   "fail": 0
  }
 }
