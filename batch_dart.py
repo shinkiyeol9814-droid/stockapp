@@ -24,7 +24,10 @@ REWRITE_AFTER = timedelta(days=3)
 # 워치리스트 실행은 이보다 최근 파일을 건너뛴다 — 시간 예산으로 끊긴 실행을 다음 실행이 이어받는다.
 WATCHLIST_FRESH = timedelta(hours=20)
 # 종목 하나의 상한(초). 스레드만 버리면 백그라운드에서 계속 돌아 뒤 종목까지 느려지므로 프로세스째 끊는다.
-STOCK_TIMEOUT = 240
+# ⚠️ dart_fin의 단계별 예산 합보다 넉넉해야 한다 — 넘기면 마지막 단계(정기보고서 원문)가
+#    끝나기 전에 프로세스가 죽고, 저장이 collect() 뒤라 그 종목 결과를 통째로 잃는다.
+#    corpmap 30 + 분기재고 30 + 연간재고 30 + 연간재무 30 + 원문 150 = 270 (2026-11-26 기준).
+STOCK_TIMEOUT = 300
 MAX_CONSECUTIVE_FAIL = 3
 EXIT_SAVED, EXIT_FAILED, EXIT_UNCHANGED = 0, 2, 3
 
