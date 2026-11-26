@@ -101,7 +101,22 @@ def _missing_docs(data):
 def _retryable(data):
     """다시 요청할 만한 수집 실패가 있는지. DartError(DART에 없는 종목 등)는 재시도해도 같다."""
     errors = (data or {}).get("errors") or {}
-    return _missing_docs(data) > 0 or any(not str(v).startswith("DartError:") for v in errors.values())
+    return (_missing_docs(data) > 0
+            or _missing_sections(data)
+            or any(not str(v).startswith("DartError:") for v in errors.values()))
+
+
+# 배치가 수집하는 항목이 늘어나면, 그 전에 만들어진 파일에는 그 칸이 아예 없다. 신선도(7일)만
+# 보면 "최신"이라 최대 일주일을 기다리게 되므로(2026-11-26 financials_y를 붙이며 겪었다)
+# 없는 칸 자체를 갱신 사유로 친다. 오류로 빠진 건 errors가 따로 잡는다.
+_EXPECTED_SECTIONS = ("inventory_q", "inventory_y", "financials_y", "reports")
+
+
+def _missing_sections(data):
+    if not data:
+        return False
+    errors = (data or {}).get("errors") or {}
+    return any(k not in data and k not in errors for k in _EXPECTED_SECTIONS)
 
 
 def _request_batch(code):

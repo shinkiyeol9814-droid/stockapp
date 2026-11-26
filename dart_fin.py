@@ -185,8 +185,31 @@ _INV_IDS = ("ifrs-full_Inventories", "ifrs_Inventories")
 _REV_IDS = ("ifrs-full_Revenue", "ifrs_Revenue", "dart_Revenue")
 _REV_NAMES = ("매출액", "수익(매출액)", "영업수익", "매출", "수익")
 
+# 가치평가 탭이 쓰는 나머지 세 계정. account_id(IFRS 표준 태그)를 먼저 보고, 없으면 계정명으로
+# 찾는다 — 회사마다 계정명 표기가 갈려도 id는 같은 경우가 많다.
+_OP_IDS = ("ifrs-full_OperatingIncomeLoss", "dart_OperatingIncomeLoss")
+_OP_NAMES = ("영업이익", "영업이익(손실)", "영업손익", "영업손실")
+_NI_IDS = ("ifrs-full_ProfitLoss",)
+_NI_NAMES = ("당기순이익", "당기순이익(손실)", "당기순손익", "연결당기순이익")
+_EQ_IDS = ("ifrs-full_Equity",)
+_EQ_NAMES = ("자본총계",)
+
+_DART_FIRST_YEAR = 2015   # fnlttSinglAcntAll이 제공하는 첫 사업연도
+_FIN_BUDGET = 45          # 연간 재무 병렬 조회 전체 예산(초) — 10개 연도 × 1요청
+
+
+# 같은 (회사, 연도, 보고서, 연결구분) 응답을 한 실행 안에서 두 번 받지 않는다 — 연간 재고자산과
+# 연간 재무(매출·영업이익·순이익·자본총계)가 **같은 fnlttSinglAcntAll 응답**에서 각자 필요한
+# 계정만 꺼내 쓰기 때문이다. 배치는 종목마다 별도 프로세스라 캐시가 쌓이지 않는다.
+# ⚠️ 실패(None)는 담지 않는다 — 일시적 네트워크 오류를 캐시하면 CFS 한 번 실패가 그 실행 내내
+#    OFS로 떨어지는 결과가 된다.
+_ACNT_MEMO: dict = {}
+
 
 def _acnt(corp_code: str, year: int, reprt: str = "11011", fs_div: str = "CFS"):
+    key = (corp_code, year, reprt, fs_div)
+    if key in _ACNT_MEMO:
+        return _ACNT_MEMO[key]
     r = requests.get(f"{_BASE}/fnlttSinglAcntAll.json",
                      params={"crtfc_key": _api_key(), "corp_code": corp_code,
                              "bsns_year": str(year), "reprt_code": reprt,
@@ -194,7 +217,10 @@ def _acnt(corp_code: str, year: int, reprt: str = "11011", fs_div: str = "CFS"):
     j = r.json()
     if j.get("status") != "000":
         return None
-    return j.get("list", [])
+    rows = j.get("list", [])
+    if rows:
+        _ACNT_MEMO[key] = rows
+    return rows
 
 
 def _amt(row, field):
@@ -258,6 +284,74 @@ def get_inventory_series(stock_code: str, years: int = 5) -> dict:
             out.append({"연도": y, "재고자산": inv, "매출액": rev,
                         "비율": (inv / rev * 100) if rev else None,
                         "기준": fs})
+    return {"corp_name": nm, "rows": out}
+
+
+def _pick_account(rows, ids, names, divs):
+    """재무제표 행 목록에서 계정 하나의 당기 금액. account_id 우선, 없으면 계정명."""
+    by_name = None
+    for r in rows:
+        if r.get("sj_div") not in divs:
+            continue
+        rid = (r.get("account_id") or "").strip()
+        if rid in ids:
+            v = _amt(r, "thstrm_amount")
+            if v is not None:
+                return v
+        elif by_name is None:
+            if (r.get("account_nm") or "").strip().replace(" ", "") in names:
+                by_name = _amt(r, "thstrm_amount")
+    return by_name
+
+
+def get_annual_financials(stock_code: str, years: int = 10) -> dict:
+    """
+    최근 사업연도별 매출액·영업이익·당기순이익·자본총계. 금액 단위는 **원**.
+
+    반환 {"corp_name":…, "rows":[{"연도","매출액","영업이익","당기순이익","자본총계","기준"}…]}
+
+    💡 **왜 DART인가** — 가치평가 탭이 2021년부터만 그리던 건 우리가 자른 게 아니라
+    네이버·FnGuide 웹이 거기까지만 주기 때문이다(2026-11-26 실측: 네이버 cF1001
+    2021~2028, 컨센서스 2022~2028, FnGuide cF3002 2021~2026 — 셋 다 **과거 5개년**이
+    상한이고 해마다 앞이 잘리는 롤링 창이다). DART는 2015 사업연도부터 있어 10년이 나온다.
+    앱은 Cloud에서 DART에 못 붙으므로 배치가 받아 data/dart/{종목코드}.json에 넣고
+    valuation.py가 **네이버가 비운 칸만** 이 값으로 메운다.
+
+    💡 같은 응답을 재고자산 쪽과 나눠 쓴다(`_ACNT_MEMO`) — 겹치는 5개 연도는 요청이 한 번이다.
+    """
+    cc, nm = corp_code_of(stock_code)
+    if not cc:
+        raise DartError(f"종목코드 {stock_code}의 DART corp_code를 찾지 못했습니다.")
+
+    this_year = datetime.now().year
+    targets = [y for y in range(this_year - 1, this_year - 1 - years, -1)
+               if y >= _DART_FIRST_YEAR]
+
+    def one(y):
+        for fs in ("CFS", "OFS"):
+            rows = _acnt(cc, y, "11011", fs)
+            if rows:
+                return y, rows, fs
+        return y, None, None
+
+    got = {}
+    for y, rows, fs in _map_with_deadline(one, targets, 5, _FIN_BUDGET, "연간 재무"):
+        if rows:
+            got[y] = (rows, fs)
+
+    _WANTED = (
+        ("매출액", _REV_IDS, _REV_NAMES, ("IS", "CIS")),
+        ("영업이익", _OP_IDS, _OP_NAMES, ("IS", "CIS")),
+        ("당기순이익", _NI_IDS, _NI_NAMES, ("IS", "CIS")),
+        ("자본총계", _EQ_IDS, _EQ_NAMES, ("BS",)),
+    )
+    out = []
+    for y in sorted(got):
+        rows, fs = got[y]
+        picked = {key: _pick_account(rows, ids, names, divs)
+                  for key, ids, names, divs in _WANTED}
+        if any(v is not None for v in picked.values()):
+            out.append({"연도": y, **picked, "기준": fs})
     return {"corp_name": nm, "rows": out}
 
 

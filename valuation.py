@@ -302,9 +302,29 @@ def fetch_consensus_data(ticker):
         return None
 
 
+# 화면에 올리는 과거 연수. DART는 2015 사업연도부터 있어 더 늘릴 수도 있지만 표가 길어진다.
+_HISTORY_YEARS = 10
+# 네이버·DART 양쪽에서 채우는 네 계정. EV/EBITDA는 컨센서스에만 있어 여기 없다.
+_CORE_COLS = ['매출액', '영업이익', '당기순이익', '자본총계']
+
+
 def _target_years():
-    # 컨센서스가 올해+2년(E)까지 주므로 끝 연도를 고정하지 않는다.
-    return list(range(2021, datetime.today().year + 3))
+    """과거 10년 + 올해·+1·+2 추정(컨센서스가 올해+2년(E)까지 준다).
+
+    💡 시작 연도가 2021로 못박혀 있었는데, 하필 2021이었던 이유는 **네이버·FnGuide 웹이
+    과거 5개년만 주기 때문**이다(2026-11-26 실측: 네이버 cF1001 2021~2028, 컨센서스
+    2022~2028, FnGuide cF3002 2021~2026 — 셋 다 해마다 앞이 잘리는 롤링 창이다).
+    고정값이라 올해는 우연히 딱 맞았지만 2027년이 되면 2021 행이 소스에서 사라져 영영
+    빈 줄로 남았을 것이다. 이제 오늘 기준으로 굴리고, 네이버가 못 주는 앞쪽 다섯 해는
+    DART 배치 파일(data/dart/*.json)이 채운다 — `_fill_from_dart`.
+    """
+    this = datetime.today().year
+    return list(range(this - _HISTORY_YEARS, this + 3))
+
+
+def _price_start():
+    """주가를 어디서부터 받을지. 재무 표의 첫 해와 맞춘다."""
+    return f"{_target_years()[0]}-01-01"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -332,24 +352,22 @@ def _cached_hybrid_financials(ticker):
             ajax_headers = HEADERS.copy()
             ajax_headers["Referer"] = main_url
 
-            # Phase 2: cF1001(손익) + cF2001(재무상태) 병렬 요청 (encparam 필요)
+            # Phase 2: cF1001(Financial Highlight) 요청 (encparam 필요)
+            # ⚠️ 예전엔 cF2001(재무상태표)도 같이 받았는데 **그 엔드포인트는 죽었다** —
+            #    2026-11-26 실측으로 종목 5개 전부 1,135바이트짜리 "기업재무정보 접속장애"
+            #    HTML이 200으로 왔다. 자본총계·자산총계가 cF1001에 그대로 있어 화면은
+            #    멀쩡했고, 그래서 조회마다 헛된 요청이 하나씩 나가는 걸 아무도 몰랐다.
             fin_url_1 = (
                 f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF1001.aspx"
                 f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
             )
-            fin_url_2 = (
-                f"https://navercomp.wisereport.co.kr/v2/company/ajax/cF2001.aspx"
-                f"?cmp_cd={ticker}&fin_typ=0&freq_typ=Y&encparam={encparam}"
-            )
             fut_f1 = ex.submit(requests.get, fin_url_1, headers=ajax_headers, timeout=7)
-            fut_f2 = ex.submit(requests.get, fin_url_2, headers=ajax_headers, timeout=7)
 
             res1           = fut_f1.result()
-            res2           = fut_f2.result()
             consensus_rows = fut_consensus.result()
 
-        # ── ① cF1001 + cF2001 파싱 ──
-        for res in [res1, res2]:
+        # ── ① cF1001 파싱 ──
+        for res in [res1]:
             df_parsed = parse_fin_table(res.text)
             if df_parsed is None:
                 continue
@@ -417,20 +435,65 @@ def _cached_hybrid_financials(ticker):
     return df
 
 
+def _empty_financials():
+    return pd.DataFrame([
+        {
+            '매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
+            '자본총계': np.nan, 'EV/EBITDA': np.nan,
+            'Year': y, 'Plot_Date': pd.to_datetime(f"{y}-12-28"), 'Label': f"{y}년",
+        }
+        for y in _target_years()
+    ])
+
+
+def _dart_annual_rows(ticker):
+    """배치가 모아 둔 DART 연간 재무. 앱은 DART에 직접 못 붙는다(Cloud에서 막힘) — 파일만 읽는다."""
+    try:
+        return (((dart_load(ticker) or {}).get("financials_y") or {}).get("rows")) or []
+    except Exception as e:
+        print(f"[valuation] {ticker} DART 연간 재무 읽기 실패: {type(e).__name__}: {e}")
+        return []
+
+
+def _fill_from_dart(df, ticker):
+    """네이버가 **비워 둔 칸만** DART 값으로 메운다.
+
+    겹치는 해(최근 5년)는 네이버가 그대로 이기므로 기존 화면이 한 칸도 바뀌지 않고,
+    네이버가 아예 주지 않는 앞쪽 다섯 해만 새로 찬다. DART는 **원**, 화면은 **억원**이라
+    UNIT으로 나눈다. EV/EBITDA는 컨센서스에만 있는 값이라 과거는 계속 빈다
+    (EV/EBITDA 밴드만 여전히 최근 5년인 이유).
+
+    파일이 아직 없는 종목은 그냥 빈 채로 둔다 — 같은 화면의 DART 패널이 수집을 요청하고,
+    들어오면 다음 조회부터 채워진다.
+    """
+    rows = _dart_annual_rows(ticker)
+    if not rows:
+        return df
+    by_year = {}
+    for r in rows:
+        try:
+            by_year[int(r["연도"])] = r
+        except (KeyError, TypeError, ValueError):
+            continue
+    for idx, y in df['Year'].items():
+        src = by_year.get(int(y))
+        if not src:
+            continue
+        for col in _CORE_COLS:
+            cur = df.at[idx, col]
+            val = src.get(col)
+            if val is not None and (pd.isna(cur) or cur == 0):
+                df.at[idx, col] = float(val) / UNIT
+    return df
+
+
 def get_hybrid_financials(ticker):
     try:
-        return _cached_hybrid_financials(ticker)
+        # ⚠️ 캐시가 돌려준 DataFrame을 그대로 고치면 캐시 내용이 더럽혀진다 — 복사본에 채운다.
+        df = _cached_hybrid_financials(ticker).copy()
     except Exception:
-        target_years = _target_years()
-        rows = [
-            {
-                '매출액': np.nan, '영업이익': np.nan, '당기순이익': np.nan,
-                '자본총계': np.nan, 'EV/EBITDA': np.nan,
-                'Year': y, 'Plot_Date': pd.to_datetime(f"{y}-12-28"), 'Label': f"{y}년",
-            }
-            for y in target_years
-        ]
-        return pd.DataFrame(rows)
+        df = _empty_financials()
+    return _fill_from_dart(df, ticker)
 
 
 def make_card_ui(title, price_str, marcap_str, rate_str, is_up, is_zero=False):
@@ -695,7 +758,7 @@ def render_valuation_menu():
                     "주식수": lambda: get_stocks_count(ticker_row, ticker),
                     "재무": lambda: get_hybrid_financials(ticker),
                     "추정치": load_user_estimates,
-                    "주가": lambda: get_stock_price_data(ticker, "2021-01-01", _today),
+                    "주가": lambda: get_stock_price_data(ticker, _price_start(), _today),
                     "DART": lambda: dart_load(ticker),
                 }, label=f"{corp_name} 데이터 불러오는 중")
                 stocks_count = get_stocks_count(ticker_row, ticker)
@@ -714,7 +777,7 @@ def render_valuation_menu():
                                     fin_df.at[idx, col] = float(ticker_estimates[yr][col])
                                     manual_indices.append((idx, col))
 
-                df_price = get_stock_price_data(ticker, "2021-01-01", datetime.today().strftime('%Y-%m-%d'))
+                df_price = get_stock_price_data(ticker, _price_start(), datetime.today().strftime('%Y-%m-%d'))
                 if not df_price.empty:
                     curr_p      = df_price.iloc[-1]['Close']
                     prev_p      = df_price.iloc[-2]['Close'] if len(df_price) > 1 else curr_p
@@ -822,13 +885,23 @@ def render_valuation_menu():
                         _render_broker_card(corp_name, curr_p, stocks_count)
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
-                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "전체"], index=4, horizontal=True, label_visibility="collapsed", key="chart_period_radio")
+                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "10년", "전체"], index=5, horizontal=True, label_visibility="collapsed", key="chart_period_radio")
                     end_date_dt = df_price.index[-1]
                     if chart_period == "1년":   start_date_chart = end_date_dt - pd.DateOffset(years=1)
                     elif chart_period == "2년": start_date_chart = end_date_dt - pd.DateOffset(years=2)
                     elif chart_period == "3년": start_date_chart = end_date_dt - pd.DateOffset(years=3)
                     elif chart_period == "5년": start_date_chart = end_date_dt - pd.DateOffset(years=5)
-                    else: start_date_chart = pd.to_datetime("2021-01-01")
+                    elif chart_period == "10년": start_date_chart = end_date_dt - pd.DateOffset(years=10)
+                    else: start_date_chart = pd.to_datetime(_price_start())
+
+                    # ⚠️ 재무가 없는 구간까지 보여주면 밴드가 거짓말을 한다. 밴드는 연도별 지표를
+                    # ffill/bfill해 만들기 때문에, DART 파일이 아직 없는 종목은 2021년 값이
+                    # 그 앞 다섯 해까지 **평평하게 뒤로 복사**된다. 그래서 실제 값이 있는 첫
+                    # 해보다 앞은 자른다 — 파일이 없으면 예전처럼 최근 5년만 보인다.
+                    _has_fin = (fin_df[_CORE_COLS].fillna(0) != 0).any(axis=1)   # NaN도 0이 되어 같이 걸러진다
+                    if _has_fin.any():
+                        _fin_from = pd.to_datetime(f"{int(fin_df.loc[_has_fin, 'Year'].min())}-01-01")
+                        start_date_chart = max(start_date_chart, _fin_from)
 
                     future_dates   = pd.date_range(start=df_price.index[-1], end=pd.to_datetime(f"{int(fin_df['Year'].max()) + 1}-02-28"), freq='D')
                     extended_dates = pd.DatetimeIndex(list(df_price.index) + list(future_dates[1:]))

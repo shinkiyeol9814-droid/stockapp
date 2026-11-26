@@ -31,6 +31,9 @@ EXIT_SAVED, EXIT_FAILED, EXIT_UNCHANGED = 0, 2, 3
 SECTIONS = {
     "inventory_q": lambda code, prev: dart_fin.get_inventory_quarterly(code, quarters=12),
     "inventory_y": lambda code, prev: dart_fin.get_inventory_series(code),
+    # 가치평가 탭의 '연도별 재무 상세' 10년치. 재고자산과 같은 응답을 나눠 쓰므로(_ACNT_MEMO)
+    # 겹치는 5개 연도는 요청이 늘지 않는다.
+    "financials_y": lambda code, prev: dart_fin.get_annual_financials(code, years=10),
     # 직전 파싱 결과를 넘겨 이미 읽은 원문은 다시 받지 않는다.
     "reports": lambda code, prev: dart_fin.get_report_series(
         code, limit=12, parsed=((prev or {}).get("reports") or {}).get("parsed")),
@@ -116,8 +119,15 @@ def _pending_docs(data):
 
 
 def _needs_retry(data):
-    """원문이 남았거나 일시적 오류로 빠진 항목이 있으면 참. DartError(DART에 없는 종목 등)는 재시도해도 같다."""
+    """원문이 남았거나 일시적 오류로 빠진 항목이 있으면 참. DartError(DART에 없는 종목 등)는 재시도해도 같다.
+
+    💡 SECTIONS에 항목이 새로 붙으면 그 전에 만든 파일에는 그 칸이 아예 없다. 최근 파일
+    건너뛰기(20시간)에 걸려 하루가 더 밀리므로 **없는 칸도 재시도 사유로 친다**
+    (2026-11-26 financials_y를 붙이며 넣었다). 앱 쪽 판정은 ui_dart_panel._missing_sections.
+    """
     errors = (data or {}).get("errors") or {}
+    if data and any(k not in data and k not in errors for k in SECTIONS):
+        return True
     return bool(_pending_docs(data)) or any(not str(v).startswith("DartError:") for v in errors.values())
 
 
