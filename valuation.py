@@ -885,7 +885,10 @@ def render_valuation_menu():
                         _render_broker_card(corp_name, curr_p, stocks_count)
 
                     st.markdown("<div class='sub-header' style='margin-top:20px;'>📉 밸류에이션 차트</div>", unsafe_allow_html=True)
-                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "10년", "전체"], index=5, horizontal=True, label_visibility="collapsed", key="chart_period_radio")
+                    # 💡 기본값이 '5년'인 이유: 10년을 들여온 뒤로 '전체'는 13년(2016~2028+)이라
+                    # 열자마자 한 화면에 눌려 들어간다. 10년치는 위의 재무 표가 늘 보여주고,
+                    # 차트는 예전 기본 화면(2021~)과 거의 같은 '5년'으로 두고 눌러서 넓힌다.
+                    chart_period = st.radio("조회 기간 설정", ["1년", "2년", "3년", "5년", "10년", "전체"], index=3, horizontal=True, label_visibility="collapsed", key="chart_period_radio")
                     end_date_dt = df_price.index[-1]
                     if chart_period == "1년":   start_date_chart = end_date_dt - pd.DateOffset(years=1)
                     elif chart_period == "2년": start_date_chart = end_date_dt - pd.DateOffset(years=2)
