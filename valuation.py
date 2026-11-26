@@ -1038,6 +1038,33 @@ def render_valuation_menu():
                     x_range         = [start_date_chart, target_year_end]
                     cols            = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd']
 
+                    # ⚠️ **화면 밖 구간은 보내지 않는다.** 기간을 '1년'으로 줄여도 2016~2029를
+                    # 통째로 그리고 x축 범위로 잘라 보이기만 했다 — 휴대폰에서 눈에 띄게 느렸다.
+                    # 2026-11-26 실측(LG이노텍·기본 5년): 밴드 차트 한 장이 포인트 27,159개 ·
+                    # **2.07MB**였고, 그중 x축 날짜 문자열만 849KB다(밴드 7선 × 3,498일,
+                    # `"2016-01-04T00:00:00.000000000"` 29자). 이게 새로고침마다 다시 간다.
+                    # 날짜는 초 단위로 낮춰 보낸다 — 일봉이라 정보가 하나도 안 줄고 글자는 29→19자다.
+                    _vis       = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
+                    _vis_dates = extended_dates[_vis]
+                    _px_dates  = df_price.index[date_mask].values.astype('datetime64[s]')
+                    _px_close  = df_price['Close'].values[date_mask]
+
+                    # ⚠️ **밴드 선은 날마다 점을 찍을 이유가 없다 — 수학적으로 직선이다.**
+                    # ext_interp가 연도 지표(fin_df 13행)를 np.interp로 이은 값이라, 밴드는 그
+                    # 13개 연말 지점에서만 꺾이고 사이는 완전한 직선이다(바깥은 평평). 그런데
+                    # 7개 선 전부를 3,498일치로 보내고 있었다 — 같은 그림을 2,000배 비싸게.
+                    # 꺾이는 점(+ 보이는 구간 양끝)만 보내면 **픽셀 하나 다르지 않다.**
+                    # ⚠️ 대신 fig1의 밴드는 **툴팁에서 뺀다**(hoverinfo='skip'). 점이 드물면 x unified가
+                    #    가장 가까운 꺾인점 값을 `7.1x : (22년, 293.9k)`처럼 **다른 날짜 값으로** 띄워
+                    #    헷갈린다. 각 밴드의 배수는 오른쪽 끝 라벨·범례가 이미 말하고, 날짜별 배수는
+                    #    아래 '평균 밴드' 차트의 당일Val이 그대로 보여준다. 툴팁엔 주가만 남는다.
+                    _knots = pd.DatetimeIndex(sorted(set(
+                        [_vis_dates[0], _vis_dates[-1]]
+                        + [d for d in fin_df['Plot_Date'] if start_date_chart <= d <= target_year_end]
+                    )))
+                    _knot_metric = np.interp(_knots.map(datetime.timestamp).values, band_dates_ts, cur_metrics)
+                    _knot_dates  = _knots.values.astype('datetime64[s]')
+
                     def _fmt_metric(v):
                         try:
                             f = float(v)
@@ -1052,6 +1079,10 @@ def render_valuation_menu():
                         # ── fig1: 주가 밴드 차트 (PER/POR/PBR 전용) ──
                         def get_band_y(m_val):
                             return np.where(ext_interp > 0, (ext_interp * float(m_val)) / stocks_count, np.nan)
+
+                        def _band_knots(m_val):
+                            """꺾이는 점에서의 밴드 주가. get_band_y를 그 x로 평가한 것과 같다."""
+                            return np.where(_knot_metric > 0, (_knot_metric * float(m_val)) / stocks_count, np.nan)
 
                         fig1 = go.Figure()
                         mask_future        = (extended_dates >= start_date_chart) & (extended_dates <= target_year_end)
@@ -1072,12 +1103,12 @@ def render_valuation_menu():
                         y_min = core_min * 0.8
                         fig1.update_yaxes(range=[max(0, y_min), y_max])
 
-                        fig1.add_trace(go.Scatter(x=df_price.index, y=df_price['Close'], mode='lines', name='주가', line=dict(color='#636EFA', width=1.5)))
+                        fig1.add_trace(go.Scatter(x=_px_dates, y=_px_close, mode='lines', name='주가', line=dict(color='#636EFA', width=1.5)))
                         for i, b in enumerate(bands):
-                            if pd.notna(b): fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(b), mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dot')))
-                        fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', line=dict(color='blue', width=1.5)))
-                        if avg_m_val > 0: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', line=dict(color='green', width=1.5)))
-                        if today_m > 0 and today_m < 300: fig1.add_trace(go.Scatter(x=extended_dates, y=get_band_y(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', line=dict(color='red', width=1.5)))
+                            if pd.notna(b): fig1.add_trace(go.Scatter(x=_knot_dates, y=_band_knots(b), mode='lines', name=f'{b}x', hoverinfo='skip', line=dict(color=cols[i % 4], width=1, dash='dot')))
+                        fig1.add_trace(go.Scatter(x=_knot_dates, y=_band_knots(target_mult), mode='lines', name=f'<b>목표Val ({display_mult_str}x)</b>', hoverinfo='skip', line=dict(color='blue', width=1.5)))
+                        if avg_m_val > 0: fig1.add_trace(go.Scatter(x=_knot_dates, y=_band_knots(avg_m_val), mode='lines', name=f'<b>AvgVal ({avg_m_val:.1f}x)</b>', hoverinfo='skip', line=dict(color='green', width=1.5)))
+                        if today_m > 0 and today_m < 300: fig1.add_trace(go.Scatter(x=_knot_dates, y=_band_knots(today_m), mode='lines', name=f'<b>현재Val ({today_m:.1f}x)</b>', hoverinfo='skip', line=dict(color='red', width=1.5)))
 
                         fig1.update_xaxes(range=x_range, tickmode='array', tickvals=fin_df['Plot_Date'], ticktext=[f"{str(y)[-2:]}년" for y in fin_df['Year']], showticklabels=True)
                         fig1.update_layout(height=400, margin=dict(l=0, r=20, t=70, b=10), title=dict(text=f"[{band_name} 밴드]", x=0.0, y=0.99, font=dict(size=14)), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)), hovermode="x unified", dragmode="pan", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
@@ -1095,9 +1126,10 @@ def render_valuation_menu():
                     core_m_max = max(important_mults) if important_mults else 20
                     y2_max     = core_m_max * 1.6
                     fig2.update_yaxes(range=[0, y2_max])
-                    fig2.add_trace(go.Scatter(x=df_price.index, y=all_daily_val[:len(df_price)], mode='lines', name='당일Val', line=dict(color='#636EFA', width=1.5)))
+                    fig2.add_trace(go.Scatter(x=_px_dates, y=all_daily_val[:len(df_price)][date_mask], mode='lines', name='당일Val', line=dict(color='#636EFA', width=1.5)))
 
-                    x_start, x_end = df_price.index[0], extended_dates[-1]
+                    # 수평 기준선은 두 점뿐이라 용량과 무관하다 — 보이는 왼쪽 끝에서 시작하면 된다.
+                    x_start, x_end = start_date_chart, extended_dates[-1]
                     for i, b in enumerate(bands):
                         if pd.notna(b):
                             fig2.add_trace(go.Scatter(x=[x_start, x_end], y=[float(b), float(b)], mode='lines', name=f'{b}x', line=dict(color=cols[i % 4], width=1, dash='dash')))
