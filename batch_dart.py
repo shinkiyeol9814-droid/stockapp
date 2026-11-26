@@ -31,6 +31,9 @@ STOCK_TIMEOUT = 300
 MAX_CONSECUTIVE_FAIL = 3
 EXIT_SAVED, EXIT_FAILED, EXIT_UNCHANGED = 0, 2, 3
 
+# 칸이 늘어난 섹션은 '있다'는 것만으로 최신이 아니다 — 판이 낮으면 다시 받는다.
+SECTION_VER = {"financials_y": dart_fin.FINANCIALS_VER}
+
 SECTIONS = {
     "inventory_q": lambda code, prev: dart_fin.get_inventory_quarterly(code, quarters=12),
     "inventory_y": lambda code, prev: dart_fin.get_inventory_series(code),
@@ -127,9 +130,15 @@ def _needs_retry(data):
     💡 SECTIONS에 항목이 새로 붙으면 그 전에 만든 파일에는 그 칸이 아예 없다. 최근 파일
     건너뛰기(20시간)에 걸려 하루가 더 밀리므로 **없는 칸도 재시도 사유로 친다**
     (2026-11-26 financials_y를 붙이며 넣었다). 앱 쪽 판정은 ui_dart_panel._missing_sections.
+
+    💡 **칸 안의 내용이 늘어난 것도 같은 문제다** — 이름이 그대로라 '있다'로 보인다. 그래서
+    SECTION_VER로 판을 매기고 낮은 판은 다시 받는다(같은 날 EV/EBITDA용 금액을 붙이며 넣었다).
     """
     errors = (data or {}).get("errors") or {}
     if data and any(k not in data and k not in errors for k in SECTIONS):
+        return True
+    if data and any((data.get(k) or {}).get("ver", 1) < v
+                    for k, v in SECTION_VER.items() if k in data):
         return True
     return bool(_pending_docs(data)) or any(not str(v).startswith("DartError:") for v in errors.values())
 

@@ -110,13 +110,19 @@ def _retryable(data):
 # 보면 "최신"이라 최대 일주일을 기다리게 되므로(2026-11-26 financials_y를 붙이며 겪었다)
 # 없는 칸 자체를 갱신 사유로 친다. 오류로 빠진 건 errors가 따로 잡는다.
 _EXPECTED_SECTIONS = ("inventory_q", "inventory_y", "financials_y", "reports")
+# 칸 **안의 내용**이 늘어난 경우도 같다 — 이름이 그대로라 '있다'로 보인다. 판을 매겨 가린다.
+# 배치 쪽 같은 판정은 batch_dart.SECTION_VER (숫자는 dart_fin.FINANCIALS_VER 하나에서 온다).
+_EXPECTED_VER = {"financials_y": 2}
 
 
 def _missing_sections(data):
     if not data:
         return False
     errors = (data or {}).get("errors") or {}
-    return any(k not in data and k not in errors for k in _EXPECTED_SECTIONS)
+    if any(k not in data and k not in errors for k in _EXPECTED_SECTIONS):
+        return True
+    return any((data.get(k) or {}).get("ver", 1) < v
+               for k, v in _EXPECTED_VER.items() if k in data)
 
 
 def _request_batch(code):

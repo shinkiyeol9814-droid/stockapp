@@ -304,8 +304,10 @@ def fetch_consensus_data(ticker):
 
 # 화면에 올리는 과거 연수. DART는 2015 사업연도부터 있어 더 늘릴 수도 있지만 표가 길어진다.
 _HISTORY_YEARS = 10
-# 네이버·DART 양쪽에서 채우는 네 계정. EV/EBITDA는 컨센서스에만 있어 여기 없다.
+# 네이버·DART 양쪽에서 채우는 네 계정. EV/EBITDA는 '배수'라 여기 없다 — 아래 _EV_COLS로 따로 만든다.
 _CORE_COLS = ['매출액', '영업이익', '당기순이익', '자본총계']
+# DART에서만 오는 EV/EBITDA 재료(억원). 화면 표에는 안 올린다 — 배수를 만드는 데만 쓴다.
+_EV_COLS = ['감가상각비', '총차입금', '현금성자산']
 
 
 def _target_years():
@@ -460,8 +462,10 @@ def _fill_from_dart(df, ticker):
 
     겹치는 해(최근 5년)는 네이버가 그대로 이기므로 기존 화면이 한 칸도 바뀌지 않고,
     네이버가 아예 주지 않는 앞쪽 다섯 해만 새로 찬다. DART는 **원**, 화면은 **억원**이라
-    UNIT으로 나눈다. EV/EBITDA는 컨센서스에만 있는 값이라 과거는 계속 빈다
-    (EV/EBITDA 밴드만 여전히 최근 5년인 이유).
+    UNIT으로 나눈다.
+
+    EV/EBITDA는 컨센서스가 '배수'로만 주므로 여기서 못 채운다 — 대신 재료(_EV_COLS)를
+    그대로 실어 두고, 주가가 준비된 뒤 `_fill_ev_ebitda`가 배수를 만든다.
 
     파일이 아직 없는 종목은 그냥 빈 채로 둔다 — 같은 화면의 DART 패널이 수집을 요청하고,
     들어오면 다음 조회부터 채워진다.
@@ -475,6 +479,8 @@ def _fill_from_dart(df, ticker):
             by_year[int(r["연도"])] = r
         except (KeyError, TypeError, ValueError):
             continue
+    for col in _EV_COLS:
+        df[col] = np.nan
     for idx, y in df['Year'].items():
         src = by_year.get(int(y))
         if not src:
@@ -484,7 +490,63 @@ def _fill_from_dart(df, ticker):
             val = src.get(col)
             if val is not None and (pd.isna(cur) or cur == 0):
                 df.at[idx, col] = float(val) / UNIT
+        for col in _EV_COLS:
+            val = src.get(col)
+            if val is not None:
+                df.at[idx, col] = float(val) / UNIT
     return df
+
+
+def _fill_ev_ebitda(fin_df, df_price, stocks_count):
+    """컨센서스가 비워 둔 과거 연도의 EV/EBITDA를 DART 금액으로 만든다.
+
+    EV/EBITDA = (그 해 **말** 시가총액 + 순차입금) ÷ EBITDA
+      · EBITDA   = 영업이익 + 감가상각비(현금흐름표)
+      · 순차입금 = 총차입금 − 현금성자산
+      · 시가총액 = 그 해 마지막 거래일 **수정주가** × 현재 주식수
+        — PER·PBR 밴드가 이미 쓰는 근사다. 수정주가라 액면분할은 맞고, 증자·자사주
+        소각만큼 어긋난다.
+
+    ⚠️ **겹치는 해로 눈금을 맞춘다.** 와이즈리포트가 EV·EBITDA를 정확히 어떻게 잡는지
+    (리스부채·단기금융상품 포함 여부 등)는 공개돼 있지 않아, 같은 해를 계산하면 10~30%쯤
+    어긋난다. 그대로 이어 붙이면 컨센서스 첫 해에서 선이 계단처럼 튄다. 그래서 둘 다 있는
+    해들의 비(比) 중앙값 k를 구해 과거 쪽에 곱한다 — 컨센서스 값은 **한 칸도 건드리지 않고**
+    과거만 그 눈금에 맞춘다. k가 0.5~2를 벗어나면 정의가 다른 것으로 보고 **아예 채우지
+    않는다**(지어낸 선을 그리느니 짧은 게 낫다). 겹치는 해가 없으면 k=1.
+    """
+    if not {'감가상각비', '총차입금', '현금성자산'}.issubset(fin_df.columns) or df_price.empty:
+        return fin_df
+    # 연말(마지막 거래일) 종가
+    close_by_year = df_price['Close'].groupby(df_price.index.year).last()
+
+    raw = {}
+    for idx, y in fin_df['Year'].items():
+        y = int(y)
+        op = pd.to_numeric(pd.Series([fin_df.at[idx, '영업이익']]), errors='coerce').iloc[0]
+        dep = fin_df.at[idx, '감가상각비']
+        if pd.isna(op) or pd.isna(dep) or y not in close_by_year.index:
+            continue
+        ebitda = float(op) + float(dep)
+        if ebitda <= 0:
+            continue   # 적자 EBITDA는 배수가 뜻을 잃는다
+        debt, cash = fin_df.at[idx, '총차입금'], fin_df.at[idx, '현금성자산']
+        netdebt = (0.0 if pd.isna(debt) else float(debt)) - (0.0 if pd.isna(cash) else float(cash))
+        marcap = float(close_by_year[y]) * stocks_count / UNIT
+        ev = marcap + netdebt
+        if ev <= 0:
+            continue   # 순현금이 시총보다 큰 해 — 배수가 음수가 된다
+        raw[idx] = ev / ebitda
+
+    have = pd.to_numeric(fin_df['EV/EBITDA'], errors='coerce')
+    ratios = [have[i] / raw[i] for i in raw if pd.notna(have[i]) and have[i] > 0 and raw[i] > 0]
+    k = float(np.median(ratios)) if ratios else 1.0
+    if not (0.5 <= k <= 2.0):
+        print(f"[valuation] EV/EBITDA 눈금 보정 k={k:.2f} — 정의가 달라 과거 채움을 건너뜀")
+        return fin_df
+    for idx, v in raw.items():
+        if pd.isna(have[idx]) or have[idx] <= 0:
+            fin_df.at[idx, 'EV/EBITDA'] = v * k
+    return fin_df
 
 
 def get_hybrid_financials(ticker):
@@ -721,7 +783,9 @@ def render_valuation_menu():
         st.rerun()
 
     if "EBITDA" in st.session_state.active_val_type:
-        st.caption("💡 **[EV/EBITDA 안내]** EV/EBITDA는 배수(ratio) 데이터만 수집 가능하므로 주가 밴드 차트 대신 **배수 추이 차트**를 표시합니다. 적자 연도(음수 배수)는 자동 제외됩니다.")
+        st.caption("💡 **[EV/EBITDA 안내]** EV/EBITDA는 배수(ratio)로만 수집되므로 주가 밴드 차트 대신 **배수 추이 차트**를 표시합니다. 적자 연도(음수 배수)는 자동 제외됩니다. "
+                   "컨센서스는 **22년부터**만 주므로 그 앞은 DART 금액으로 계산합니다 — (연말 시가총액 + 순차입금) ÷ (영업이익 + 감가상각비), "
+                   "겹치는 해의 비율로 눈금을 맞춥니다. DART 자료가 없으면 22년부터만 그립니다.")
     if "PEG" in st.session_state.active_val_type:
         st.caption("💡 **[PEG 안내]** PEG = PER ÷ 당기순이익 성장률(%)이며, 성장률은 **전년 대비**입니다(28년은 27년 대비). "
                    "적자이거나 전년이 적자인 해는 N/A입니다. 성장률이 그대로 배수가 되므로, 적자 탈출처럼 성장률이 튄 해는 목표가가 매우 크게 나옵니다.")
@@ -763,6 +827,12 @@ def render_valuation_menu():
                 }, label=f"{corp_name} 데이터 불러오는 중")
                 stocks_count = get_stocks_count(ticker_row, ticker)
                 fin_df = get_hybrid_financials(ticker)
+                # 컨센서스는 EV/EBITDA를 2022년부터만 준다 — 그 앞은 DART 금액 + 연말 주가로 만든다.
+                # ⚠️ orig_fin_df(=소스 원본)를 뜨기 **전**이어야 한다. 뒤에서 채우면 이 값이
+                #    '원래 비어 있던 칸'으로 보여, 사용자가 [저장]을 누를 때 내가 계산한 수치가
+                #    사용자 추정치 파일에 그대로 박제된다.
+                df_price = get_stock_price_data(ticker, _price_start(), _today)   # 위에서 받아 둬 캐시 적중
+                fin_df = _fill_ev_ebitda(fin_df, df_price, stocks_count)
                 orig_fin_df = fin_df.copy()
                 user_estimates = load_user_estimates()
                 ticker_estimates = user_estimates.get(ticker, {})
@@ -777,7 +847,6 @@ def render_valuation_menu():
                                     fin_df.at[idx, col] = float(ticker_estimates[yr][col])
                                     manual_indices.append((idx, col))
 
-                df_price = get_stock_price_data(ticker, _price_start(), datetime.today().strftime('%Y-%m-%d'))
                 if not df_price.empty:
                     curr_p      = df_price.iloc[-1]['Close']
                     prev_p      = df_price.iloc[-2]['Close'] if len(df_price) > 1 else curr_p
@@ -898,10 +967,16 @@ def render_valuation_menu():
                     else: start_date_chart = pd.to_datetime(_price_start())
 
                     # ⚠️ 재무가 없는 구간까지 보여주면 밴드가 거짓말을 한다. 밴드는 연도별 지표를
-                    # ffill/bfill해 만들기 때문에, DART 파일이 아직 없는 종목은 2021년 값이
-                    # 그 앞 다섯 해까지 **평평하게 뒤로 복사**된다. 그래서 실제 값이 있는 첫
-                    # 해보다 앞은 자른다 — 파일이 없으면 예전처럼 최근 5년만 보인다.
-                    _has_fin = (fin_df[_CORE_COLS].fillna(0) != 0).any(axis=1)   # NaN도 0이 되어 같이 걸러진다
+                    # ffill/bfill해 만들어서, 값이 없는 앞쪽 해에는 첫 실값이 **평평하게 뒤로
+                    # 복사**된다. 그래서 **지금 고른 평가방식의 지표**가 실제로 있는 첫 해보다
+                    # 앞은 자른다.
+                    # ⚠️ _CORE_COLS 전체(어느 하나라도 있으면)로 보면 안 된다 — 방식마다 소스가
+                    #    다르기 때문이다. EV/EBITDA가 딱 그랬다: 매출액이 2016년부터 있다고 차트를
+                    #    2016년까지 열어 놓고, 컨센서스가 2022년부터라 **6년을 3.23x 일직선**으로
+                    #    그리고 있었다(2026-11-26 실측).
+                    # 앞머리 적자 해도 같이 잘린다 — 밴드 계산이 0 이하를 0.1로 바꿔 배수가 폭발한다.
+                    _has_fin = pd.to_numeric(fin_df[col_p], errors='coerce').fillna(0) > 0
+                    _fin_from = None
                     if _has_fin.any():
                         _fin_from = pd.to_datetime(f"{int(fin_df.loc[_has_fin, 'Year'].min())}-01-01")
                         start_date_chart = max(start_date_chart, _fin_from)
@@ -934,6 +1009,10 @@ def render_valuation_menu():
                         all_daily_val = np.where(interp_history > 0, interp_history, np.nan)
                     else:
                         all_daily_val = np.where(interp_history > 0, hist_marcap / interp_history, np.nan)
+                    # 첫 실값보다 앞은 ffill/bfill이 지어낸 구간이다. 기간 선택은 위에서 이미 잘랐지만
+                    # 배열에는 남아 있어 차트를 왼쪽으로 끌면 그 평탄한 선이 보인다 — 선도 끊는다.
+                    if _fin_from is not None:
+                        all_daily_val = np.where(df_price.index < _fin_from, np.nan, all_daily_val)
 
                     valid_mask      = date_mask & (interp_history > 0)
                     valid_hist_mult = all_daily_val[valid_mask]

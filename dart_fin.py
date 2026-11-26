@@ -194,6 +194,43 @@ _NI_NAMES = ("당기순이익", "당기순이익(손실)", "당기순손익", "�
 _EQ_IDS = ("ifrs-full_Equity",)
 _EQ_NAMES = ("자본총계",)
 
+# ── EV/EBITDA를 과거까지 그리기 위한 계정 ──
+# 컨센서스는 EV/EBITDA를 **배수로만**, 그것도 2022년부터 준다(2026-11-26 실측). 금액
+# (감가상각비·차입금·현금)을 같이 받아 두면 앱이 그 해 말 시가총액과 묶어 과거 배수를
+# 직접 계산할 수 있다 — valuation._fill_ev_ebitda.
+# ⚠️ 현금흐름표의 상각비 줄은 account_id가 '-표준계정코드 미사용-'인 경우가 많아 **이름
+#    매칭이 주력**이다. 합산 계정(감가상각비및무형자산상각비)이 있으면 그것만 쓰고,
+#    없을 때만 개별 줄을 더한다 — 둘 다 더하면 두 번 센다.
+_DEP_ALL_IDS = ("ifrs-full_DepreciationAndAmortisationExpense",
+                "ifrs-full_AdjustmentsForDepreciationAndAmortisationExpense",
+                "dart_DepreciationAndAmortisationExpense")
+_DEP_ALL_NAMES = ("감가상각비및무형자산상각비", "감가상각및무형자산상각비",
+                  "감가상각비와무형자산상각비", "감가상각및상각비", "감가상각비및기타상각비",
+                  "유형자산감가상각비및무형자산상각비")
+_DEP_PARTS = (
+    (("ifrs-full_DepreciationExpense", "ifrs-full_DepreciationPropertyPlantAndEquipment",
+      "dart_DepreciationExpense"),
+     ("감가상각비", "유형자산감가상각비", "감가상각비용")),
+    (("ifrs-full_AmortisationExpense", "dart_AmortisationExpense",
+      "ifrs-full_AmortisationIntangibleAssetsOtherThanGoodwill"),
+     ("무형자산상각비", "무형자산상각", "무형자산의상각", "무형자산상각액")),
+    ((), ("사용권자산감가상각비", "사용권자산상각비")),
+)
+# 총차입금·현금성자산(BS). 유동·비유동에 같은 이름이 두 줄 나오면 둘 다 더한다.
+_DEBT_ITEMS = (
+    (("ifrs-full_ShortTermBorrowings", "dart_ShortTermBorrowings"), ("단기차입금",)),
+    ((), ("유동성장기부채", "유동성장기차입금", "유동성장기성차입금", "유동장기부채", "유동성사채")),
+    (("ifrs-full_BondsIssued", "dart_BondsIssued"), ("사채",)),
+    (("ifrs-full_LongTermBorrowings", "dart_LongTermBorrowings"), ("장기차입금", "장기성차입금")),
+)
+_CASH_ITEMS = (
+    (("ifrs-full_CashAndCashEquivalents",), ("현금및현금성자산", "현금및현금등가물")),
+    ((), ("단기금융상품", "단기투자자산", "단기금융자산")),
+)
+# financials_y의 판(版). 칸이 늘면 올린다 — 앱·배치가 이 값으로 '다시 받아야 하는 옛 파일'을 가린다
+# (batch_dart.SECTION_VER · ui_dart_panel._EXPECTED_SECTIONS).
+FINANCIALS_VER = 2
+
 _DART_FIRST_YEAR = 2015   # fnlttSinglAcntAll이 제공하는 첫 사업연도
 # 연간 재무 병렬 조회 전체 예산(초). 10개 연도 × 1요청이지만 절반은 연간 재고자산과 응답을
 # 나눠 쓰므로(_ACNT_MEMO) 실제로 나가는 건 5개다 — 재고자산과 같은 30초면 충분하다.
@@ -307,11 +344,48 @@ def _pick_account(rows, ids, names, divs):
     return by_name
 
 
+def _sum_account(rows, ids, names, divs):
+    """한 계정의 금액 합계와 쓰인 계정명. 유동·비유동에 같은 이름이 두 줄 나오면 둘 다 더한다.
+
+    이름은 **완전일치**(공백 제거)라 '사채'가 '전환사채'를 끌어오지 않는다.
+    """
+    total, used = None, []
+    for r in rows:
+        if r.get("sj_div") not in divs:
+            continue
+        rid = (r.get("account_id") or "").strip()
+        nm = (r.get("account_nm") or "").strip().replace(" ", "")
+        if rid in ids or nm in names:
+            v = _amt(r, "thstrm_amount")
+            if v is not None:
+                total = (total or 0.0) + v
+                used.append(nm or rid)
+    return total, used
+
+
+def _depreciation(rows):
+    """현금흐름표의 상각비 합계(양수)와 쓰인 계정명. 합산 계정이 있으면 그것만 쓴다."""
+    dep, used = _sum_account(rows, _DEP_ALL_IDS, _DEP_ALL_NAMES, ("CF",))
+    if dep is not None:
+        return abs(dep), used
+    for ids, names in _DEP_PARTS:
+        v, u = _sum_account(rows, ids, names, ("CF",))
+        if v is not None:
+            dep = (dep or 0.0) + abs(v)
+            used += u
+    return dep, used
+
+
 def get_annual_financials(stock_code: str, years: int = 10) -> dict:
     """
-    최근 사업연도별 매출액·영업이익·당기순이익·자본총계. 금액 단위는 **원**.
+    최근 사업연도별 매출액·영업이익·당기순이익·자본총계 + EV/EBITDA용 금액. 단위는 **원**.
 
-    반환 {"corp_name":…, "rows":[{"연도","매출액","영업이익","당기순이익","자본총계","기준"}…]}
+    반환 {"corp_name":…, "ver":…, "rows":[{"연도","매출액","영업이익","당기순이익","자본총계",
+          "감가상각비","총차입금","현금성자산","기준","계정"}…]}
+
+    💡 뒤쪽 셋은 **EV/EBITDA를 과거까지 그리기 위한 것**이다 — 컨센서스는 배수만, 그것도
+    2022년부터 준다. 앱이 `EBITDA = 영업이익 + 감가상각비`, `순차입금 = 총차입금 − 현금성자산`으로
+    묶어 그 해 말 시가총액과 함께 배수를 계산한다(valuation._fill_ev_ebitda).
 
     💡 **왜 DART인가** — 가치평가 탭이 2021년부터만 그리던 건 우리가 자른 게 아니라
     네이버·FnGuide 웹이 거기까지만 주기 때문이다(2026-11-26 실측: 네이버 cF1001
@@ -353,9 +427,25 @@ def get_annual_financials(stock_code: str, years: int = 10) -> dict:
         rows, fs = got[y]
         picked = {key: _pick_account(rows, ids, names, divs)
                   for key, ids, names, divs in _WANTED}
+        # EV/EBITDA용 금액. 못 찾으면 None으로 두고 앱이 그 해를 비워 둔다(지어내지 않는다).
+        dep, used = _depreciation(rows)
+        debt = cash = None
+        for ids, names in _DEBT_ITEMS:
+            v, u = _sum_account(rows, ids, names, ("BS",))
+            if v is not None:
+                debt = (debt or 0.0) + v
+                used += u
+        for ids, names in _CASH_ITEMS:
+            v, u = _sum_account(rows, ids, names, ("BS",))
+            if v is not None:
+                cash = (cash or 0.0) + v
+                used += u
+        picked.update({"감가상각비": dep, "총차입금": debt, "현금성자산": cash})
         if any(v is not None for v in picked.values()):
-            out.append({"연도": y, **picked, "기준": fs})
-    return {"corp_name": nm, "rows": out}
+            # 어느 계정에서 나온 숫자인지 남긴다 — 회사마다 계정명이 갈려 값이 비면
+            # 이 줄이 유일한 단서다(내용이 해마다 같아 커밋이 늘지 않는다).
+            out.append({"연도": y, **picked, "기준": fs, "계정": ",".join(used)[:200]})
+    return {"corp_name": nm, "ver": FINANCIALS_VER, "rows": out}
 
 
 # 분기 코드 → (분기번호, 라벨). 사업보고서(11011)는 4분기 자리를 맡는다.
